@@ -3,6 +3,7 @@ import { connect, withTenant } from "./db";
 import { auth, requireStaff, AuthBindings } from "./auth";
 import { pages } from "./pages";
 import { api } from "./api";
+import { student } from "./student";
 
 type Bindings = AuthBindings & { APP_ENV: string };
 const app = new Hono<{ Bindings: Bindings }>();
@@ -11,6 +12,7 @@ app.get("/health", (c) => c.json({ ok: true, env: c.env.APP_ENV }));
 
 app.route("/", auth);
 app.route("/", api);
+app.route("/", student);
 app.route("/", pages);
 
 // Siswa milik sekolah yang sedang login (role staf).

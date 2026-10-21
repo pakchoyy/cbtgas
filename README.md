@@ -34,6 +34,24 @@ Uji lokal:
 | GET  | `/auth/me`                  | Sesi staf saat ini |
 | POST | `/auth/logout`              | Hapus cookie sesi |
 | GET  | `/api/students`             | Butuh sesi staf (atau header `x-school-id` saat `APP_ENV!=production` untuk demo) |
+| POST | `/api/students`             | Admin/guru. Body JSON: `{name,username,class_id?,gender?,nisn?,pin}` |
+| PATCH| `/api/students/:id`         | Edit; `pin` opsional (regen hash) |
+| DEL  | `/api/students/:id`         | Hapus siswa |
+| POST | `/api/students/import`      | Body `text/csv`, header `name,username,class,gender,nisn,pin` |
+| GET  | `/api/classes`              | Daftar kelas |
+| POST,DEL | `/api/classes[/:id]`    | CRUD kelas (admin saja) |
+| GET,POST,DEL | `/api/questions[/:id]` | Bank soal (tipe `pg`); admin boleh hapus |
+| GET,POST | `/api/exams`            | Daftar/buat ujian |
+| PATCH| `/api/exams/:id`            | Ubah title/durasi/status |
+| POST | `/api/exams/:id/questions`  | Set daftar soal `{question_ids:[...]}` |
+| POST | `/api/exams/:id/classes`    | Set kelas peserta `{class_ids:[...]}` |
+| GET  | `/api/exams/:id/scores`     | Skor peserta ujian |
+| GET  | `/s`                        | Portal siswa (butuh sesi `cbt_sstu`) |
+| GET/POST | `/s/login`              | Login username + PIN + kode sekolah |
+| POST | `/s/exams/:id/start`        | Mulai/lanjutkan sesi (buat `exam_sessions`) |
+| GET  | `/s/take/:sid`              | UI kerjakan soal + timer |
+| POST | `/s/take/:sid/answer`       | Simpan jawaban (upsert) |
+| POST | `/s/take/:sid/submit`       | Finalisasi + hitung auto-score |
 
 ### Setup Google OAuth
 

@@ -45,7 +45,19 @@ const base = (title: string, body: string) => `<!doctype html>
   button.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
   dialog { max-width: 420px; width: 92%; border: 1px solid var(--bd); border-radius: 12px; background: var(--card); color: var(--fg); padding: 20px; }
   dialog::backdrop { background: rgba(0,0,0,.5); }
-  main { max-width: 760px; }
+  main { max-width: 820px; }
+  .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; border:1px solid var(--bd); }
+  .pill.open { background: #16a34a1a; border-color:#16a34a; color:#16a34a; }
+  .pill.closed { background: #ef44441a; border-color:#ef4444; color:#ef4444; }
+  .pill.draft { background: var(--bg); }
+  .pill.scheduled { background: #eab3081a; border-color:#eab308; color:#854d0e; }
+  .pick { max-height: 320px; overflow:auto; border:1px solid var(--bd); border-radius:8px; padding:8px; margin:12px 0; }
+  .qpick { display:flex; gap:10px; padding:6px 4px; border-bottom: 1px solid var(--bd); align-items:flex-start; }
+  .qpick:last-child { border-bottom: none; }
+  .qpick input { margin-top: 3px; flex:0 0 auto; }
+  .optrow { display:flex; gap:8px; align-items:center; margin: 6px 0; }
+  .optrow input[type=text], .optrow input:not([type]) { flex:1; }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>
 </head>
 <body>
@@ -85,6 +97,7 @@ pages.get("/", async (c) => {
       <p class="muted">Sekolah <code>demo-sma</code> sudah di-seed dengan 3 siswa.</p>
       <div class="row">
         <a class="btn" href="/demo">Buka daftar siswa (read-only)</a>
+        <a class="btn" href="/s/login">Masuk sebagai siswa</a>
         ${c.env.APP_ENV !== "production" ? `
           <form method="post" action="/auth/dev-login" style="margin:0">
             <button class="primary" type="submit">Masuk sebagai admin demo</button>
@@ -240,7 +253,16 @@ pages.get("/app", async (c) => {
           <div><label>NISN</label><input name="nisn" placeholder="opsional"></div>
           <div><label>PIN awal <span class="muted">(4–8 digit)</span></label><input name="pin" required pattern="\\d{4,8}" placeholder="123456"></div>
         </div>
-        <div class="row"><button class="primary" type="submit">Tambah siswa</button></div>
+        <div class="row">
+          <button class="primary" type="submit">Tambah siswa</button>
+          <button type="button" id="btnImport">Import CSV</button>
+          <input type="file" id="fileCsv" accept=".csv,text/csv" hidden>
+          <a class="btn" href="/app/exams">Kelola ujian</a>
+        </div>
+        <p class="muted" style="margin-top:8px">
+          Format CSV: header <code>name,username,class,gender,nisn,pin</code> — kolom
+          <code>class</code>/<code>gender</code>/<code>nisn</code> opsional. <code>pin</code> 4–8 digit.
+        </p>
         <p class="err" id="errstu" hidden></p>
       </form>
       <table>
@@ -329,6 +351,24 @@ pages.get("/app", async (c) => {
         }
       });
 
+      $('#btnImport').addEventListener('click', () => $('#fileCsv').click());
+      $('#fileCsv').addEventListener('change', async (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        const text = await file.text();
+        const r = await fetch('/api/students/import', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'text/csv' }, body: text,
+        });
+        const j = await r.json().catch(() => ({ error: 'HTTP ' + r.status }));
+        if (!r.ok) { alert('Import gagal: ' + (j.error || r.status)); return; }
+        let msg = j.ok + ' siswa diimport.';
+        if (j.fail && j.fail.length) {
+          msg += '\\n' + j.fail.length + ' baris gagal:\\n' +
+            j.fail.slice(0, 10).map((x) => '  baris ' + x.row + ': ' + x.error).join('\\n');
+        }
+        alert(msg); location.reload();
+      });
+
       fedit.addEventListener('submit', async (e) => {
         if (fedit.returnValue === 'cancel') return;
         e.preventDefault();
@@ -339,6 +379,248 @@ pages.get("/app", async (c) => {
         if (!d.pin) delete d.pin;
         try { await send('/api/students/' + id, 'PATCH', d); dlg.close(); location.reload(); }
         catch (x) { erredit.textContent = x.message; erredit.hidden = false; }
+      });
+    </script>
+  `));
+});
+
+// ===== Pengelolaan ujian =====
+
+pages.get("/app/exams", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const exams = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
+    tx`select e.id, e.title, e.kind, e.duration_minutes, e.status,
+              (select count(*) from exam_questions where exam_id = e.id) as qc,
+              (select count(*) from exam_classes where exam_id = e.id) as cc
+       from exams e order by e.created_at desc`,
+  );
+  type Ex = { id: string; title: string; kind: string; duration_minutes: number; status: string; qc: number; cc: number };
+  const list = (exams as unknown as Ex[]).map((e) => `<tr>
+    <td><a href="/app/exams/${esc(e.id)}">${esc(e.title)}</a></td>
+    <td>${esc(e.kind)}</td>
+    <td>${e.duration_minutes} mnt</td>
+    <td>${e.qc} soal</td>
+    <td>${e.cc} kelas</td>
+    <td><span class="pill ${esc(e.status)}">${esc(e.status)}</span></td>
+  </tr>`).join("") || `<tr><td colspan="6" class="muted">Belum ada ujian.</td></tr>`;
+
+  return c.html(base("Ujian", `
+    <div class="card">
+      <h1>Ujian</h1>
+      <p class="sub"><a href="/app">← Dashboard</a> · <a href="/app/questions">Bank soal</a></p>
+      <form id="fex">
+        <div class="grid">
+          <div><label>Judul</label><input name="title" required></div>
+          <div><label>Jenis</label>
+            <select name="kind"><option value="harian">Harian</option><option value="pts_pas">PTS/PAS</option><option value="sumatif">Sumatif</option><option value="tryout">Tryout</option></select>
+          </div>
+          <div><label>Durasi (menit)</label><input name="duration_minutes" type="number" min="5" value="60" required></div>
+        </div>
+        <div class="row"><button class="primary" type="submit">Buat ujian</button></div>
+        <p class="err" id="errex" hidden></p>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Daftar ujian</h2>
+      <table>
+        <thead><tr><th>Judul</th><th>Jenis</th><th>Durasi</th><th>Soal</th><th>Kelas</th><th>Status</th></tr></thead>
+        <tbody>${list}</tbody>
+      </table>
+    </div>
+    <script>
+      document.getElementById('fex').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = document.getElementById('errex'); err.hidden = true;
+        const d = Object.fromEntries(new FormData(e.target));
+        d.duration_minutes = +d.duration_minutes;
+        const r = await fetch('/api/exams', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) { location.href = '/app/exams/' + j.id; return; }
+        err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false;
+      });
+    </script>
+  `));
+});
+
+pages.get("/app/exams/:id", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const examId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const ex = await tx`select id, title, kind, duration_minutes, status from exams where id = ${examId}`;
+    if (ex.length === 0) return null;
+    const bank = await tx`select id, content from questions where type = 'pg' order by created_at desc limit 500`;
+    const picked = await tx`select question_id from exam_questions where exam_id = ${examId}`;
+    const classes = await tx`select id, name from classes order by year desc, name`;
+    const pickedClasses = await tx`select class_id from exam_classes where exam_id = ${examId}`;
+    const scores = await tx`
+      select st.name as student_name, es.status, sc.auto_score, sc.final_score
+      from exam_sessions es join students st on st.id = es.student_id
+      left join scores sc on sc.session_id = es.id
+      where es.exam_id = ${examId} order by st.name`;
+    return { ex: ex[0], bank, picked, classes, pickedClasses, scores };
+  });
+  if (!data) return c.notFound();
+
+  type Ex = { id: string; title: string; kind: string; duration_minutes: number; status: string };
+  type Q = { id: string; content: { text: string; options: string[] } };
+  type Cls = { id: string; name: string };
+  const ex = data.ex as unknown as Ex;
+  const bank = data.bank as unknown as Q[];
+  const pickedSet = new Set((data.picked as unknown as Array<{ question_id: string }>).map((x) => x.question_id));
+  const classes = data.classes as unknown as Cls[];
+  const pickedClsSet = new Set((data.pickedClasses as unknown as Array<{ class_id: string }>).map((x) => x.class_id));
+  const scores = data.scores as unknown as Array<{ student_name: string; status: string; auto_score: string | null; final_score: string | null }>;
+
+  const bankHtml = bank.map((q) => `<label class="qpick">
+    <input type="checkbox" name="qid" value="${esc(q.id)}" ${pickedSet.has(q.id) ? "checked" : ""}>
+    <span>${esc(q.content?.text ?? "(tanpa teks)").slice(0, 160)}</span>
+  </label>`).join("") || `<p class="muted">Bank soal kosong — tambahkan di <a href="/app/questions">bank soal</a>.</p>`;
+
+  const classHtml = classes.map((cl) => `<label class="qpick">
+    <input type="checkbox" name="cid" value="${esc(cl.id)}" ${pickedClsSet.has(cl.id) ? "checked" : ""}>
+    <span>${esc(cl.name)}</span>
+  </label>`).join("") || `<p class="muted">Belum ada kelas.</p>`;
+
+  const scoreRows = scores.map((r) => `<tr>
+    <td>${esc(r.student_name)}</td>
+    <td>${esc(r.status)}</td>
+    <td>${r.auto_score ?? "-"}</td>
+    <td>${r.final_score ?? "-"}</td>
+  </tr>`).join("") || `<tr><td colspan="4" class="muted">Belum ada peserta.</td></tr>`;
+
+  return c.html(base(ex.title, `
+    <div class="card">
+      <h1>${esc(ex.title)} <span class="muted" style="font-weight:normal">· ${esc(ex.kind)} · ${ex.duration_minutes} mnt</span></h1>
+      <p class="sub"><a href="/app/exams">← Daftar ujian</a></p>
+      <div class="row">
+        Status: <span class="pill ${esc(ex.status)}">${esc(ex.status)}</span>
+        <button data-status="open" ${ex.status === "open" ? "disabled" : ""}>Buka</button>
+        <button data-status="closed" ${ex.status === "closed" ? "disabled" : ""}>Tutup</button>
+        <button data-status="draft" ${ex.status === "draft" ? "disabled" : ""}>Jadi draft</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Soal</h2>
+      <form id="fq">
+        <div class="pick">${bankHtml}</div>
+        <div class="row"><button class="primary" type="submit">Simpan soal yang dipilih</button>
+          <a class="btn" href="/app/questions">Kelola bank soal</a></div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Kelas peserta</h2>
+      <form id="fc">
+        <div class="pick">${classHtml}</div>
+        <div class="row"><button class="primary" type="submit">Simpan kelas</button></div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Skor</h2>
+      <table>
+        <thead><tr><th>Siswa</th><th>Status</th><th>Auto</th><th>Final</th></tr></thead>
+        <tbody>${scoreRows}</tbody>
+      </table>
+    </div>
+
+    <script>
+      const EID = ${JSON.stringify(examId)};
+      document.querySelectorAll('[data-status]').forEach((b) => b.addEventListener('click', async () => {
+        const status = b.dataset.status;
+        const r = await fetch('/api/exams/' + EID, { method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+      }));
+      document.getElementById('fq').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const ids = [...e.target.querySelectorAll('input[name=qid]:checked')].map((x) => x.value);
+        const r = await fetch('/api/exams/' + EID + '/questions', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question_ids: ids }) });
+        if (r.ok) alert('Tersimpan: ' + ids.length + ' soal'); else alert('Gagal: ' + r.status);
+      });
+      document.getElementById('fc').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const ids = [...e.target.querySelectorAll('input[name=cid]:checked')].map((x) => x.value);
+        const r = await fetch('/api/exams/' + EID + '/classes', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ class_ids: ids }) });
+        if (r.ok) alert('Tersimpan: ' + ids.length + ' kelas'); else alert('Gagal: ' + r.status);
+      });
+    </script>
+  `));
+});
+
+pages.get("/app/questions", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const qs = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
+    tx`select q.id, q.content, q.points, k.answer_key
+       from questions q left join question_keys k on k.question_id = q.id
+       where q.type = 'pg' order by q.created_at desc`,
+  );
+  type Q = { id: string; content: { text: string; options: string[] }; points: string; answer_key: { index: number } };
+  const list = (qs as unknown as Q[]).map((q) => {
+    const opts = q.content.options.map((o, i) =>
+      `<li ${i === q.answer_key?.index ? "style=font-weight:600" : ""}>${esc(o)}</li>`).join("");
+    return `<tr>
+      <td>${esc(q.content.text)}<br><ol type="A" style="margin:4px 0 0 20px; color:var(--mut); font-size:13px">${opts}</ol></td>
+      <td>${q.points}</td>
+      <td style="text-align:right"><button class="danger" data-del="${esc(q.id)}">Hapus</button></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="3" class="muted">Bank soal kosong.</td></tr>`;
+  return c.html(base("Bank soal", `
+    <div class="card">
+      <h1>Bank soal (pilihan ganda)</h1>
+      <p class="sub"><a href="/app/exams">← Ujian</a></p>
+      <form id="fq">
+        <label>Teks soal</label>
+        <textarea name="text" required rows="3" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
+        <div id="opts">
+          <label>Pilihan (centang jawaban benar)</label>
+          <div class="optrow"><input type="radio" name="correct" value="0" required><input name="opt" required placeholder="Pilihan A"></div>
+          <div class="optrow"><input type="radio" name="correct" value="1"><input name="opt" required placeholder="Pilihan B"></div>
+          <div class="optrow"><input type="radio" name="correct" value="2"><input name="opt" placeholder="Pilihan C (opsional)"></div>
+          <div class="optrow"><input type="radio" name="correct" value="3"><input name="opt" placeholder="Pilihan D (opsional)"></div>
+        </div>
+        <label>Poin</label>
+        <input name="points" type="number" step="0.5" min="0.5" value="1" required>
+        <div class="row"><button class="primary" type="submit">Tambah soal</button></div>
+        <p class="err" id="errq" hidden></p>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Daftar</h2>
+      <table><thead><tr><th>Soal</th><th>Poin</th><th></th></tr></thead>
+        <tbody id="tb">${list}</tbody></table>
+    </div>
+    <script>
+      document.getElementById('tb').addEventListener('click', async (e) => {
+        const id = e.target.dataset.del; if (!id) return;
+        if (!confirm('Hapus soal ini?')) return;
+        const r = await fetch('/api/questions/' + id, { method: 'DELETE', credentials: 'same-origin' });
+        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+      });
+      document.getElementById('fq').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = document.getElementById('errq'); err.hidden = true;
+        const text = e.target.text.value.trim();
+        const opts = [...e.target.querySelectorAll('input[name=opt]')].map((x) => x.value.trim()).filter(Boolean);
+        const correctEl = e.target.querySelector('input[name=correct]:checked');
+        const points = +e.target.points.value;
+        if (!correctEl) { err.textContent = 'Pilih jawaban benar.'; err.hidden = false; return; }
+        const correct = +correctEl.value;
+        if (correct >= opts.length) { err.textContent = 'Jawaban benar di luar pilihan.'; err.hidden = false; return; }
+        const r = await fetch('/api/questions', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, options: opts, correct, points }) });
+        if (r.ok) location.reload();
+        else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
     </script>
   `));
