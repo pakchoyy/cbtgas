@@ -186,9 +186,9 @@ auth.post("/auth/register-school", async (c) => {
 });
 
 auth.post("/auth/logout", (c) => {
-  const h = new Headers({ "Content-Type": "application/json" });
+  const h = new Headers({ Location: `${c.env.APP_ORIGIN}/` });
   h.append("Set-Cookie", clearCookie(SESSION_COOKIE));
-  return new Response(JSON.stringify({ ok: true }), { headers: h });
+  return new Response(null, { status: 302, headers: h });
 });
 
 auth.get("/auth/me", async (c) => {
