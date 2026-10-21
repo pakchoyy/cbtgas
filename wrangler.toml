@@ -11,3 +11,10 @@ id = "71378b2863a647df8b716a1ca5eef9be"
 
 [vars]
 APP_ENV = "dev"
+APP_ORIGIN = "https://cbt-api.pulsachoy.workers.dev"
+
+# Secrets (set via `wrangler secret put`):
+#   GOOGLE_CLIENT_ID       — OAuth 2.0 Client ID (Web application) di Google Cloud
+#   GOOGLE_CLIENT_SECRET   — pasangannya
+#   SESSION_SECRET         — string acak panjang (≥ 32 byte, mis. `openssl rand -base64 48`)
+# Authorized redirect URI di Google: $APP_ORIGIN/auth/google/callback
