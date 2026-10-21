@@ -40,6 +40,12 @@ const base = (title: string, body: string) => `<!doctype html>
   .g { width:18px; height:18px; }
   footer { color:var(--mut); font-size:12px; text-align:center; margin-top:24px; }
   code { background: var(--bg); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--bd); font-size: 12px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 12px; }
+  button.danger { color: var(--danger); border-color: var(--bd); background: transparent; }
+  button.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  dialog { max-width: 420px; width: 92%; border: 1px solid var(--bd); border-radius: 12px; background: var(--card); color: var(--fg); padding: 20px; }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  main { max-width: 760px; }
 </style>
 </head>
 <body>
@@ -77,7 +83,13 @@ pages.get("/", async (c) => {
     <div class="card">
       <h2>Lihat data demo</h2>
       <p class="muted">Sekolah <code>demo-sma</code> sudah di-seed dengan 3 siswa.</p>
-      <div class="row"><a class="btn" href="/demo">Buka daftar siswa demo</a></div>
+      <div class="row">
+        <a class="btn" href="/demo">Buka daftar siswa (read-only)</a>
+        ${c.env.APP_ENV !== "production" ? `
+          <form method="post" action="/auth/dev-login" style="margin:0">
+            <button class="primary" type="submit">Masuk sebagai admin demo</button>
+          </form>` : ""}
+      </div>
     </div>
   `));
 });
@@ -142,18 +154,46 @@ pages.get("/app", async (c) => {
   if (!sess) return c.redirect("/");
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const [school, students] = await withTenant(
+  const [school, classes, students] = await withTenant(
     sql,
     { schoolId: sess.sid, role: sess.role, userId: sess.uid },
     async (tx) => {
       const s = await tx`select name, code, level from schools where id = ${sess.sid}`;
-      const st = await tx`select id, name, username from students order by name limit 100`;
-      return [s[0] as { name: string; code: string; level: string } | undefined, st] as const;
+      const cl = await tx`select id, name, grade, year from classes order by year desc, grade nulls last, name`;
+      const st = await tx`
+        select s.id, s.name, s.username, s.gender, s.nisn, s.class_id, c.name as class_name
+        from students s left join classes c on c.id = s.class_id
+        order by s.name limit 500`;
+      return [s[0] as { name: string; code: string; level: string } | undefined, cl, st] as const;
     },
   );
-  const rows = (students as unknown as Array<{ name: string; username: string }>)
-    .map((s) => `<tr><td>${esc(s.name)}</td><td>${esc(s.username)}</td></tr>`)
-    .join("") || `<tr><td colspan="2" class="muted">Belum ada siswa.</td></tr>`;
+
+  type Cls = { id: string; name: string; grade: number | null; year: string };
+  type Stu = { id: string; name: string; username: string; gender: "L"|"P"|null; nisn: string|null; class_id: string|null; class_name: string|null };
+  const classList = classes as unknown as Cls[];
+  const studentList = students as unknown as Stu[];
+
+  const classOpts = classList
+    .map((cl) => `<option value="${esc(cl.id)}">${esc(cl.name)}${cl.grade?` (${cl.grade})`:""} · ${esc(cl.year)}</option>`)
+    .join("");
+
+  const classRows = classList
+    .map((cl) => `<tr>
+      <td>${esc(cl.name)}</td><td>${cl.grade ?? ""}</td><td>${esc(cl.year)}</td>
+      <td style="text-align:right"><button class="danger" data-del-class="${esc(cl.id)}">Hapus</button></td>
+    </tr>`).join("") || `<tr><td colspan="4" class="muted">Belum ada kelas.</td></tr>`;
+
+  const studentRows = studentList.map((s) => `<tr data-sid="${esc(s.id)}">
+      <td>${esc(s.name)}</td>
+      <td>${esc(s.username)}</td>
+      <td>${esc(s.class_name ?? "-")}</td>
+      <td>${s.gender ?? ""}</td>
+      <td>${esc(s.nisn ?? "")}</td>
+      <td style="text-align:right; white-space:nowrap">
+        <button data-edit-student='${esc(JSON.stringify(s))}'>Edit</button>
+        <button class="danger" data-del-student="${esc(s.id)}">Hapus</button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="6" class="muted">Belum ada siswa.</td></tr>`;
 
   return c.html(base("Dashboard", `
     <div class="card">
@@ -165,13 +205,142 @@ pages.get("/app", async (c) => {
         </form>
       </div>
     </div>
+
     <div class="card">
-      <h2>Daftar siswa</h2>
+      <h2>Kelas</h2>
+      <form id="fcls" class="inline">
+        <div class="grid">
+          <div><label>Nama kelas</label><input name="name" required placeholder="X-IPA-1"></div>
+          <div><label>Tingkat</label><input name="grade" type="number" min="1" max="12" placeholder="10"></div>
+          <div><label>Tahun ajar</label><input name="year" required placeholder="2025/2026"></div>
+        </div>
+        <div class="row"><button class="primary" type="submit">Tambah kelas</button></div>
+        <p class="err" id="errcls" hidden></p>
+      </form>
       <table>
-        <thead><tr><th>Nama</th><th>Username</th></tr></thead>
-        <tbody>${rows}</tbody>
+        <thead><tr><th>Nama</th><th>Tingkat</th><th>Tahun</th><th></th></tr></thead>
+        <tbody id="tbcls">${classRows}</tbody>
       </table>
     </div>
+
+    <div class="card">
+      <h2>Siswa</h2>
+      <form id="fstu" class="inline">
+        <div class="grid">
+          <div><label>Nama lengkap</label><input name="name" required placeholder="Andi Saputra"></div>
+          <div><label>Username</label><input name="username" required placeholder="andi.saputra"></div>
+          <div>
+            <label>Kelas</label>
+            <select name="class_id"><option value="">— tidak dipilih —</option>${classOpts}</select>
+          </div>
+          <div>
+            <label>Gender</label>
+            <select name="gender"><option value="">—</option><option value="L">Laki-laki</option><option value="P">Perempuan</option></select>
+          </div>
+          <div><label>NISN</label><input name="nisn" placeholder="opsional"></div>
+          <div><label>PIN awal <span class="muted">(4–8 digit)</span></label><input name="pin" required pattern="\\d{4,8}" placeholder="123456"></div>
+        </div>
+        <div class="row"><button class="primary" type="submit">Tambah siswa</button></div>
+        <p class="err" id="errstu" hidden></p>
+      </form>
+      <table>
+        <thead><tr><th>Nama</th><th>Username</th><th>Kelas</th><th>G</th><th>NISN</th><th></th></tr></thead>
+        <tbody id="tbstu">${studentRows}</tbody>
+      </table>
+    </div>
+
+    <!-- Dialog edit siswa -->
+    <dialog id="dlg">
+      <form id="fedit" method="dialog">
+        <h2>Edit siswa</h2>
+        <input type="hidden" name="id">
+        <label>Nama</label><input name="name" required>
+        <label>Kelas</label>
+        <select name="class_id"><option value="">— tidak dipilih —</option>${classOpts}</select>
+        <label>Gender</label>
+        <select name="gender"><option value="">—</option><option value="L">Laki-laki</option><option value="P">Perempuan</option></select>
+        <label>NISN</label><input name="nisn">
+        <label>PIN baru <span class="muted">(kosongkan jika tidak diganti)</span></label>
+        <input name="pin" pattern="\\d{4,8}">
+        <div class="row">
+          <button class="primary" value="save">Simpan</button>
+          <button value="cancel">Batal</button>
+        </div>
+        <p class="err" id="erredit" hidden></p>
+      </form>
+    </dialog>
+
+    <script>
+      const $ = (q, r=document) => r.querySelector(q);
+      const dlg = $('#dlg'), fedit = $('#fedit'), erredit = $('#erredit');
+
+      async function send(url, method, body) {
+        const r = await fetch(url, {
+          method, credentials: 'same-origin',
+          headers: body ? { 'Content-Type': 'application/json' } : undefined,
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        if (r.ok) return r.status === 204 ? null : r.json();
+        const j = await r.json().catch(() => ({ error: 'HTTP ' + r.status }));
+        throw new Error(j.error || 'HTTP ' + r.status);
+      }
+
+      $('#fcls').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = $('#errcls'); err.hidden = true;
+        const d = Object.fromEntries(new FormData(e.target));
+        if (d.grade === '') d.grade = null; else d.grade = +d.grade;
+        try { await send('/api/classes', 'POST', d); location.reload(); }
+        catch (x) { err.textContent = x.message; err.hidden = false; }
+      });
+
+      $('#tbcls').addEventListener('click', async (e) => {
+        const id = e.target.getAttribute('data-del-class'); if (!id) return;
+        if (!confirm('Hapus kelas ini? Siswa yang terdaftar akan jadi tidak berkelas.')) return;
+        try { await send('/api/classes/' + id, 'DELETE'); location.reload(); }
+        catch (x) { alert(x.message); }
+      });
+
+      $('#fstu').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = $('#errstu'); err.hidden = true;
+        const d = Object.fromEntries(new FormData(e.target));
+        for (const k of ['class_id','gender','nisn']) if (d[k] === '') d[k] = null;
+        try { await send('/api/students', 'POST', d); location.reload(); }
+        catch (x) { err.textContent = x.message; err.hidden = false; }
+      });
+
+      $('#tbstu').addEventListener('click', async (e) => {
+        const delId = e.target.getAttribute('data-del-student');
+        if (delId) {
+          if (!confirm('Hapus siswa ini?')) return;
+          try { await send('/api/students/' + delId, 'DELETE'); location.reload(); }
+          catch (x) { alert(x.message); }
+          return;
+        }
+        const editJson = e.target.getAttribute('data-edit-student');
+        if (editJson) {
+          const s = JSON.parse(editJson);
+          erredit.hidden = true;
+          fedit.id.value = s.id; fedit.name.value = s.name;
+          fedit.class_id.value = s.class_id || ''; fedit.gender.value = s.gender || '';
+          fedit.nisn.value = s.nisn || ''; fedit.pin.value = '';
+          dlg.showModal();
+        }
+      });
+
+      fedit.addEventListener('submit', async (e) => {
+        if (fedit.returnValue === 'cancel') return;
+        e.preventDefault();
+        erredit.hidden = true;
+        const d = Object.fromEntries(new FormData(fedit));
+        const id = d.id; delete d.id;
+        for (const k of ['class_id','gender','nisn']) if (d[k] === '') d[k] = null;
+        if (!d.pin) delete d.pin;
+        try { await send('/api/students/' + id, 'PATCH', d); dlg.close(); location.reload(); }
+        catch (x) { erredit.textContent = x.message; erredit.hidden = false; }
+      });
+    </script>
   `));
 });
 

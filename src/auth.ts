@@ -191,6 +191,33 @@ auth.post("/auth/logout", (c) => {
   return new Response(null, { status: 302, headers: h });
 });
 
+// Login shortcut untuk demo. Hanya aktif saat APP_ENV != "production".
+// Login sebagai admin pertama di sekolah demo-sma.
+auth.post("/auth/dev-login", async (c) => {
+  if ((c.env as AuthBindings & { APP_ENV?: string }).APP_ENV === "production") {
+    return c.json({ error: "disabled" }, 404);
+  }
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  // resolve_school SECURITY DEFINER → aman tanpa RLS context.
+  const sch = await sql`select id from resolve_school('demo-sma')`;
+  if (sch.length === 0) return c.json({ error: "demo school not seeded" }, 404);
+  const sid = (sch[0] as { id: string }).id;
+  const row = await withTenant(sql, { schoolId: sid, role: "admin" }, (tx) =>
+    tx`select id as uid, email from users where role = 'admin' order by created_at limit 1`,
+  );
+  if (row.length === 0) return c.json({ error: "demo admin not seeded" }, 404);
+  const u = row[0] as { uid: string; email: string };
+  const r = { uid: u.uid, sid, role: "admin" as const, email: u.email };
+  const session: Session = {
+    uid: r.uid, sid: r.sid, role: r.role, email: r.email,
+    exp: Math.floor(Date.now() / 1000) + SESSION_TTL,
+  };
+  const cookie = await sign(session, c.env.SESSION_SECRET);
+  const headers = new Headers({ Location: `${c.env.APP_ORIGIN}/app` });
+  headers.append("Set-Cookie", cookieHeader(SESSION_COOKIE, cookie, { maxAge: SESSION_TTL }));
+  return new Response(null, { status: 302, headers });
+});
+
 auth.get("/auth/me", async (c) => {
   const token = readCookie(c.req.header("Cookie"), SESSION_COOKIE);
   if (!token) return c.json({ error: "no session" }, 401);
