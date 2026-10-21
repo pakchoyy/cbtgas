@@ -1,0 +1,13 @@
+name = "cbt-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Hyperdrive dibuat di dashboard Cloudflare, lalu isi id-nya di sini.
+# Hyperdrive menunjuk ke Neon dengan user role cbt_app (bukan pemilik tabel).
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "REPLACE_WITH_HYPERDRIVE_ID"
+
+[vars]
+APP_ENV = "dev"
