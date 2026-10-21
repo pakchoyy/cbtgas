@@ -3,11 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Hyperdrive dibuat di dashboard Cloudflare, lalu isi id-nya di sini.
-# Hyperdrive menunjuk ke Neon dengan user role cbt_app (bukan pemilik tabel).
+# Hyperdrive menunjuk ke Neon. Login pakai role cbt_login (NOBYPASSRLS,
+# non-pemilik tabel); cbt_app dipakai lewat SET ROLE di dalam transaksi.
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "REPLACE_WITH_HYPERDRIVE_ID"
+id = "71378b2863a647df8b716a1ca5eef9be"
 
 [vars]
 APP_ENV = "dev"
