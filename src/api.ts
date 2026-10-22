@@ -192,37 +192,115 @@ api.get("/api/questions", async (c) => {
   const s = getSess(c);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`select q.id, q.content, q.points, k.answer_key
+    tx`select q.id, q.type, q.content, q.points, k.answer_key, k.rubric
        from questions q left join question_keys k on k.question_id = q.id
-       where q.type = 'pg'
        order by q.created_at desc limit 500`,
   );
   return c.json(rows);
 });
 
+// POST /api/questions mendukung tipe:
+//   pg          : {text, options[], correct}
+//   benar_salah : {text, correct:boolean}
+//   isian       : {text, accepted:string[]}  (dicocokkan case-insensitive, trim)
+//   uraian      : {text, rubric?}            (manual grade only)
 api.post("/api/questions", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const body = await c.req.json().catch(() => null) as null | {
-    text: string; options: string[]; correct: number; points?: number;
-  };
-  if (!body?.text || !Array.isArray(body.options) || body.options.length < 2
-    || typeof body.correct !== "number" || body.correct < 0 || body.correct >= body.options.length) {
-    return c.json({ error: "data soal tidak valid" }, 400);
+  const body = await c.req.json().catch(() => null) as null | Record<string, unknown>;
+  if (!body) return c.json({ error: "bad body" }, 400);
+  const type = String(body.type || "pg");
+  const text = String(body.text || "").trim();
+  const points = typeof body.points === "number" ? body.points : 1;
+  if (!text) return c.json({ error: "teks soal kosong" }, 400);
+
+  let content: unknown; let answer_key: unknown; let rubric: string | null = null;
+  if (type === "pg") {
+    const options = Array.isArray(body.options) ? (body.options as string[]) : [];
+    const correct = Number(body.correct);
+    if (options.length < 2 || !Number.isInteger(correct) || correct < 0 || correct >= options.length) {
+      return c.json({ error: "data pilihan ganda tidak valid" }, 400);
+    }
+    content = { text, options }; answer_key = { index: correct };
+  } else if (type === "benar_salah") {
+    if (typeof body.correct !== "boolean") return c.json({ error: "'correct' harus boolean" }, 400);
+    content = { text, options: ["Benar", "Salah"] };
+    answer_key = { index: body.correct ? 0 : 1 };
+  } else if (type === "isian") {
+    const accepted = Array.isArray(body.accepted) ? (body.accepted as string[])
+      .map((x) => x.trim()).filter(Boolean) : [];
+    if (accepted.length === 0) return c.json({ error: "jawaban yang diterima kosong" }, 400);
+    content = { text }; answer_key = { accepted };
+  } else if (type === "uraian") {
+    content = { text }; answer_key = { manual: true };
+    rubric = body.rubric ? String(body.rubric) : null;
+  } else {
+    return c.json({ error: `tipe '${type}' belum didukung` }, 400);
   }
+
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const q = await tx`insert into questions (school_id, author_id, type, content, points)
-      values (${s.sid}, ${s.uid}, 'pg',
-              ${{ text: body.text, options: body.options } as unknown as string},
-              ${body.points ?? 1})
-      returning id`;
+      values (${s.sid}, ${s.uid}, ${type},
+              ${content as unknown as string}, ${points}) returning id`;
     const qid = (q[0] as { id: string }).id;
-    await tx`insert into question_keys (question_id, school_id, answer_key)
-      values (${qid}, ${s.sid}, ${{ index: body.correct } as unknown as string})`;
-    return { id: qid };
+    await tx`insert into question_keys (question_id, school_id, answer_key, rubric)
+      values (${qid}, ${s.sid}, ${answer_key as unknown as string}, ${rubric})`;
+    return { id: qid, type };
   });
   return c.json(r, 201);
+});
+
+// Nilai manual untuk soal uraian: input per sesi × soal.
+api.post("/api/sessions/:sid/manual-score", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sessionId = c.req.param("sid");
+  const body = await c.req.json().catch(() => null) as null | {
+    scores: Array<{ question_id: string; score: number }>;
+  };
+  if (!body?.scores) return c.json({ error: "bad body" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const out = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    // Simpan nilai manual di answers.answer (merge ke objek yang ada) agar
+    // audit tetap kelihatan dan agar aggregasi tetap lewat satu tabel.
+    for (const row of body.scores) {
+      await tx`update answers
+        set answer = coalesce(answer, '{}'::jsonb) || ${{ manual_score: row.score } as unknown as string}
+        where session_id = ${sessionId} and question_id = ${row.question_id}`;
+    }
+    // Hitung ulang skor sesi.
+    const sess = await tx`select exam_id, student_id from exam_sessions where id = ${sessionId}`;
+    if (sess.length === 0) throw new Error("sesi tidak ditemukan");
+    const examId = (sess[0] as { exam_id: string }).exam_id;
+    const studentId = (sess[0] as { student_id: string }).student_id;
+    const g = await tx`
+      select coalesce(sum(
+        case q.type
+          when 'pg'          then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
+          when 'benar_salah' then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
+          when 'isian'       then case when exists(
+                                    select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                                    where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
+                                  ) then q.points else 0 end
+          when 'uraian'      then coalesce((a.answer->>'manual_score')::numeric, 0)
+          else 0 end), 0) as got,
+             coalesce(sum(q.points), 0) as total
+        from exam_questions eq
+        join questions q on q.id = eq.question_id
+        left join question_keys k on k.question_id = q.id
+        left join answers a on a.session_id = ${sessionId} and a.question_id = q.id
+        where eq.exam_id = ${examId}`;
+    const sc = g[0] as { got: string; total: string };
+    const total = parseFloat(sc.total); const got = parseFloat(sc.got);
+    const final_score = total > 0 ? (got / total) * 100 : 0;
+    await tx`insert into scores (session_id, school_id, exam_id, student_id, auto_score, manual_score, final_score, approved_by, approved_at)
+             values (${sessionId}, ${s.sid}, ${examId}, ${studentId}, null, ${got}, ${final_score}, ${s.uid}, now())
+             on conflict (session_id) do update set manual_score = excluded.manual_score,
+                final_score = excluded.final_score, approved_by = excluded.approved_by, approved_at = excluded.approved_at`;
+    return { ok: true, final: final_score };
+  });
+  return c.json(out);
 });
 
 api.delete("/api/questions/:id", async (c) => {
@@ -255,12 +333,19 @@ api.post("/api/exams", async (c) => {
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const body = await c.req.json().catch(() => null) as null | {
     title: string; kind: "harian"|"pts_pas"|"sumatif"|"tryout"; duration_minutes: number;
+    starts_at?: string | null; ends_at?: string | null;
+    shuffle_questions?: boolean; shuffle_options?: boolean;
+    anticheat_level?: "log"|"warn"|"lock"; lock_after_violations?: number | null;
   };
   if (!body?.title || !body.kind || !body.duration_minutes) return c.json({ error: "data ujian kurang" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`insert into exams (school_id, creator_id, title, kind, duration_minutes)
-       values (${s.sid}, ${s.uid}, ${body.title}, ${body.kind}, ${body.duration_minutes})
+    tx`insert into exams (school_id, creator_id, title, kind, duration_minutes,
+         starts_at, ends_at, shuffle_questions, shuffle_options, anticheat_level, lock_after_violations)
+       values (${s.sid}, ${s.uid}, ${body.title}, ${body.kind}, ${body.duration_minutes},
+         ${body.starts_at ?? null}, ${body.ends_at ?? null},
+         ${body.shuffle_questions ?? false}, ${body.shuffle_options ?? false},
+         ${body.anticheat_level ?? "log"}, ${body.lock_after_violations ?? null})
        returning id`,
   );
   return c.json(r[0], 201);
@@ -272,6 +357,9 @@ api.patch("/api/exams/:id", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json().catch(() => null) as null | {
     status?: "draft"|"scheduled"|"open"|"closed"; title?: string; duration_minutes?: number;
+    starts_at?: string | null; ends_at?: string | null;
+    shuffle_questions?: boolean; shuffle_options?: boolean;
+    anticheat_level?: "log"|"warn"|"lock"; lock_after_violations?: number | null;
   };
   if (!body) return c.json({ error: "bad body" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -279,11 +367,78 @@ api.patch("/api/exams/:id", async (c) => {
     tx`update exams set
          title = coalesce(${body.title ?? null}, title),
          duration_minutes = coalesce(${body.duration_minutes ?? null}, duration_minutes),
-         status = coalesce(${body.status ?? null}, status)
+         status = coalesce(${body.status ?? null}, status),
+         starts_at = case when ${body.starts_at !== undefined} then ${body.starts_at ?? null} else starts_at end,
+         ends_at = case when ${body.ends_at !== undefined} then ${body.ends_at ?? null} else ends_at end,
+         shuffle_questions = coalesce(${body.shuffle_questions ?? null}, shuffle_questions),
+         shuffle_options = coalesce(${body.shuffle_options ?? null}, shuffle_options),
+         anticheat_level = coalesce(${body.anticheat_level ?? null}, anticheat_level),
+         lock_after_violations = case when ${body.lock_after_violations !== undefined}
+            then ${body.lock_after_violations ?? null} else lock_after_violations end
        where id = ${id} returning id, status`,
   );
   if (r.length === 0) return c.json({ error: "not found" }, 404);
   return c.json(r[0]);
+});
+
+// Export CSV skor peserta satu ujian.
+api.get("/api/exams/:id/scores.csv", async (c) => {
+  const s = getSess(c);
+  const id = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select st.name as student_name, st.username, c.name as class_name,
+              es.status, es.started_at, es.finished_at, es.violation_count,
+              sc.auto_score, sc.manual_score, sc.final_score
+       from exam_sessions es
+       join students st on st.id = es.student_id
+       left join classes c on c.id = st.class_id
+       left join scores sc on sc.session_id = es.id
+       where es.exam_id = ${id}
+       order by st.name`,
+  );
+  const header = ["nama","username","kelas","status","mulai","selesai","pelanggaran","auto","manual","final"];
+  const esc = (v: unknown) => {
+    if (v == null) return "";
+    const s = v instanceof Date ? v.toISOString() : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  type R = { student_name: string; username: string; class_name: string|null; status: string;
+    started_at: string|null; finished_at: string|null; violation_count: number;
+    auto_score: string|null; manual_score: string|null; final_score: string|null };
+  const lines = [header.join(",")];
+  for (const r of rows as unknown as R[]) {
+    lines.push([r.student_name, r.username, r.class_name, r.status, r.started_at, r.finished_at,
+      r.violation_count, r.auto_score, r.manual_score, r.final_score].map(esc).join(","));
+  }
+  return new Response(lines.join("\n") + "\n", {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="skor-ujian-${id}.csv"`,
+    },
+  });
+});
+
+// Ringkasan rata-rata per kelas untuk sebuah ujian.
+api.get("/api/exams/:id/summary", async (c) => {
+  const s = getSess(c);
+  const id = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select coalesce(c.name, '(tanpa kelas)') as class_name,
+              count(*) as peserta,
+              count(sc.final_score) as nilai_tersedia,
+              round(avg(sc.final_score), 2) as rata_rata,
+              min(sc.final_score) as terendah,
+              max(sc.final_score) as tertinggi
+       from exam_sessions es
+       join students st on st.id = es.student_id
+       left join classes c on c.id = st.class_id
+       left join scores sc on sc.session_id = es.id
+       where es.exam_id = ${id}
+       group by c.name order by c.name`,
+  );
+  return c.json(rows);
 });
 
 api.post("/api/exams/:id/questions", async (c) => {

@@ -254,6 +254,11 @@ BEGIN
   END LOOP;
 END $$;
 
+-- Sequence (mis. violations.id bigserial) butuh USAGE/SELECT eksplisit;
+-- default privileges-nya di-set agar sequence baru nanti ikut.
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO cbt_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO cbt_app;
+
 -- Sekolah: hanya baris sendiri (atau owner). Daftar sekolah baru lewat fungsi khusus.
 ALTER TABLE schools ENABLE ROW LEVEL SECURITY;
 ALTER TABLE schools FORCE ROW LEVEL SECURITY;
