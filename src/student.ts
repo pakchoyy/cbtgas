@@ -10,6 +10,7 @@ import {
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
 import { SHARED_CSS } from "./ui";
+import { createSession, finalizeSession } from "./scoring";
 
 type Bindings = {
   HYPERDRIVE: Hyperdrive;
@@ -151,6 +152,8 @@ student.get("/s", async (c) => {
   const list = (data.exams as unknown as Ex[]).map((e) => {
     const action = e.session_status === "submitted"
       ? `<span class="muted">Sudah dikumpulkan</span>`
+      : e.session_status === "expired"
+      ? `<span class="muted">Waktu habis</span>`
       : e.session_id
         ? `<form method="post" action="/s/exams/${esc(e.id)}/start" style="margin:0"><button class="primary">Lanjutkan</button></form>`
         : `<form method="post" action="/s/exams/${esc(e.id)}/start" style="margin:0"><button class="primary">Mulai</button></form>`;
@@ -607,89 +610,20 @@ student.post("/s/exams/:id/start", async (c) => {
   const sessionId = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     // Pastikan ujian open, dalam jendela waktu, dan menargetkan kelas siswa.
     const ok = await tx`
-      select e.id, e.duration_minutes, e.starts_at, e.ends_at,
-             e.group_id, e.group_position
-      from exams e
+      select e.id from exams e
       join exam_classes ec on ec.exam_id = e.id
       where e.id = ${examId} and e.status = 'open'
         and ec.class_id = (select class_id from students where id = ${stu.uid})
         and (e.starts_at is null or e.starts_at <= now())
         and (e.ends_at   is null or e.ends_at   >  now())`;
     if (ok.length === 0) throw new Error("ujian belum/sudah tidak tersedia");
-    // Enforce strict_order grup: siswa harus menyelesaikan ujian sebelumnya
-    // di grup yang sama (position lebih kecil) sebelum mulai yang ini.
-    const groupInfo = ok[0] as { group_id: string | null; group_position: number | null };
-    if (groupInfo.group_id && groupInfo.group_position != null) {
-      const g = await tx`select strict_order from exam_groups where id = ${groupInfo.group_id}`;
-      if (g.length && (g[0] as { strict_order: boolean }).strict_order) {
-        const pending = await tx`
-          select e.id from exams e
-          left join exam_sessions es on es.exam_id = e.id and es.student_id = ${stu.uid} and es.status = 'submitted'
-          where e.group_id = ${groupInfo.group_id} and e.group_position < ${groupInfo.group_position}
-            and es.id is null`;
-        if (pending.length > 0) throw new Error("Selesaikan ujian sebelumnya di rangkaian ini terlebih dahulu.");
-      }
-    }
-    const dur = (ok[0] as { duration_minutes: number; ends_at: string | null }).duration_minutes;
-    const endsAt = (ok[0] as { ends_at: string | null }).ends_at;
-
     const existing = await tx`select id, status from exam_sessions where exam_id = ${examId} and student_id = ${stu.uid}`;
     if (existing.length) {
       const row = existing[0] as { id: string; status: string };
-      if (row.status === "submitted") throw new Error("sudah dikumpulkan");
+      if (row.status === "submitted" || row.status === "expired") throw new Error("ujian ini sudah selesai untuk Anda");
       return row.id;
     }
-    // Urutan soal + (opsional) permutasi opsi, disimpan di question_order:
-    //   { order: [qid, …], perms: { qid: [i₀, i₁, …] } }
-    // perm memetakan posisi tampilan indeks asli (shuffle_options).
-    const qs = await tx`select question_id from exam_questions where exam_id = ${examId} order by position`;
-    let order = (qs as unknown as Array<{ question_id: string }>).map((x) => x.question_id);
-    const ex = await tx`select shuffle_questions, shuffle_options, questions_per_session from exams where id = ${examId}`;
-    const exRow = ex[0] as { shuffle_questions: boolean; shuffle_options: boolean; questions_per_session: number };
-    const fy = <T>(arr: T[]): T[] => {
-      const a = arr.slice();
-      for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [a[i], a[j]] = [a[j], a[i]];
-      }
-      return a;
-    };
-    // Random pool: ambil N soal acak terlebih dulu, lalu shuffle urutan bila perlu.
-    const perSession = exRow?.questions_per_session ?? 0;
-    if (perSession > 0 && perSession < order.length) {
-      order = fy(order).slice(0, perSession);
-    }
-    if (exRow?.shuffle_questions) order = fy(order);
-    const perms: Record<string, number[]> = {};
-    if (exRow?.shuffle_options) {
-      const qrows = await tx`select id, type, content from questions where id in ${tx(order)}`;
-      for (const q of qrows as unknown as Array<{ id: string; type: string; content: { options?: string[] } }>) {
-        if (q.type === "pg" && Array.isArray(q.content.options) && q.content.options.length > 1) {
-          perms[q.id] = fy(q.content.options.map((_, k) => k));
-        }
-      }
-    }
-    const questionOrderPayload = { order, perms };
-    // Deadline = min(now + duration, exam.ends_at jika ada).
-    const durMs = Date.now() + dur * 60_000;
-    const examEnd = endsAt ? new Date(endsAt).getTime() : Number.POSITIVE_INFINITY;
-    const deadline = new Date(Math.min(durMs, examEnd)).toISOString();
-    const ins = await tx`insert into exam_sessions
-      (school_id, exam_id, student_id, deadline_at, question_order)
-      values (${stu.sid}, ${examId}, ${stu.uid}, ${deadline},
-              ${questionOrderPayload as unknown as string})
-      returning id`;
-    const sessionId = (ins[0] as { id: string }).id;
-    // Untuk soal dinamis_hitung: generate nilai a & b per sesi, simpan di
-    // answers.answer agar klien bisa menampilkan dan server bisa menilai.
-    const dynQs = await tx`select id, content from questions where id in ${tx(order)} and type = 'dinamis_hitung'`;
-    for (const q of dynQs as unknown as Array<{ id: string; content: { a: { min: number; max: number }; b: { min: number; max: number } } }>) {
-      const a = q.content.a.min + Math.floor(Math.random() * (q.content.a.max - q.content.a.min + 1));
-      const b = q.content.b.min + Math.floor(Math.random() * (q.content.b.max - q.content.b.min + 1));
-      await tx`insert into answers (session_id, question_id, school_id, answer, updated_at)
-        values (${sessionId}, ${q.id}, ${stu.sid}, ${{ vars: { a, b } } as unknown as string}, now())
-        on conflict (session_id, question_id) do nothing`;
-    }
+    const sessionId = await createSession(tx, stu.sid, examId, stu.uid);
     return sessionId;
   }).catch((e) => ({ error: (e as Error).message }));
   if (typeof sessionId === "object") return c.json(sessionId, 400);
@@ -1372,76 +1306,9 @@ student.post("/s/take/:sid/submit", async (c) => {
     if (s.length === 0) throw new Error("sesi tidak ditemukan");
     const row = s[0] as { id: string; exam_id: string; status: string };
     if (row.status === "submitted") return { ok: true, already: true };
-    // Hitung auto-score hanya untuk soal yang masuk sesi ini (dukung pool
-    // random). Uraian 0 dulu, menunggu nilai manual dari guru.
-    // Apply scoring_config: bobot kategori + penalty jawaban salah.
-    const scored = await tx`
-      with items as (
-        select q.id, q.type, q.points, q.category_id, k.answer_key, a.answer,
-               coalesce((e.scoring_config->'category_weights'->>q.category_id::text)::numeric, 1) as weight,
-               coalesce((e.scoring_config->>'wrong_penalty')::numeric, 0) as wrong_penalty,
-               case q.type
-                 when 'pg'          then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
-                 when 'benar_salah' then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
-                 when 'isian'       then exists(
-                   select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
-                   where lower(trim(x.value)) = lower(trim(a.answer->>'text')))
-                 when 'menjodohkan' then a.answer->'pairs' = k.answer_key->'pairs'
-                 else null end as binary_benar
-        from jsonb_array_elements_text(coalesce(
-          (select case
-                    when jsonb_typeof(question_order) = 'object' then question_order->'order'
-                    when jsonb_typeof(question_order) = 'array'  then question_order
-                    else null end
-           from exam_sessions where id = ${sessionId}),
-          (select to_jsonb(array_agg(question_id)) from exam_questions where exam_id = ${row.exam_id})
-        )) as qid
-        join questions q on q.id = qid.value::uuid
-        join exams e on e.id = ${row.exam_id}
-        left join question_keys k on k.question_id = q.id
-        left join answers a on a.session_id = ${sessionId} and a.question_id = q.id
-      )
-      select coalesce(sum(
-        (case it.type
-          when 'pg'          then case when it.binary_benar then it.points * it.weight
-                                       when it.answer is not null then -it.points * it.weight * it.wrong_penalty else 0 end
-          when 'benar_salah' then case when it.binary_benar then it.points * it.weight
-                                       when it.answer is not null then -it.points * it.weight * it.wrong_penalty else 0 end
-          when 'isian'       then case when it.binary_benar then it.points * it.weight else 0 end
-          when 'pgk_centang' then greatest(0::numeric, (
-            (select count(*) from jsonb_array_elements_text(it.answer_key->'correct') kx
-               where kx::int in (select x::int from jsonb_array_elements_text(coalesce(it.answer->'selected','[]'::jsonb)) x))
-            -
-            (select count(*) from jsonb_array_elements_text(coalesce(it.answer->'selected','[]'::jsonb)) ax
-               where ax::int not in (select x::int from jsonb_array_elements_text(it.answer_key->'correct') x))
-          )::numeric / nullif(jsonb_array_length(it.answer_key->'correct'), 0) * it.points * it.weight)
-          when 'menjodohkan' then case when it.binary_benar then it.points * it.weight else 0 end
-          when 'dinamis_hitung' then
-            case when (
-              case it.answer_key->>'formula'
-                when '+' then ((it.answer->'vars'->>'a')::numeric + (it.answer->'vars'->>'b')::numeric)
-                when '-' then ((it.answer->'vars'->>'a')::numeric - (it.answer->'vars'->>'b')::numeric)
-                when '*' then ((it.answer->'vars'->>'a')::numeric * (it.answer->'vars'->>'b')::numeric)
-                when '/' then ((it.answer->'vars'->>'a')::numeric / nullif((it.answer->'vars'->>'b')::numeric, 0))
-              end
-            ) = (nullif(it.answer->>'text', ''))::numeric then it.points * it.weight else 0 end
-          else 0 end)
-        * case when it.answer->>'hint_used' = 'true' then 0.5 else 1 end
-      ), 0) as got_auto,
-      coalesce(sum(it.points * it.weight), 0) as total,
-      coalesce(sum(case when it.type in ('uraian','simulasi') then it.points * it.weight else 0 end), 0) as manual_pending
-      from items it`;
-    const sc = scored[0] as { got_auto: string; total: string; manual_pending: string };
-    const total = parseFloat(sc.total); const gotAuto = parseFloat(sc.got_auto);
-    const manualPending = parseFloat(sc.manual_pending);
-    const auto = total > 0 ? (gotAuto / total) * 100 : 0;
-    // Final sementara = auto; akan ditimpa guru untuk uraian.
-    await tx`update exam_sessions set status = 'submitted', finished_at = now() where id = ${sessionId}`;
-    await tx`insert into scores (session_id, school_id, exam_id, student_id, auto_score, final_score)
-             values (${sessionId}, ${stu.sid}, ${row.exam_id}, ${stu.uid}, ${auto}, ${auto})
-             on conflict (session_id) do update set auto_score = excluded.auto_score,
-                final_score = coalesce(scores.manual_score, excluded.auto_score)`;
-    return { ok: true, score: auto, needs_manual: manualPending > 0 };
+    if (row.status !== "active") throw new Error("sesi tidak aktif");
+    const r = await finalizeSession(tx, sessionId, "submitted");
+    return { ok: true, ...r };
   }).catch((e) => ({ error: (e as Error).message }));
   if ("error" in result) return c.json(result, 400);
   return c.json(result);

@@ -1,6 +1,7 @@
 // Halaman HTML sederhana untuk demo: landing, form daftar sekolah, dashboard.
 // Semua inline (tanpa aset eksternal) agar Worker tetap satu file deploy.
 
+import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
@@ -184,7 +185,7 @@ const googleBtn = (mode: "login" | "register", label: string) => `
 </a>`.replace('class="btn primary"', 'class="btn"');
 
 pages.get("/", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (sess) {
     return c.redirect("/app");
   }
@@ -210,7 +211,7 @@ pages.get("/", async (c) => {
       <div class="entry">
         <a class="btn primary" href="/s/login">Masuk sebagai siswa</a>
         ${googleBtn("login", "Masuk sebagai guru dengan Google")}
-        ${c.env.APP_ENV !== "production" ? `
+        ${c.env.DEMO_LOGIN === "1" ? `
           <form method="post" action="/auth/dev-login" style="margin:0">
             <button type="submit" class="btn" style="width:100%">Coba sebagai admin demo</button>
           </form>` : ""}
@@ -279,7 +280,7 @@ pages.get("/register", (c) => {
 });
 
 pages.get("/app", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -534,7 +535,7 @@ pages.get("/app", async (c) => {
 
 // Grup / rangkaian ujian: paket beberapa ujian yang dikerjakan berurutan.
 pages.get("/app/exam-groups", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [groups, exams] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
@@ -597,7 +598,7 @@ pages.get("/app/exam-groups", async (c) => {
 });
 
 pages.get("/app/exams", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [exams, groups] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
@@ -738,7 +739,7 @@ pages.get("/app/exams", async (c) => {
 });
 
 pages.get("/app/exams/:id", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const examId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -915,7 +916,7 @@ pages.get("/app/exams/:id", async (c) => {
 
 // Antrian permintaan reset PIN dari siswa.
 pages.get("/app/pin-resets", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
@@ -973,7 +974,7 @@ pages.get("/app/pin-resets", async (c) => {
 // Printable: semua soal ujian + opsional kunci (?key=1). Cetak atau simpan
 // sebagai PDF untuk cadangan paper-based.
 pages.get("/app/exams/:id/print", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const examId = c.req.param("id");
   const showKey = c.req.query("key") === "1";
@@ -1056,7 +1057,7 @@ pages.get("/app/exams/:id/print", async (c) => {
 // Sertifikat pencapaian untuk satu sesi ujian jika nilainya ≥ KKM
 // (default 75). Format cetak A4 landscape, dekorasi border tebal.
 pages.get("/app/sessions/:sid/certificate", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sessionId = c.req.param("sid");
   const kkm = parseInt(c.req.query("kkm") ?? "75", 10);
@@ -1141,7 +1142,7 @@ pages.get("/app/sessions/:sid/certificate", async (c) => {
 // Rapor cetak per siswa: ringkasan nilai + tanda tangan + QR verifikasi.
 // Dibuka di browser Ctrl/Cmd+P Save as PDF (CSS @media print disiapkan).
 pages.get("/app/students/:id/report", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const studentId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -1293,7 +1294,7 @@ pages.get("/app/students/:id/report", async (c) => {
 
 // Analitik seorang siswa: tren nilai + persen benar per kategori.
 pages.get("/app/students/:id/analytics", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const studentId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -1394,7 +1395,7 @@ pages.get("/app/students/:id/analytics", async (c) => {
 });
 
 pages.get("/app/restore", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   if (sess.role !== "admin") return c.html(base("Restore", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
   return c.html(base("Restore backup", `
@@ -1433,7 +1434,7 @@ pages.get("/app/restore", async (c) => {
 });
 
 pages.get("/app/bulk", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   if (sess.role !== "admin") return c.html(base("Bulk", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -1508,7 +1509,7 @@ pages.get("/app/bulk", async (c) => {
 });
 
 pages.get("/app/audit", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   if (sess.role !== "admin") return c.html(base("Audit", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -1541,7 +1542,7 @@ pages.get("/app/audit", async (c) => {
 });
 
 pages.get("/app/users", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   if (sess.role !== "admin") return c.html(base("Staf", `<div class="card"><p class="err">Hanya admin yang boleh melihat halaman ini.</p><a class="btn" href="/app">Dashboard</a></div>`));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -1637,7 +1638,7 @@ pages.get("/app/users", async (c) => {
 // Bank soal publik: pilih kategori publish siapa saja bisa unduh JSON-nya
 // via URL unik /public/banks/<slug>.
 pages.get("/app/shared-banks", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   if (sess.role !== "admin") return c.html(base("Bank publik", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -1704,7 +1705,7 @@ pages.get("/app/shared-banks", async (c) => {
 });
 
 pages.get("/app/passages", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
@@ -1759,7 +1760,7 @@ pages.get("/app/passages", async (c) => {
 // dibuat untuk mereka semua. Siswa cukup login + buka /s, sesi sudah
 // terdaftar jadi tinggal 'Lanjutkan'.
 pages.get("/app/exams/:id/lab", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const examId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -1832,30 +1833,13 @@ pages.get("/app/exams/:id/lab", async (c) => {
 
 // Analytics guru per ujian: distractor + top kata di chat.
 pages.get("/app/exams/:id/insights", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const examId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [ex, distractors, chatSummary] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
     const e = await tx`select title from exams where id = ${examId}`;
-    const d = await tx`with per_option as (
-         select q.id as qid, substring(q.content->>'text', 1, 100) as text,
-                q.content->'options' as options, (k.answer_key->>'index')::int as correct_index,
-                coalesce(a.answer->>'index', 'null') as picked, count(*)::int as n
-         from questions q
-         join exam_questions eq on eq.question_id = q.id and eq.exam_id = ${examId}
-         left join question_keys k on k.question_id = q.id
-         left join answers a on a.question_id = q.id
-            and a.session_id in (select id from exam_sessions where exam_id = ${examId} and status = 'submitted')
-         where q.type in ('pg','benar_salah') and a.answer is not null
-         group by q.id, q.content, k.answer_key, a.answer->>'index'
-       )
-       select qid as id, text, options, correct_index,
-              sum(n)::int as total_answered,
-              jsonb_object_agg(picked, n) as distribution
-       from per_option
-       group by qid, text, options, correct_index
-       order by qid`;
+    const d = await distractorRows(tx, examId);
     const chat = await tx`select m.content, m.from_role, st.name as student_name, m.created_at
                            from exam_messages m
                            join exam_sessions es on es.id = m.session_id
@@ -1929,52 +1913,13 @@ pages.get("/app/exams/:id/insights", async (c) => {
 
 // Statistik butir soal (item analysis) per ujian.
 pages.get("/app/exams/:id/items", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const examId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [ex, items] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
     const e = await tx`select title from exams where id = ${examId}`;
-    const i = await tx`with
-      sessions as (
-        select es.id, sc.final_score,
-               ntile(4) over (order by sc.final_score) as quartile
-        from exam_sessions es
-        left join scores sc on sc.session_id = es.id
-        where es.exam_id = ${examId} and es.status = 'submitted'
-      ),
-      answered as (
-        select a.question_id, a.session_id, s.quartile,
-               case q.type
-                 when 'pg'          then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
-                 when 'benar_salah' then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
-                 when 'isian'       then exists(
-                   select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
-                   where lower(trim(x.value)) = lower(trim(a.answer->>'text')))
-                 when 'pgk_centang' then (
-                   select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
-                 ) = (
-                   select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
-                 )
-                 when 'menjodohkan' then a.answer->'pairs' = k.answer_key->'pairs'
-                 when 'uraian'      then (a.answer->>'manual_score')::numeric >= q.points * 0.5
-                 else false end as benar
-        from answers a
-        join sessions s on s.id = a.session_id
-        join questions q on q.id = a.question_id
-        left join question_keys k on k.question_id = q.id
-      )
-      select q.id, q.type, substring(q.content->>'text', 1, 120) as text,
-             count(ans.session_id)::int as n,
-             coalesce(round(avg(case when ans.benar then 1 else 0 end)::numeric, 3), 0) as p_value,
-             coalesce(round(
-               (avg(case when ans.benar and ans.quartile = 4 then 1 else 0 end) -
-                avg(case when ans.benar and ans.quartile = 1 then 1 else 0 end))::numeric, 3), 0) as discrimination
-      from questions q
-      join exam_questions eq on eq.question_id = q.id and eq.exam_id = ${examId}
-      left join answered ans on ans.question_id = q.id
-      group by q.id, q.type, q.content->>'text'
-      order by discrimination desc nulls last, p_value asc`;
+    const i = await itemRows(tx, examId);
     return [e[0], i] as const;
   });
   if (!ex) return c.notFound();
@@ -2014,7 +1959,7 @@ pages.get("/app/exams/:id/items", async (c) => {
 
 // Live monitoring untuk guru/admin: refresh otomatis tiap 3 detik.
 pages.get("/app/exams/:id/live", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const examId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -2081,12 +2026,21 @@ pages.get("/app/exams/:id/live", async (c) => {
               + '<td>' + r.answered + '/' + r.total + ' (' + pct + '%)' + bar + '</td>'
               + '<td>' + vio + '</td>'
               + '<td>' + dot(r.last_seen_at) + ' ' + timeAgo(r.last_seen_at) + '</td>'
-              + '<td><button onclick="openChat(\\'' + r.session_id + '\\', \\'' + escapeHtml(r.student_name).replace(/\\'/g,"") + '\\')" style="padding:4px 8px">Chat</button>'
-              + (r.status === "active" ? ' <button onclick="extend(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Tambah 5 menit">+5 mnt</button> <button onclick="pauseResume(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Jeda atau lanjutkan">Jeda</button> <button onclick="forceSubmit(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Kumpulkan paksa">Kumpulkan</button>' : "")
+              + '<td><button data-act="chat" data-sid="' + escapeHtml(r.session_id) + '" data-name="' + escapeHtml(r.student_name) + '" style="padding:4px 8px">Chat</button>'
+              + (r.status === "active" ? ' <button data-act="extend" data-sid="' + escapeHtml(r.session_id) + '" style="padding:4px 8px" title="Tambah 5 menit">+5 mnt</button> <button data-act="pause" data-sid="' + escapeHtml(r.session_id) + '" style="padding:4px 8px" title="Jeda atau lanjutkan">Jeda</button> <button data-act="submit" data-sid="' + escapeHtml(r.session_id) + '" style="padding:4px 8px" title="Kumpulkan paksa">Kumpulkan</button>' : "")
               + '</td></tr>';
           }).join('');
         } catch (e) { t.textContent = 'Gagal memuat: ' + e; }
       }
+      // Satu listener untuk semua tombol aksi: nama siswa tidak pernah masuk ke kode JS.
+      document.addEventListener('click', (ev) => {
+        const b = ev.target.closest('[data-act]'); if (!b) return;
+        const sid = b.dataset.sid, act = b.dataset.act;
+        if (act === 'chat') openChat(sid, b.dataset.name);
+        else if (act === 'extend') extend(sid);
+        else if (act === 'pause') pauseResume(sid);
+        else if (act === 'submit') forceSubmit(sid);
+      });
       function escapeHtml(s){return (s||'').replace(/[&<>\"']/g,(ch)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]);}
       tick(); setInterval(tick, 3000);
 
@@ -2132,7 +2086,7 @@ pages.get("/app/exams/:id/live", async (c) => {
           const el = document.getElementById('chats');
           if (d.length === 0) { el.innerHTML = '<p class="muted">Belum ada chat.</p>'; }
           else {
-            el.innerHTML = d.map((c) => '<div style="padding:8px; border-bottom:1px solid var(--bd); cursor:pointer" onclick="openChat(\\'' + c.session_id + '\\', \\'' + escapeHtml(c.student_name).replace(/\\'/g,"") + '\\')"><b>' + escapeHtml(c.student_name) + '</b> <span class="muted">· ' + c.msg_count + ' pesan · ' + (c.last_from === 'student' ? '' : '') + 'terakhir ' + new Date(c.last_at).toLocaleTimeString('id-ID') + '</span><br><span class="muted" style="font-size:13px">' + escapeHtml((c.last_msg || '').slice(0, 80)) + '</span></div>').join('');
+            el.innerHTML = d.map((c) => '<div style="padding:8px; border-bottom:1px solid var(--bd); cursor:pointer" data-act="chat" data-sid="' + escapeHtml(c.session_id) + '" data-name="' + escapeHtml(c.student_name) + '"><b>' + escapeHtml(c.student_name) + '</b> <span class="muted">· ' + c.msg_count + ' pesan · ' + (c.last_from === 'student' ? '' : '') + 'terakhir ' + new Date(c.last_at).toLocaleTimeString('id-ID') + '</span><br><span class="muted" style="font-size:13px">' + escapeHtml((c.last_msg || '').slice(0, 80)) + '</span></div>').join('');
           }
           if (activeSid) await loadChat();
         } catch(_){}
@@ -2166,7 +2120,7 @@ pages.get("/app/exams/:id/live", async (c) => {
 });
 
 pages.get("/app/categories", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const cats = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
@@ -2216,7 +2170,7 @@ pages.get("/app/categories", async (c) => {
 
 // Penilaian manual untuk soal uraian dalam satu sesi.
 pages.get("/app/sessions/:sid/grade", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sessionId = c.req.param("sid");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -2288,19 +2242,19 @@ pages.get("/app/sessions/:sid/grade", async (c) => {
 });
 
 pages.get("/app/questions", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const catFilter = c.req.query("category") ?? "";
   const [qs, cats, passages] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
     const qsRows = catFilter
-      ? await tx`select q.id, q.type, q.content, q.points, q.category_id, k.answer_key, k.rubric,
+      ? await tx`select q.id, q.type, q.content - 'image' - 'audio' as content, q.content ? 'image' as has_image, q.points, q.category_id, k.answer_key, k.rubric,
                         cat.name as category_name
                  from questions q left join question_keys k on k.question_id = q.id
                  left join categories cat on cat.id = q.category_id
                  where q.category_id = ${catFilter}
                  order by q.created_at desc`
-      : await tx`select q.id, q.type, q.content, q.points, q.category_id, k.answer_key, k.rubric,
+      : await tx`select q.id, q.type, q.content - 'image' - 'audio' as content, q.content ? 'image' as has_image, q.points, q.category_id, k.answer_key, k.rubric,
                         cat.name as category_name
                  from questions q left join question_keys k on k.question_id = q.id
                  left join categories cat on cat.id = q.category_id
@@ -2311,7 +2265,7 @@ pages.get("/app/questions", async (c) => {
   });
   type Q = {
     id: string; type: string; points: string;
-    content: { text: string; options?: string[]; image?: string };
+    content: { text: string; options?: string[] }; has_image: boolean;
     answer_key: { index?: number; accepted?: string[]; manual?: boolean } | null;
     rubric: string | null; category_name: string | null;
   };
@@ -2340,7 +2294,7 @@ pages.get("/app/questions", async (c) => {
       keyInfo = `<span class="muted" style="font-size:13px">Rubrik: ${esc(q.rubric ?? "(—)")}</span>`;
     }
     const catTag = q.category_name ? `<span class="pill" style="background:#2563eb1a;border-color:#2563eb;color:#2563eb">${esc(q.category_name)}</span> ` : "";
-    const img = q.content.image ? ` 🖼` : "";
+    const img = q.has_image ? ` 🖼` : "";
     return `<tr>
       <td>${catTag}<span class="pill">${esc(typeLabel[q.type] ?? q.type)}</span> ${esc(q.content.text)}${img}<br>${keyInfo}</td>
       <td>${q.points}</td>

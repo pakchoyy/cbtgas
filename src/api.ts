@@ -7,13 +7,15 @@ import { hashPin } from "./hash";
 import { sendEmail, inviteEmail, pinNotifyEmail } from "./email";
 function esc2(s: string): string { return s.replace(/[&<>"']/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[ch]!)); }
 import { audit, actorFromSession } from "./audit";
+import { distractorRows, itemRows } from "./analytics";
+import { createSession, finalizeSession, writeScore } from "./scoring";
 
 export const api = new Hono<{ Bindings: AuthBindings & { APP_ENV: string; RESEND_API_KEY?: string; EMAIL_FROM?: string } }>();
 
 api.use("/api/*", async (c, next) => {
   // /api/students sudah ada di index.ts (dengan fallback dev). Semua selain itu wajib sesi.
   if (c.req.path === "/api/students" && c.req.method === "GET") return next();
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.json({ error: "unauthorized" }, 401);
   c.set("sess" as never, sess);
   await next();
@@ -400,11 +402,11 @@ api.get("/api/questions", async (c) => {
   const cat = c.req.query("category");
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     cat
-      ? tx`select q.id, q.type, q.content, q.points, q.category_id, k.answer_key, k.rubric
+      ? tx`select q.id, q.type, q.content - 'image' - 'audio' as content, q.points, q.category_id, k.answer_key, k.rubric
            from questions q left join question_keys k on k.question_id = q.id
            where q.category_id = ${cat}
            order by q.created_at desc limit 500`
-      : tx`select q.id, q.type, q.content, q.points, q.category_id, k.answer_key, k.rubric
+      : tx`select q.id, q.type, q.content - 'image' - 'audio' as content, q.points, q.category_id, k.answer_key, k.rubric
            from questions q left join question_keys k on k.question_id = q.id
            order by q.created_at desc limit 500`,
   );
@@ -550,57 +552,20 @@ api.post("/api/exams/:id/lab-start", async (c) => {
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
-    const ex = await tx`select duration_minutes, status, ends_at, shuffle_questions, shuffle_options,
-                               questions_per_session
-                        from exams where id = ${examId}`;
+    const ex = await tx`select status from exams where id = ${examId}`;
     if (ex.length === 0) throw new Error("ujian tidak ditemukan");
-    const exam = ex[0] as { duration_minutes: number; status: string;
-      ends_at: string | null; shuffle_questions: boolean; shuffle_options: boolean;
-      questions_per_session: number };
-    if (exam.status !== "open") throw new Error("ujian harus berstatus open");
-    const qs = await tx`select question_id from exam_questions where exam_id = ${examId} order by position`;
-    const baseOrder = (qs as unknown as Array<{ question_id: string }>).map((x) => x.question_id);
-    if (baseOrder.length === 0) throw new Error("ujian belum punya soal");
-
-    const fy = <T>(arr: T[]): T[] => {
-      const a = arr.slice();
-      for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [a[i], a[j]] = [a[j], a[i]];
-      }
-      return a;
-    };
-
-    const created: string[] = []; const skipped: string[] = [];
+    if ((ex[0] as { status: string }).status !== "open") throw new Error("ujian harus berstatus open");
+    const created: string[] = []; const skipped: Array<{ id: string; reason: string }> = [];
     for (const studentId of body.student_ids) {
       const exist = await tx`select id from exam_sessions where exam_id = ${examId} and student_id = ${studentId}`;
-      if (exist.length) { skipped.push(studentId); continue; }
-      let order = baseOrder.slice();
-      if (exam.questions_per_session > 0 && exam.questions_per_session < order.length) {
-        order = fy(order).slice(0, exam.questions_per_session);
-      }
-      if (exam.shuffle_questions) order = fy(order);
-      const perms: Record<string, number[]> = {};
-      if (exam.shuffle_options) {
-        const qrows = await tx`select id, type, content from questions where id in ${tx(order)}`;
-        for (const q of qrows as unknown as Array<{ id: string; type: string; content: { options?: string[] } }>) {
-          if (q.type === "pg" && Array.isArray(q.content.options) && q.content.options.length > 1) {
-            perms[q.id] = fy(q.content.options.map((_, k) => k));
-          }
-        }
-      }
-      const durMs = Date.now() + exam.duration_minutes * 60_000;
-      const examEnd = exam.ends_at ? new Date(exam.ends_at).getTime() : Number.POSITIVE_INFINITY;
-      const deadline = new Date(Math.min(durMs, examEnd)).toISOString();
-      const ins = await tx`insert into exam_sessions
-        (school_id, exam_id, student_id, deadline_at, question_order)
-        values (${s.sid}, ${examId}, ${studentId}, ${deadline},
-                ${{ order, perms } as unknown as string}) returning id`;
-      created.push((ins[0] as { id: string }).id);
+      if (exist.length) { skipped.push({ id: studentId, reason: "sudah punya sesi" }); continue; }
+      try {
+        created.push(await tx.savepoint((sp: typeof tx) => createSession(sp, s.sid, examId, studentId)));
+      } catch (e) { skipped.push({ id: studentId, reason: (e as Error).message }); }
     }
     await audit(tx, actorFromSession(s), "exam.lab_start", "exam", examId,
       { created: created.length, skipped: skipped.length });
-    return { created: created.length, skipped: skipped.length };
+    return { created: created.length, skipped: skipped.length, skipped_detail: skipped };
   }).catch((e) => ({ error: (e as Error).message }));
   if ("error" in result) return c.json(result, 400);
   return c.json(result);
@@ -674,44 +639,9 @@ api.post("/api/sessions/:sid/force-submit", async (c) => {
     if (ses.length === 0) throw new Error("sesi tidak ditemukan");
     const row = ses[0] as { exam_id: string; student_id: string; school_id: string; status: string };
     if (row.status === "submitted") return { already: true };
-    const g = await tx`
-      select coalesce(sum(
-        case q.type
-          when 'pg'          then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
-          when 'benar_salah' then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
-          when 'isian'       then case when exists(
-                                    select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
-                                    where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
-                                  ) then q.points else 0 end
-          when 'pgk_centang' then greatest(0::numeric, (
-            (select count(*) from jsonb_array_elements_text(k.answer_key->'correct') kx
-               where kx::int in (select x::int from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) x))
-            -
-            (select count(*) from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) ax
-               where ax::int not in (select x::int from jsonb_array_elements_text(k.answer_key->'correct') x))
-          )::numeric / nullif(jsonb_array_length(k.answer_key->'correct'), 0) * q.points)
-          when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
-          else 0 end), 0) as got,
-             coalesce(sum(q.points), 0) as total
-      from jsonb_array_elements_text(coalesce(
-        (select case when jsonb_typeof(question_order) = 'object' then question_order->'order'
-                     when jsonb_typeof(question_order) = 'array'  then question_order
-                     else null end
-         from exam_sessions where id = ${sessionId}),
-        (select to_jsonb(array_agg(question_id)) from exam_questions where exam_id = ${row.exam_id})
-      )) as qid
-      join questions q on q.id = qid.value::uuid
-      left join question_keys k on k.question_id = q.id
-      left join answers a on a.session_id = ${sessionId} and a.question_id = q.id`;
-    const sc = g[0] as { got: string; total: string };
-    const auto = parseFloat(sc.total) > 0 ? (parseFloat(sc.got) / parseFloat(sc.total)) * 100 : 0;
-    await tx`update exam_sessions set status = 'submitted', finished_at = now() where id = ${sessionId}`;
-    await tx`insert into scores (session_id, school_id, exam_id, student_id, auto_score, final_score)
-      values (${sessionId}, ${row.school_id}, ${row.exam_id}, ${row.student_id}, ${auto}, ${auto})
-      on conflict (session_id) do update set auto_score = excluded.auto_score,
-         final_score = coalesce(scores.manual_score, excluded.auto_score)`;
-    await audit(tx, actorFromSession(s), "session.force_submit", "session", sessionId, { score: auto });
-    return { ok: true, score: auto };
+    const out = await finalizeSession(tx, sessionId, "submitted");
+    await audit(tx, actorFromSession(s), "session.force_submit", "session", sessionId, { score: out.score });
+    return { ok: true, ...out };
   }).catch((e) => ({ error: (e as Error).message }));
   if ("error" in r) return c.json(r, 400);
   return c.json(r);
@@ -955,51 +885,11 @@ api.post("/api/sessions/:sid/manual-score", async (c) => {
         set answer = coalesce(answer, '{}'::jsonb) || ${{ manual_score: row.score } as unknown as string}
         where session_id = ${sessionId} and question_id = ${row.question_id}`;
     }
-    // Hitung ulang skor sesi.
-    const sess = await tx`select exam_id, student_id from exam_sessions where id = ${sessionId}`;
+    const sess = await tx`select exam_id, student_id, status from exam_sessions where id = ${sessionId}`;
     if (sess.length === 0) throw new Error("sesi tidak ditemukan");
-    const examId = (sess[0] as { exam_id: string }).exam_id;
-    const studentId = (sess[0] as { student_id: string }).student_id;
-    const g = await tx`
-      select coalesce(sum(
-        case q.type
-          when 'pg'          then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
-          when 'benar_salah' then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
-          when 'isian'       then case when exists(
-                                    select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
-                                    where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
-                                  ) then q.points else 0 end
-          when 'pgk_centang' then greatest(0::numeric, (
-            (select count(*) from jsonb_array_elements_text(k.answer_key->'correct') kx
-               where kx::int in (select x::int from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) x))
-            -
-            (select count(*) from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) ax
-               where ax::int not in (select x::int from jsonb_array_elements_text(k.answer_key->'correct') x))
-          )::numeric / nullif(jsonb_array_length(k.answer_key->'correct'), 0) * q.points)
-          when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
-          when 'uraian'      then coalesce((a.answer->>'manual_score')::numeric, 0)
-          when 'simulasi'    then coalesce((a.answer->>'manual_score')::numeric, 0)
-          else 0 end), 0) as got,
-             coalesce(sum(q.points), 0) as total
-        from jsonb_array_elements_text(coalesce(
-          (select case
-                    when jsonb_typeof(question_order) = 'object' then question_order->'order'
-                    when jsonb_typeof(question_order) = 'array'  then question_order
-                    else null end
-           from exam_sessions where id = ${sessionId}),
-          (select to_jsonb(array_agg(question_id)) from exam_questions where exam_id = ${examId})
-        )) as qid
-        join questions q on q.id = qid.value::uuid
-        left join question_keys k on k.question_id = q.id
-        left join answers a on a.session_id = ${sessionId} and a.question_id = q.id`;
-    const sc = g[0] as { got: string; total: string };
-    const total = parseFloat(sc.total); const got = parseFloat(sc.got);
-    const final_score = total > 0 ? (got / total) * 100 : 0;
-    await tx`insert into scores (session_id, school_id, exam_id, student_id, auto_score, manual_score, final_score, approved_by, approved_at)
-             values (${sessionId}, ${s.sid}, ${examId}, ${studentId}, null, ${got}, ${final_score}, ${s.uid}, now())
-             on conflict (session_id) do update set manual_score = excluded.manual_score,
-                final_score = excluded.final_score, approved_by = excluded.approved_by, approved_at = excluded.approved_at`;
-    return { ok: true, final: final_score };
+    const r = sess[0] as { exam_id: string; student_id: string };
+    const sc = await writeScore(tx, sessionId, r.exam_id, r.student_id, s.sid, s.uid);
+    return { ok: true, final: sc.score };
   });
   return c.json(out);
 });
@@ -1016,6 +906,13 @@ api.post("/api/shared-banks", async (c) => {
   if (!/^[a-z0-9-]{3,64}$/.test(body.slug)) return c.json({ error: "slug: huruf kecil/digit/strip 3-64" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    // Kunci jawaban ikut terbit — tolak bila ada soal yang masih dipakai ujian berjalan/terjadwal.
+    const live = await tx`select count(distinct q.id)::int as n from questions q
+      join exam_questions eq on eq.question_id = q.id
+      join exams e on e.id = eq.exam_id and e.status in ('open', 'scheduled')
+      where ${body.category_id ?? null}::uuid is null or q.category_id = ${body.category_id ?? null}::uuid`;
+    const n = (live[0] as { n: number }).n;
+    if (n > 0) throw new Error(`${n} soal masih dipakai ujian yang terbuka/terjadwal. Terbitkan setelah ujian ditutup.`);
     const qs = body.category_id
       ? await tx`select q.type, q.content, q.points, k.answer_key, k.rubric
                   from questions q left join question_keys k on k.question_id = q.id
@@ -1733,24 +1630,7 @@ api.get("/api/exams/:id/distractors", async (c) => {
   const examId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`with per_option as (
-         select q.id as qid, substring(q.content->>'text', 1, 100) as text,
-                q.content->'options' as options, (k.answer_key->>'index')::int as correct_index,
-                coalesce(a.answer->>'index', 'null') as picked, count(*)::int as n
-         from questions q
-         join exam_questions eq on eq.question_id = q.id and eq.exam_id = ${examId}
-         left join question_keys k on k.question_id = q.id
-         left join answers a on a.question_id = q.id
-            and a.session_id in (select id from exam_sessions where exam_id = ${examId} and status = 'submitted')
-         where q.type in ('pg','benar_salah') and a.answer is not null
-         group by q.id, q.content, k.answer_key, a.answer->>'index'
-       )
-       select qid as id, text, options, correct_index,
-              sum(n)::int as total_answered,
-              jsonb_object_agg(picked, n) as distribution
-       from per_option
-       group by qid, text, options, correct_index
-       order by qid`,
+    distractorRows(tx, examId),
   );
   return c.json(rows);
 });
@@ -1764,46 +1644,7 @@ api.get("/api/exams/:id/items", async (c) => {
   const examId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`with
-      sessions as (
-        select es.id, sc.final_score,
-               ntile(4) over (order by sc.final_score) as quartile
-        from exam_sessions es
-        left join scores sc on sc.session_id = es.id
-        where es.exam_id = ${examId} and es.status = 'submitted'
-      ),
-      answered as (
-        select a.question_id, a.session_id, s.quartile,
-               case q.type
-                 when 'pg'          then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
-                 when 'benar_salah' then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
-                 when 'isian'       then exists(
-                   select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
-                   where lower(trim(x.value)) = lower(trim(a.answer->>'text')))
-                 when 'pgk_centang' then (
-                   select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
-                 ) = (
-                   select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
-                 )
-                 when 'menjodohkan' then a.answer->'pairs' = k.answer_key->'pairs'
-                 when 'uraian'      then (a.answer->>'manual_score')::numeric >= q.points * 0.5
-                 else false end as benar
-        from answers a
-        join sessions s on s.id = a.session_id
-        join questions q on q.id = a.question_id
-        left join question_keys k on k.question_id = q.id
-      )
-      select q.id, q.type, substring(q.content->>'text', 1, 120) as text,
-             count(ans.session_id)::int as n,
-             coalesce(round(avg(case when ans.benar then 1 else 0 end)::numeric, 3), 0) as p_value,
-             coalesce(round(
-               (avg(case when ans.benar and ans.quartile = 4 then 1 else 0 end) -
-                avg(case when ans.benar and ans.quartile = 1 then 1 else 0 end))::numeric, 3), 0) as discrimination
-      from questions q
-      join exam_questions eq on eq.question_id = q.id and eq.exam_id = ${examId}
-      left join answered ans on ans.question_id = q.id
-      group by q.id, q.type, q.content->>'text'
-      order by discrimination desc nulls last, p_value asc`,
+    itemRows(tx, examId),
   );
   return c.json(rows);
 });

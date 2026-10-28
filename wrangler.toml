@@ -14,7 +14,9 @@ id = "71378b2863a647df8b716a1ca5eef9be"
 crons = ["* * * * *"]
 
 [vars]
-APP_ENV = "dev"
+APP_ENV = "production"
+# Tombol "Coba demo" + /auth/dev-login (masuk sebagai admin sekolah demo-sma). Hapus untuk mematikan.
+DEMO_LOGIN = "1"
 APP_ORIGIN = "https://cbt-api.pulsachoy.workers.dev"
 
 # Secrets (set via `wrangler secret put`):

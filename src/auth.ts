@@ -26,6 +26,7 @@ export type AuthBindings = {
   GOOGLE_CLIENT_SECRET: string;
   SESSION_SECRET: string;
   APP_ORIGIN: string;
+  DEMO_LOGIN?: string;
 };
 
 type Mode = "login" | "register";
@@ -191,10 +192,10 @@ auth.post("/auth/logout", (c) => {
   return new Response(null, { status: 302, headers: h });
 });
 
-// Login shortcut untuk demo. Hanya aktif saat APP_ENV != "production".
+// Login shortcut untuk demo. Hanya aktif saat DEMO_LOGIN = "1".
 // Login sebagai admin pertama di sekolah demo-sma.
 auth.post("/auth/dev-login", async (c) => {
-  if ((c.env as AuthBindings & { APP_ENV?: string }).APP_ENV === "production") {
+  if (c.env.DEMO_LOGIN !== "1") {
     return c.json({ error: "disabled" }, 404);
   }
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -226,12 +227,21 @@ auth.get("/auth/me", async (c) => {
   return c.json({ email: s.email, role: s.role, school_id: s.sid });
 });
 
-// Helper untuk route lain: ambil sesi staf dari cookie.
+// Helper untuk route lain: ambil sesi staf dari cookie. Token siswa tidak
+// lolos (cek role), dan staf yang dinonaktifkan langsung kehilangan akses
+// tanpa menunggu cookie kedaluwarsa (cek users.active lewat find_staff_by_email).
+const STAFF_ROLES = new Set(["admin", "teacher", "proctor"]);
 export async function requireStaff(
   cookieHeaderStr: string | null | undefined,
   secret: string,
+  hyperdrive: Hyperdrive,
 ): Promise<Session | null> {
   const token = readCookie(cookieHeaderStr, SESSION_COOKIE);
   if (!token) return null;
-  return verify(token, secret);
+  const s = await verify(token, secret);
+  if (!s || !STAFF_ROLES.has(s.role) || !s.email) return null;
+  const sql = connect(hyperdrive.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select 1 from find_staff_by_email(${s.email}) where user_id = ${s.uid} and school_id = ${s.sid}`);
+  return rows.length ? s : null;
 }

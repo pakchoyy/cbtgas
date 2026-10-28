@@ -4,6 +4,7 @@ import { auth, requireStaff, AuthBindings } from "./auth";
 import { pages } from "./pages";
 import { api } from "./api";
 import { student } from "./student";
+import { finalizeSession } from "./scoring";
 
 type Bindings = AuthBindings & { APP_ENV: string };
 const app = new Hono<{ Bindings: Bindings }>();
@@ -119,13 +120,9 @@ app.route("/", pages);
 
 // Siswa milik sekolah yang sedang login (role staf).
 app.get("/api/students", async (c) => {
-  // Fallback: header x-school-id masih diterima selama APP_ENV=dev untuk testing demo.
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
-  const devSchool = c.env.APP_ENV !== "production" ? c.req.header("x-school-id") : null;
-  const schoolId = sess?.sid ?? devSchool;
-  const role = sess?.role ?? "teacher";
-  const userId = sess?.uid;
-  if (!schoolId) return c.json({ error: "unauthorized" }, 401);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  if (!sess) return c.json({ error: "unauthorized" }, 401);
+  const schoolId = sess.sid, role = sess.role, userId = sess.uid;
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId, role, userId }, (tx) =>
@@ -157,48 +154,9 @@ async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed
         returning id`;
       // Sesi aktif yang deadline-nya lewat → expired, sekalian catat auto-score
       // supaya guru tidak harus menunggu siswa klik submit.
-      const expired = await tx`
-        update exam_sessions set status = 'expired', finished_at = coalesce(finished_at, now())
-        where status = 'active' and deadline_at <= now()
-        returning id, exam_id, student_id, school_id`;
-      for (const row of expired as unknown as Array<{ id: string; exam_id: string; student_id: string; school_id: string }>) {
-        const g = await tx`
-          select coalesce(sum(
-            case q.type
-              when 'pg'          then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
-              when 'benar_salah' then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
-              when 'isian'       then case when exists(
-                                        select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
-                                        where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
-                                      ) then q.points else 0 end
-              when 'pgk_centang' then greatest(0::numeric, (
-                (select count(*) from jsonb_array_elements_text(k.answer_key->'correct') kx
-                   where kx::int in (select x::int from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) x))
-                -
-                (select count(*) from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) ax
-                   where ax::int not in (select x::int from jsonb_array_elements_text(k.answer_key->'correct') x))
-              )::numeric / nullif(jsonb_array_length(k.answer_key->'correct'), 0) * q.points)
-              when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
-              else 0 end), 0) as got, coalesce(sum(q.points), 0) as total
-          from jsonb_array_elements_text(coalesce(
-            (select case
-                      when jsonb_typeof(question_order) = 'object' then question_order->'order'
-                      when jsonb_typeof(question_order) = 'array'  then question_order
-                      else null end
-             from exam_sessions where id = ${row.id}),
-            (select to_jsonb(array_agg(question_id)) from exam_questions where exam_id = ${row.exam_id})
-          )) as qid
-          join questions q on q.id = qid.value::uuid
-          left join question_keys k on k.question_id = q.id
-          left join answers a on a.session_id = ${row.id} and a.question_id = q.id`;
-        const sc = g[0] as { got: string; total: string };
-        const total = parseFloat(sc.total); const got = parseFloat(sc.got);
-        const auto = total > 0 ? (got / total) * 100 : 0;
-        await tx`insert into scores (session_id, school_id, exam_id, student_id, auto_score, final_score)
-          values (${row.id}, ${row.school_id}, ${row.exam_id}, ${row.student_id}, ${auto}, ${auto})
-          on conflict (session_id) do update set auto_score = excluded.auto_score,
-             final_score = coalesce(scores.manual_score, excluded.auto_score)`;
-      }
+      const expired = await tx`select id from exam_sessions where status = 'active' and deadline_at <= now()`;
+      for (const row of expired as unknown as Array<{ id: string }>) await finalizeSession(tx, row.id, "expired");
+      await tx`delete from rate_counters where window_start < now() - interval '1 day'`;
       console.log(`cron: opened=${opened.length} closed=${closed.length} expired=${expired.length}`);
       return { opened: opened.length, closed: closed.length, expired: expired.length };
     });
