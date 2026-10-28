@@ -632,6 +632,55 @@ pages.get("/app/exams/:id", async (c) => {
   `));
 });
 
+pages.get("/app/categories", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const cats = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
+    tx`select c.id, c.name,
+              (select count(*) from questions q where q.category_id = c.id) as qc
+       from categories c order by c.name`,
+  );
+  type C = { id: string; name: string; qc: string };
+  const list = (cats as unknown as C[]).map((cl) => `<tr>
+    <td>${esc(cl.name)}</td><td>${cl.qc}</td>
+    <td style="text-align:right"><button class="danger" data-del="${esc(cl.id)}">Hapus</button></td>
+  </tr>`).join("") || `<tr><td colspan="3" class="muted">Belum ada kategori.</td></tr>`;
+  return c.html(base("Kategori soal", `
+    <div class="card">
+      <h1>Kategori soal</h1>
+      <p class="sub"><a href="/app/questions">← Bank soal</a></p>
+      <form id="fc">
+        <label>Nama kategori</label>
+        <input name="name" required placeholder="Matematika / Bahasa Indonesia / ...">
+        <div class="row"><button class="primary" type="submit">Tambah</button></div>
+        <p class="err" id="err" hidden></p>
+      </form>
+    </div>
+    <div class="card">
+      <table><thead><tr><th>Nama</th><th>Soal</th><th></th></tr></thead>
+        <tbody id="tb">${list}</tbody></table>
+    </div>
+    <script>
+      document.getElementById('fc').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = document.getElementById('err'); err.hidden = true;
+        const d = Object.fromEntries(new FormData(e.target));
+        const r = await fetch('/api/categories', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+        if (r.ok) location.reload();
+        else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
+      });
+      document.getElementById('tb').addEventListener('click', async (e) => {
+        const id = e.target.dataset.del; if (!id) return;
+        if (!confirm('Hapus kategori? Soal yang pakai kategori ini akan jadi tanpa kategori.')) return;
+        const r = await fetch('/api/categories/' + id, { method: 'DELETE', credentials: 'same-origin' });
+        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+      });
+    </script>
+  `));
+});
+
 // Penilaian manual untuk soal uraian dalam satu sesi.
 pages.get("/app/sessions/:sid/grade", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
@@ -709,17 +758,33 @@ pages.get("/app/questions", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const qs = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
-    tx`select q.id, q.type, q.content, q.points, k.answer_key, k.rubric
-       from questions q left join question_keys k on k.question_id = q.id
-       order by q.created_at desc`,
-  );
+  const catFilter = c.req.query("category") ?? "";
+  const [qs, cats] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const qsRows = catFilter
+      ? await tx`select q.id, q.type, q.content, q.points, q.category_id, k.answer_key, k.rubric,
+                        cat.name as category_name
+                 from questions q left join question_keys k on k.question_id = q.id
+                 left join categories cat on cat.id = q.category_id
+                 where q.category_id = ${catFilter}
+                 order by q.created_at desc`
+      : await tx`select q.id, q.type, q.content, q.points, q.category_id, k.answer_key, k.rubric,
+                        cat.name as category_name
+                 from questions q left join question_keys k on k.question_id = q.id
+                 left join categories cat on cat.id = q.category_id
+                 order by q.created_at desc`;
+    const catsRows = await tx`select id, name from categories order by name`;
+    return [qsRows, catsRows] as const;
+  });
   type Q = {
     id: string; type: string; points: string;
-    content: { text: string; options?: string[] };
+    content: { text: string; options?: string[]; image?: string };
     answer_key: { index?: number; accepted?: string[]; manual?: boolean } | null;
-    rubric: string | null;
+    rubric: string | null; category_name: string | null;
   };
+  type Cat = { id: string; name: string };
+  const catList = cats as unknown as Cat[];
+  const catOpts = catList.map((cl) => `<option value="${esc(cl.id)}" ${cl.id === catFilter ? "selected" : ""}>${esc(cl.name)}</option>`).join("");
+  const catOptsForm = catList.map((cl) => `<option value="${esc(cl.id)}">${esc(cl.name)}</option>`).join("");
   const typeLabel: Record<string, string> = { pg: "Pil. ganda", benar_salah: "Benar/Salah", isian: "Isian", uraian: "Uraian" };
   const list = (qs as unknown as Q[]).map((q) => {
     let keyInfo = "";
@@ -734,8 +799,10 @@ pages.get("/app/questions", async (c) => {
     } else if (q.type === "uraian") {
       keyInfo = `<span class="muted" style="font-size:13px">Rubrik: ${esc(q.rubric ?? "(—)")}</span>`;
     }
+    const catTag = q.category_name ? `<span class="pill" style="background:#2563eb1a;border-color:#2563eb;color:#2563eb">${esc(q.category_name)}</span> ` : "";
+    const img = q.content.image ? ` 🖼` : "";
     return `<tr>
-      <td><span class="pill">${esc(typeLabel[q.type] ?? q.type)}</span> ${esc(q.content.text)}<br>${keyInfo}</td>
+      <td>${catTag}<span class="pill">${esc(typeLabel[q.type] ?? q.type)}</span> ${esc(q.content.text)}${img}<br>${keyInfo}</td>
       <td>${q.points}</td>
       <td style="text-align:right"><button class="danger" data-del="${esc(q.id)}">Hapus</button></td>
     </tr>`;
@@ -743,8 +810,10 @@ pages.get("/app/questions", async (c) => {
   return c.html(base("Bank soal", `
     <div class="card">
       <h1>Bank soal</h1>
-      <p class="sub"><a href="/app/exams">← Ujian</a></p>
+      <p class="sub"><a href="/app/exams">← Ujian</a> · <a href="/app/categories">Kategori</a></p>
       <form id="fq">
+        <label>Kategori <span class="muted">(opsional, kelola di /app/categories)</span></label>
+        <select name="category_id"><option value="">— tanpa kategori —</option>${catOptsForm}</select>
         <label>Tipe soal</label>
         <select name="type" id="qtype">
           <option value="pg">Pilihan ganda</option>
@@ -775,14 +844,32 @@ pages.get("/app/questions", async (c) => {
           <textarea name="rubric" rows="3" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
         </div>
 
+        <label>Gambar <span class="muted">(opsional, max 400 KB; JPG/PNG/WebP)</span></label>
+        <input type="file" id="imgFile" accept="image/*">
+        <div id="imgPrev" style="margin:8px 0"></div>
+
         <label>Poin</label>
         <input name="points" type="number" step="0.5" min="0.5" value="1" required>
-        <div class="row"><button class="primary" type="submit">Tambah soal</button></div>
+        <div class="row">
+          <button class="primary" type="submit">Tambah soal</button>
+          <button type="button" id="btnImportQ">Import CSV</button>
+          <input type="file" id="fileCsvQ" accept=".csv,text/csv" hidden>
+        </div>
+        <p class="muted" style="margin-top:8px">
+          CSV: header <code>type,text,options,correct,accepted,rubric,points,category</code>.
+          Pisah pilihan/jawaban dengan <code>|</code>. Tipe: pg, benar_salah, isian, uraian.
+        </p>
         <p class="err" id="errq" hidden></p>
       </form>
     </div>
     <div class="card">
       <h2>Daftar</h2>
+      <div class="row" style="margin-bottom:8px">
+        <select id="filterCat" style="max-width:260px">
+          <option value="">Semua kategori</option>
+          ${catOpts}
+        </select>
+      </div>
       <table><thead><tr><th>Soal</th><th>Poin</th><th></th></tr></thead>
         <tbody id="tb">${list}</tbody></table>
     </div>
@@ -799,13 +886,44 @@ pages.get("/app/questions", async (c) => {
         const r = await fetch('/api/questions/' + id, { method: 'DELETE', credentials: 'same-origin' });
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
       });
+      // Image: convert ke data URI, preview, simpan di state.
+      let imageData = null;
+      $$('#imgFile').addEventListener('change', async (e) => {
+        const f = e.target.files[0]; if (!f) { imageData = null; $$('#imgPrev').innerHTML = ''; return; }
+        if (f.size > 400_000) { alert('Gambar > 400 KB; kompres dulu.'); e.target.value = ''; return; }
+        const buf = await f.arrayBuffer();
+        const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        imageData = 'data:' + f.type + ';base64,' + b64;
+        $$('#imgPrev').innerHTML = '<img src="' + imageData + '" style="max-width:200px;max-height:200px;border-radius:8px;border:1px solid var(--bd)">';
+      });
+      // Filter kategori → navigasi
+      $$('#filterCat').addEventListener('change', (e) => {
+        const v = e.target.value;
+        location.href = '/app/questions' + (v ? '?category=' + v : '');
+      });
+      // CSV import
+      $$('#btnImportQ').addEventListener('click', () => $$('#fileCsvQ').click());
+      $$('#fileCsvQ').addEventListener('change', async (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        const text = await f.text();
+        const r = await fetch('/api/questions/import', { method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type': 'text/csv' }, body: text });
+        const j = await r.json().catch(() => ({ error: 'HTTP '+r.status }));
+        if (!r.ok) { alert('Import gagal: ' + (j.error || r.status)); return; }
+        let msg = j.ok + ' soal diimport.';
+        if (j.fail?.length) msg += '\\n' + j.fail.length + ' gagal:\\n' + j.fail.slice(0,10).map(x => '  baris ' + x.row + ': ' + x.error).join('\\n');
+        alert(msg); location.reload();
+      });
+
       document.getElementById('fq').addEventListener('submit', async (e) => {
         e.preventDefault();
         const err = document.getElementById('errq'); err.hidden = true;
         const text = e.target.text.value.trim();
         const type = $$('#qtype').value;
         const points = +e.target.points.value;
-        const payload = { type, text, points };
+        const category_id = e.target.category_id.value || null;
+        const payload = { type, text, points, category_id };
+        if (imageData) payload.image = imageData;
         if (type === 'pg') {
           const opts = [...e.target.querySelectorAll('input[name=opt]')].map((x) => x.value.trim()).filter(Boolean);
           const correctEl = e.target.querySelector('input[name=correct]:checked');

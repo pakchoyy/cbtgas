@@ -188,15 +188,59 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-// ===== Bank soal (hanya tipe 'pg' untuk versi pertama) =====
+// ===== Kategori soal =====
+
+api.get("/api/categories", async (c) => {
+  const s = getSess(c);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select c.id, c.name, c.parent_id,
+              (select count(*) from questions q where q.category_id = c.id) as question_count
+       from categories c order by c.name`,
+  );
+  return c.json(rows);
+});
+
+api.post("/api/categories", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null) as null | { name: string; parent_id?: string | null };
+  if (!body?.name) return c.json({ error: "nama kategori kosong" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`insert into categories (school_id, name, parent_id)
+       values (${s.sid}, ${body.name}, ${body.parent_id ?? null})
+       returning id, name, parent_id`,
+  );
+  return c.json(r[0], 201);
+});
+
+api.delete("/api/categories/:id", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`delete from categories where id = ${c.req.param("id")} returning id`,
+  );
+  if (r.length === 0) return c.json({ error: "not found" }, 404);
+  return c.json({ ok: true });
+});
+
+// ===== Bank soal =====
 
 api.get("/api/questions", async (c) => {
   const s = getSess(c);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const cat = c.req.query("category");
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`select q.id, q.type, q.content, q.points, k.answer_key, k.rubric
-       from questions q left join question_keys k on k.question_id = q.id
-       order by q.created_at desc limit 500`,
+    cat
+      ? tx`select q.id, q.type, q.content, q.points, q.category_id, k.answer_key, k.rubric
+           from questions q left join question_keys k on k.question_id = q.id
+           where q.category_id = ${cat}
+           order by q.created_at desc limit 500`
+      : tx`select q.id, q.type, q.content, q.points, q.category_id, k.answer_key, k.rubric
+           from questions q left join question_keys k on k.question_id = q.id
+           order by q.created_at desc limit 500`,
   );
   return c.json(rows);
 });
@@ -214,9 +258,17 @@ api.post("/api/questions", async (c) => {
   const type = String(body.type || "pg");
   const text = String(body.text || "").trim();
   const points = typeof body.points === "number" ? body.points : 1;
-  if (!text) return c.json({ error: "teks soal kosong" }, 400);
+  const categoryId = body.category_id ? String(body.category_id) : null;
+  // Gambar opsional, disimpan sebagai data URI di content.image. Cap 400KB
+  // supaya payload DB tetap wajar (jsonb) dan push ke Hyperdrive tidak molor.
+  const image = body.image ? String(body.image) : null;
+  if (!text && !image) return c.json({ error: "teks soal kosong" }, 400);
+  if (image) {
+    if (!image.startsWith("data:image/")) return c.json({ error: "image harus data URI gambar" }, 400);
+    if (image.length > 400_000) return c.json({ error: "ukuran gambar > 400KB" }, 413);
+  }
 
-  let content: unknown; let answer_key: unknown; let rubric: string | null = null;
+  let content: Record<string, unknown>; let answer_key: unknown; let rubric: string | null = null;
   if (type === "pg") {
     const options = Array.isArray(body.options) ? (body.options as string[]) : [];
     const correct = Number(body.correct);
@@ -239,12 +291,13 @@ api.post("/api/questions", async (c) => {
   } else {
     return c.json({ error: `tipe '${type}' belum didukung` }, 400);
   }
+  if (image) content.image = image;
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
-    const q = await tx`insert into questions (school_id, author_id, type, content, points)
+    const q = await tx`insert into questions (school_id, author_id, type, content, points, category_id)
       values (${s.sid}, ${s.uid}, ${type},
-              ${content as unknown as string}, ${points}) returning id`;
+              ${content as unknown as string}, ${points}, ${categoryId}) returning id`;
     const qid = (q[0] as { id: string }).id;
     await tx`insert into question_keys (question_id, school_id, answer_key, rubric)
       values (${qid}, ${s.sid}, ${answer_key as unknown as string}, ${rubric})`;
@@ -337,6 +390,83 @@ api.post("/api/sessions/:sid/manual-score", async (c) => {
     return { ok: true, final: final_score };
   });
   return c.json(out);
+});
+
+// Import bank soal dari CSV. Format header:
+//   type,text,options,correct,accepted,rubric,points,category
+// options & accepted dipisah dengan '|'. correct untuk pg = index 0-based,
+// untuk benar_salah = true/false. Category dicocokkan dengan nama.
+api.post("/api/questions/import", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const text = await c.req.text();
+  const rows = parseCsv(text);
+  if (rows.length === 0) return c.json({ error: "csv kosong" }, 400);
+  const header = rows[0].map((x) => x.toLowerCase().trim());
+  const idx: Record<string, number> = {};
+  for (const k of ["type","text","options","correct","accepted","rubric","points","category"]) {
+    idx[k] = header.indexOf(k);
+  }
+  if (idx.type < 0 || idx.text < 0) {
+    return c.json({ error: "header wajib: type, text (opsional: options, correct, accepted, rubric, points, category)" }, 400);
+  }
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const cats = await tx`select id, name from categories`;
+    const catMap = new Map<string, string>();
+    for (const r of cats as unknown as Array<{ id: string; name: string }>) catMap.set(r.name, r.id);
+    const ok: string[] = []; const fail: { row: number; error: string }[] = [];
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i]; if (r.length <= 1 && (!r[0] || r[0] === "")) continue;
+      const type = r[idx.type]?.trim();
+      const qtext = r[idx.text]?.trim();
+      const points = idx.points >= 0 && r[idx.points] ? parseFloat(r[idx.points]) : 1;
+      const catName = idx.category >= 0 ? r[idx.category]?.trim() : "";
+      const categoryId: string | null = catName ? (catMap.get(catName) ?? null) : null;
+      if (catName && !categoryId) { fail.push({ row: i + 1, error: `kategori '${catName}' tidak ada` }); continue; }
+      if (!type || !qtext) { fail.push({ row: i + 1, error: "type/text kosong" }); continue; }
+
+      let content: Record<string, unknown>; let answer_key: unknown; let rubric: string | null = null;
+      if (type === "pg") {
+        const options = (r[idx.options] ?? "").split("|").map((x) => x.trim()).filter(Boolean);
+        const correct = parseInt((r[idx.correct] ?? "").trim(), 10);
+        if (options.length < 2 || !Number.isInteger(correct) || correct < 0 || correct >= options.length) {
+          fail.push({ row: i + 1, error: "pg: butuh ≥2 opsi (|) dan correct index valid" }); continue;
+        }
+        content = { text: qtext, options }; answer_key = { index: correct };
+      } else if (type === "benar_salah") {
+        const v = (r[idx.correct] ?? "").trim().toLowerCase();
+        if (v !== "true" && v !== "false" && v !== "benar" && v !== "salah") {
+          fail.push({ row: i + 1, error: "benar_salah: correct harus true/false/benar/salah" }); continue;
+        }
+        const isTrue = v === "true" || v === "benar";
+        content = { text: qtext, options: ["Benar", "Salah"] }; answer_key = { index: isTrue ? 0 : 1 };
+      } else if (type === "isian") {
+        const accepted = (r[idx.accepted] ?? "").split("|").map((x) => x.trim()).filter(Boolean);
+        if (accepted.length === 0) { fail.push({ row: i + 1, error: "isian: accepted kosong" }); continue; }
+        content = { text: qtext }; answer_key = { accepted };
+      } else if (type === "uraian") {
+        content = { text: qtext }; answer_key = { manual: true };
+        rubric = idx.rubric >= 0 ? (r[idx.rubric] ?? "").trim() || null : null;
+      } else {
+        fail.push({ row: i + 1, error: `tipe '${type}' tidak didukung` }); continue;
+      }
+      try {
+        const q = await tx`insert into questions
+          (school_id, author_id, type, content, points, category_id)
+          values (${s.sid}, ${s.uid}, ${type}, ${content as unknown as string}, ${points}, ${categoryId})
+          returning id`;
+        const qid = (q[0] as { id: string }).id;
+        await tx`insert into question_keys (question_id, school_id, answer_key, rubric)
+          values (${qid}, ${s.sid}, ${answer_key as unknown as string}, ${rubric})`;
+        ok.push(qid);
+      } catch (e) {
+        fail.push({ row: i + 1, error: (e as Error).message.slice(0, 120) });
+      }
+    }
+    return { ok: ok.length, fail };
+  });
+  return c.json(result);
 });
 
 api.delete("/api/questions/:id", async (c) => {

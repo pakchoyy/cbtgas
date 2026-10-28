@@ -125,6 +125,127 @@ student.get("/s", async (c) => {
         <tbody>${list}</tbody>
       </table>
     </div>
+    <div class="card">
+      <h2>Riwayat skor</h2>
+      <p class="muted"><a href="/s/history">Lihat semua ujian yang pernah saya kerjakan →</a></p>
+    </div>
+  `));
+});
+
+// Riwayat ujian siswa: semua sesi yang pernah dibuka (submitted / expired / locked).
+student.get("/s/history", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.redirect("/s/login");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
+    tx`select es.id as session_id, e.title, e.kind, es.status,
+              es.started_at, es.finished_at, sc.final_score
+       from exam_sessions es
+       join exams e on e.id = es.exam_id
+       left join scores sc on sc.session_id = es.id
+       where es.student_id = ${stu.uid}
+       order by es.started_at desc`,
+  );
+  type R = { session_id: string; title: string; kind: string; status: string;
+    started_at: string; finished_at: string | null; final_score: string | null };
+  const list = (rows as unknown as R[]).map((r) => {
+    const reviewBtn = r.status === "submitted"
+      ? `<a href="/s/history/${esc(r.session_id)}">Review</a>` : "";
+    return `<tr>
+      <td><b>${esc(r.title)}</b><br><span class="muted">${esc(r.kind)}</span></td>
+      <td>${esc(r.status)}</td>
+      <td>${r.final_score ?? "-"}</td>
+      <td>${new Date(r.started_at).toLocaleString("id-ID")}</td>
+      <td>${reviewBtn}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="5" class="muted">Belum ada riwayat.</td></tr>`;
+  return c.html(page("Riwayat ujian", `
+    <div class="card">
+      <h1>Riwayat ujian</h1>
+      <p class="sub"><a href="/s">← Portal</a></p>
+    </div>
+    <div class="card">
+      <table style="width:100%; border-collapse:collapse">
+        <thead><tr><th>Ujian</th><th>Status</th><th>Nilai</th><th>Mulai</th><th></th></tr></thead>
+        <tbody>${list}</tbody>
+      </table>
+    </div>
+  `));
+});
+
+// Review satu sesi: lihat soal + jawaban sendiri + kunci (hanya untuk soal
+// auto-grade; uraian tetap tanpa kunci). Hanya setelah submit.
+student.get("/s/history/:sid", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.redirect("/s/login");
+  const sessionId = c.req.param("sid");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
+    const sess = await tx`
+      select es.id, es.status, e.title, sc.final_score
+      from exam_sessions es join exams e on e.id = es.exam_id
+      left join scores sc on sc.session_id = es.id
+      where es.id = ${sessionId} and es.student_id = ${stu.uid}`;
+    if (sess.length === 0) return null;
+    const row = sess[0] as { status: string; title: string; final_score: string | null };
+    if (row.status !== "submitted") return { title: row.title, locked: true };
+    const items = await tx`
+      select q.id, q.type, q.content, q.points, k.answer_key, a.answer
+      from exam_questions eq
+      join questions q on q.id = eq.question_id
+      left join question_keys k on k.question_id = q.id
+      left join answers a on a.session_id = ${sessionId} and a.question_id = q.id
+      where eq.exam_id = (select exam_id from exam_sessions where id = ${sessionId})
+      order by eq.position`;
+    return { title: row.title, final: row.final_score, items };
+  });
+  if (!data) return c.notFound();
+  if ("locked" in data) {
+    return c.html(page(data.title!, `<div class="card"><h1>${esc(data.title!)}</h1>
+      <p class="muted">Sesi belum selesai; review belum tersedia.</p>
+      <a class="btn" href="/s/history">← Riwayat</a></div>`));
+  }
+  type Item = {
+    id: string; type: string; points: string;
+    content: { text: string; options?: string[]; image?: string };
+    answer_key: { index?: number; accepted?: string[]; manual?: boolean } | null;
+    answer: { index?: number; text?: string; manual_score?: number } | null;
+  };
+  const items = (data.items as unknown as Item[]).map((q, i) => {
+    let body = `<p><b>Soal ${i + 1}</b> <span class="muted">(${q.points} pts, ${q.type})</span></p><p>${esc(q.content.text)}</p>`;
+    if (q.content.image) body += `<img src="${esc(q.content.image)}" style="max-width:100%; max-height:260px; border-radius:8px; border:1px solid var(--bd); margin:8px 0">`;
+    if (q.type === "pg" || q.type === "benar_salah") {
+      const correct = q.answer_key?.index;
+      const picked = q.answer?.index;
+      body += (q.content.options ?? []).map((o, k) => {
+        const isCorrect = k === correct, isPicked = k === picked;
+        const style = isCorrect ? "background:#16a34a1a;border-color:#16a34a"
+          : isPicked ? "background:#ef44441a;border-color:#ef4444" : "";
+        const mark = isCorrect ? " ✓" : isPicked ? " ✗" : "";
+        return `<div class="opt" style="${style}">${esc(o)}${mark}</div>`;
+      }).join("");
+    } else if (q.type === "isian") {
+      const my = q.answer?.text ?? "(kosong)";
+      const acc = (q.answer_key?.accepted ?? []).join(" | ");
+      const correct = (q.answer_key?.accepted ?? []).some((a) => a.toLowerCase().trim() === my.toLowerCase().trim());
+      body += `<p>Jawaban Anda: <b style="color:${correct ? "var(--ok)" : "var(--danger)"}">${esc(my)}</b></p>`;
+      body += `<p class="muted">Jawaban diterima: ${esc(acc)}</p>`;
+    } else if (q.type === "uraian") {
+      body += `<p>Jawaban Anda:</p><blockquote style="margin:4px 0; padding:10px; border-left:3px solid var(--bd); background:var(--bg)">${esc(q.answer?.text ?? "(kosong)")}</blockquote>`;
+      if (typeof q.answer?.manual_score === "number") {
+        body += `<p class="muted">Nilai guru: <b>${q.answer.manual_score} / ${q.points}</b></p>`;
+      } else {
+        body += `<p class="muted">Menunggu penilaian guru.</p>`;
+      }
+    }
+    return `<div class="card">${body}</div>`;
+  }).join("");
+  return c.html(page("Review", `
+    <div class="card">
+      <h1>${esc(data.title!)}</h1>
+      <p class="sub">Nilai akhir: <b>${data.final ?? "-"}</b> · <a href="/s/history">← Riwayat</a></p>
+    </div>
+    ${items}
   `));
 });
 
@@ -397,6 +518,12 @@ student.get("/s/take/:sid", async (c) => {
         const el = document.createElement('div'); el.className = 'q active';
         const tag = q.type === 'uraian' ? ' <span class="muted">(uraian — dinilai guru)</span>' : '';
         el.innerHTML = '<p><b>Soal ' + (i+1) + ' / ' + Q.length + '</b>' + tag + '</p><p>' + escapeHtml(q.content.text) + '</p>';
+        if (q.content.image) {
+          const img = document.createElement('img');
+          img.src = q.content.image;
+          img.style.cssText = 'max-width:100%; max-height:300px; border-radius:8px; border:1px solid var(--bd); margin:8px 0';
+          el.appendChild(img);
+        }
         if (q.type === 'pg' || q.type === 'benar_salah') {
           q.content.options.forEach((o, k) => {
             const checked = A[q.id] && A[q.id].index === k ? 'checked' : '';
