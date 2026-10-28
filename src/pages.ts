@@ -5,7 +5,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
-import { SHARED_CSS } from "./ui";
+import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, APP_NAME, BRAND_COLORS } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -32,6 +32,7 @@ const NAV_GROUPS: Array<{ title: string; admin?: boolean; items: Array<[string, 
     ["/app/bulk", "Operasi massal", "M4 7h16M4 12h16M4 17h16"],
     ["/app/audit", "Audit log", "M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"],
     ["/app/restore", "Backup & pulihkan", "M4 12a8 8 0 1 0 3-6.2M4 4v4h4"],
+    ["/app/settings", "Pengaturan", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"],
   ] },
 ];
 const icon = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
@@ -39,10 +40,10 @@ const icon = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d
 const sidebar = (role: string) => `
 <header class="mbar">
   <button type="button" class="ghost" id="navOpen" aria-label="Buka menu" aria-controls="side" aria-expanded="false">${icon("M4 7h16M4 12h16M4 17h16")}</button>
-  <a class="brand" href="/app"><span class="brand-dot" aria-hidden="true">C</span>cbtgas</a>
+  <a class="brand" href="/app">${LOGO}</a>
 </header>
 <aside class="side" id="side">
-  <a class="brand" href="/app" aria-label="cbtgas, beranda"><span class="brand-dot" aria-hidden="true">C</span>cbtgas</a>
+  <a class="brand" href="/app" aria-label="CBT Yuk, beranda">${LOGO}</a>
   <nav class="nav" aria-label="Utama">
     ${NAV_GROUPS.filter((g) => !g.admin || role === "admin").map((g) => `
       ${g.title ? `<p class="nav-h">${g.title}</p>` : ""}
@@ -62,9 +63,11 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title} · cbtgas</title>
+<title>${title} · ${APP_NAME}</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#14213D">
+<link rel="icon" href="/icon-192.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-192.svg">
+<meta name="theme-color" content="#F5F7FB">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
@@ -104,28 +107,26 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
 </script>
 <style>${SHARED_CSS}
   /* Staf app shell: sidebar kiri, konten kanan */
-  body.app { padding-left: 248px; }
-  main { max-width: 1040px; margin: 0 auto; padding: 32px 32px 64px; }
-  body.public main { max-width: 560px; padding-top: 8vh; }
-  .side { position: fixed; inset: 0 auto 0 0; width: 248px; background: var(--ink); color: #fff; display: flex; flex-direction: column;
-          padding: 18px 12px; z-index: 60; overflow-y: auto; }
-  .side .brand { padding: 4px 10px 18px; }
-  .brand { display:inline-flex; align-items:center; gap:10px; color:#fff; text-decoration:none; font-weight:800; letter-spacing:-.01em; font-size:17px; }
-  .brand-dot { width:28px; height:28px; border-radius:50%; background:var(--pencil); color:var(--ink); display:grid; place-items:center; font-size:13px; font-weight:800; }
+  body.app { padding-left: 252px; }
+  main { max-width: 1060px; margin: 0 auto; padding: 32px 32px 48px; }
+  body.public main { max-width: 1040px; padding: 0 20px; }
+  .side { position: fixed; inset: 0 auto 0 0; width: 252px; background: var(--surface); border-right: 1px solid var(--line);
+          display: flex; flex-direction: column; padding: 18px 14px; z-index: 60; overflow-y: auto; }
+  .side .brand { padding: 4px 8px 20px; }
   .nav { display:flex; flex-direction:column; gap:2px; flex:1; }
-  .nav-h { margin: 18px 10px 6px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.45); }
+  .nav-h { margin: 18px 10px 6px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); }
   .nav a, .side-foot .ghost { display:flex; align-items:center; gap:12px; min-height:42px; padding: 8px 10px; border-radius: 10px;
-          color: rgba(255,255,255,.78); text-decoration:none; font-size:14px; font-weight:500; width:100%; justify-content:flex-start; }
+          color: var(--mut); text-decoration:none; font-size:14px; font-weight:600; width:100%; justify-content:flex-start; }
   .nav svg, .side-foot svg, .mbar svg { width:19px; height:19px; flex:0 0 auto; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-  .nav a:hover, .side-foot .ghost:hover { color:#fff; background: rgba(255,255,255,.08); }
-  .nav a[aria-current="page"] { color: var(--ink); background: var(--pencil); font-weight: 700; }
-  .side-foot { border-top: 1px solid rgba(255,255,255,.12); padding-top: 10px; margin-top: 16px; display:flex; flex-direction:column; gap:2px; }
+  .nav a:hover, .side-foot .ghost:hover { color: var(--fg); background: var(--paper); }
+  .nav a[aria-current="page"] { color: var(--brand); background: var(--soft); }
+  .side-foot { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 16px; display:flex; flex-direction:column; gap:2px; }
   .side-foot form { margin:0; }
-  .side-foot .ghost { border: none; background: transparent; }
+  .side-foot .ghost { border: none; background: transparent; box-shadow:none; }
   .mbar { display:none; }
-  .scrim { position: fixed; inset: 0; background: rgba(11,18,34,.5); z-index: 55; }
-  footer { color:var(--mut); font-size:12px; text-align:center; margin-top:40px; }
-  #installCard { position:fixed; bottom:16px; right:16px; max-width:300px; margin:0; box-shadow: 0 16px 40px rgba(20,33,61,.22); z-index: 50; }
+  .scrim { position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 55; }
+  .app-foot { color:var(--mut); font-size:12px; text-align:center; margin-top:40px; }
+  .app-foot a { color: var(--mut); }
 
   /* Kepala halaman + tombol tambah yang membuka formulir */
   .page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap; margin: 0 0 20px; }
@@ -158,26 +159,26 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
 
   @media (max-width: 900px) {
     body.app { padding-left: 0; }
-    .mbar { display:flex; align-items:center; gap:8px; position: sticky; top:0; z-index: 40; background: var(--ink); padding: 6px 10px; min-height: 56px; }
-    .mbar .ghost { color:#fff; background:transparent; border:none; min-width:44px; min-height:44px; padding:0; }
+    .mbar { display:flex; align-items:center; gap:6px; position: sticky; top:0; z-index: 40; background: color-mix(in srgb, var(--surface) 88%, transparent);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); padding: 6px 10px; min-height: 58px; }
+    .mbar .ghost { color: var(--fg); background:transparent; border:none; min-width:44px; min-height:44px; padding:0; box-shadow:none; }
     .side { transform: translateX(-100%); transition: transform .2s; box-shadow: 0 0 40px rgba(0,0,0,.3); }
     body.nav-open .side { transform: none; }
     main { padding: 20px 16px 56px; }
-    body.public main { padding-top: 32px; }
+    body.public main { padding: 0 16px; }
     .two { grid-template-columns: 1fr; }
   }
 </style>
+<link rel="stylesheet" href="/brand.css">
 </head>
 <body class="${opts.nav === false ? "public" : "app"}">
 ${opts.nav === false ? "" : sidebar(opts.role ?? "")}
 <main>
 ${body}
-<footer>cbtgas · CBT sekolah · <a href="/privasi">Privasi</a> · <a href="/syarat">Syarat</a></footer>
-<div id="installCard" class="card" hidden>
-  <p style="margin:0 0 10px"><b>Pasang cbtgas di perangkat ini?</b></p>
-  <div class="row" style="margin:0"><button class="primary" id="installBtn">Pasang</button><button id="installClose">Nanti</button></div>
-</div>
+${opts.nav === false ? "" : `<footer class="app-foot">${APP_NAME} · <a href="/privasi">Privasi</a> · <a href="/syarat">Syarat</a></footer>`}
 </main>
+${opts.nav === false ? SITE_FOOTER : ""}
+${INSTALL_SHEET}
 <script>
   // Tandai menu aktif.
   (function () {
@@ -238,50 +239,88 @@ const googleBtn = (mode: "login" | "register", label: string) => `
 
 pages.get("/", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
-  if (sess) {
-    return c.redirect("/app");
-  }
-  return c.html(base("Masuk", `
+  if (sess) return c.redirect("/app");
+  return c.html(base("Ujian sekolah online", `
     <style>
-      .hero { padding: 8px 0 28px; }
-      .hero .brand-lockup { display:flex; align-items:center; gap:10px; font-weight:800; font-size:18px; margin-bottom: 36px; }
-      .hero .brand-lockup span { width:30px; height:30px; border-radius:50%; background:var(--pencil); color:#14213D; display:grid; place-items:center; font-size:14px; }
-      .hero h1 { font-size: clamp(34px, 7vw, 48px); line-height: 1.04; letter-spacing: -.035em; margin-bottom: 14px; }
-      .hero p { font-size: 17px; color: var(--mut); margin: 0 0 26px; }
-      .bubbles { display:flex; gap:10px; margin: 0 0 30px; }
-      .bubbles i { width:34px; height:34px; border-radius:50%; border:2px solid var(--fg); display:grid; place-items:center; font-style:normal; font-weight:700; font-size:13px; }
-      .bubbles i.on { background: var(--pencil); border-color: var(--pencil); color:#14213D; }
-      .entry { display:grid; gap: 10px; }
-      .entry .btn { width:100%; min-height: 50px; font-size: 15px; }
-      .split { border-top: 1px solid var(--line); margin-top: 26px; padding-top: 18px; display:flex; flex-wrap:wrap; gap: 6px 18px; font-size: 14px; }
+      body.public { background:
+        radial-gradient(900px 500px at 85% -10%, color-mix(in srgb, var(--brand) 16%, transparent), transparent 60%),
+        radial-gradient(700px 420px at -10% 10%, color-mix(in srgb, #A78BFA 14%, transparent), transparent 60%), var(--paper); }
+      .top { display:flex; align-items:center; justify-content:space-between; padding: 20px 0; }
+      .top a.small { font-size: 14px; font-weight: 600; color: var(--fg); text-decoration: none; }
+      .hero { display:grid; grid-template-columns: 1.05fr .95fr; gap: 48px; align-items:center; padding: 40px 0 56px; }
+      .eyebrow { display:inline-flex; gap:8px; align-items:center; font-size: 13px; font-weight: 700; color: var(--brand); background: var(--soft);
+                 border: 1px solid color-mix(in srgb, var(--brand) 20%, transparent); padding: 6px 12px; border-radius: 999px; }
+      .hero h1 { font-size: clamp(36px, 5.4vw, 58px); line-height: 1.02; letter-spacing: -.04em; margin: 18px 0 16px; }
+      .hero h1 em { font-style: normal; color: var(--brand); }
+      .hero .lead { font-size: 18px; color: var(--mut); margin: 0 0 30px; max-width: 46ch; }
+      .cta { display:grid; gap: 10px; max-width: 420px; }
+      .cta .btn { width: 100%; min-height: 54px; font-size: 16px; border-radius: 14px; }
+      .cta .btn.ghost { background: transparent; border-color: transparent; box-shadow:none; color: var(--fg); font-weight: 600; }
+      .cta .btn.ghost b { color: var(--brand); }
+      .stu { margin-top: 18px; font-size: 14px; color: var(--mut); }
+      /* Ilustrasi layar ujian */
+      .mock { position: relative; }
+      .mock .win { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; box-shadow: 0 30px 80px rgba(15,23,42,.14); padding: 18px; }
+      .mock .bar { display:flex; justify-content:space-between; align-items:center; margin-bottom: 14px; font-weight: 700; font-size: 14px; }
+      .mock .time { background: var(--soft); color: var(--brand); padding: 4px 12px; border-radius: 999px; font-variant-numeric: tabular-nums; }
+      .mock .nums { display:flex; gap:6px; margin-bottom: 14px; flex-wrap: wrap; }
+      .mock .nums i { width:28px; height:28px; border-radius:50%; border:1.5px solid var(--line); display:grid; place-items:center; font-style:normal; font-size:12px; font-weight:700; }
+      .mock .nums i.a { background: var(--brand); border-color: var(--brand); color:#fff; }
+      .mock .qt { font-weight: 600; margin: 0 0 12px; }
+      .mock .op { display:flex; gap:12px; align-items:center; border:1.5px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 8px 0; font-size: 14px; }
+      .mock .op i { width:26px; height:26px; border-radius:50%; border:2px solid #94A3B8; display:grid; place-items:center; font-style:normal; font-size:12px; font-weight:800; flex:0 0 auto; }
+      .mock .op.on { border-color: var(--brand); background: var(--soft); } .mock .op.on i { background: var(--brand); border-color: var(--brand); color:#fff; }
+      .mock .chip { position:absolute; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; box-shadow: var(--shadow); font-size: 13px; font-weight: 700; display:flex; gap:8px; align-items:center; }
+      .mock { padding: 26px 0; }
+      .mock .chip.c1 { left: -18px; bottom: 4px; } .mock .chip.c2 { right: -14px; top: 4px; }
+      .dotg { width:9px; height:9px; border-radius:50%; background: var(--ok); }
+      .feats { display:grid; grid-template-columns: repeat(4, 1fr); gap: 14px; padding: 8px 0 24px; }
+      .feat { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }
+      .feat svg { width: 36px; height: 36px; padding: 8px; border-radius: 10px; background: var(--soft); color: var(--brand); fill:none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .feat h3 { margin: 12px 0 4px; font-size: 15px; } .feat p { margin: 0; font-size: 14px; color: var(--mut); }
+      @media (max-width: 860px) { .hero { grid-template-columns: 1fr; gap: 36px; padding-top: 16px; } .feats { grid-template-columns: 1fr 1fr; } .mock .chip.c1 { left: 8px; } .mock .chip.c2 { right: 8px; } }
+      @media (max-width: 480px) { .feats { grid-template-columns: 1fr; } }
     </style>
+    <div class="top"><a class="brand" href="/">${LOGO}</a><a class="small" href="/s/login">Masuk siswa →</a></div>
     <section class="hero">
-      <div class="brand-lockup"><span>C</span>cbtgas</div>
-      <h1>Ujian sekolah, tanpa lembar kertas.</h1>
-      <p>Bank soal, jadwal ujian, pengawasan, dan nilai untuk SD, SMP, dan SMA dalam satu tempat.</p>
-      <div class="bubbles" aria-hidden="true"><i>A</i><i>B</i><i class="on">C</i><i>D</i></div>
-      <div class="entry">
-        <a class="btn primary" href="/s/login">Masuk sebagai siswa</a>
-        ${googleBtn("login", "Masuk sebagai guru dengan Google")}
-        ${c.env.DEMO_LOGIN === "1" ? `
-          <form method="post" action="/auth/dev-login" style="margin:0">
-            <button type="submit" class="btn" style="width:100%">Coba sebagai admin demo</button>
-          </form>` : ""}
+      <div>
+        <span class="eyebrow">Gratis dicoba · tanpa instal</span>
+        <h1>Ujian sekolah jadi <em>gampang</em>.</h1>
+        <p class="lead">Buat soal, jadwalkan ujian, awasi siswa secara langsung, dan nilai keluar otomatis. Untuk SD, SMP, dan SMA, lancar di HP maupun komputer lab.</p>
+        <div class="cta">
+          <a class="btn primary" href="/demo">Coba demo</a>
+          ${googleBtn("login", "Masuk dengan Google")}
+          <a class="btn ghost" href="/auth/google/start?mode=register">Belum punya akun?&nbsp;<b>Daftar dengan Google</b></a>
+        </div>
+        <p class="stu">Siswa? <a href="/s/login">Masuk pakai username dan PIN</a>.</p>
       </div>
-      <div class="split">
-        <a href="/auth/google/start?mode=register">Daftarkan sekolah baru</a>
-        <a href="/demo">Lihat data contoh</a>
+      <div class="mock" aria-hidden="true">
+        <div class="win">
+          <div class="bar"><span>Tryout Matematika</span><span class="time">58:12</span></div>
+          <div class="nums"><i class="a">1</i><i class="a">2</i><i class="a">3</i><i>4</i><i>5</i><i>6</i><i>7</i><i>8</i></div>
+          <p class="qt">4. Hasil dari 3/4 + 1/2 adalah …</p>
+          <div class="op on"><i>A</i>1 1/4</div><div class="op"><i>B</i>1 1/2</div><div class="op"><i>C</i>5/6</div><div class="op"><i>D</i>4/6</div>
+        </div>
+        <div class="chip c1"><span class="dotg"></span>28 siswa sedang mengerjakan</div>
+        <div class="chip c2">Nilai rata-rata 84,5</div>
       </div>
+    </section>
+    <section class="feats">
+      <div class="feat"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg><h3>Nilai otomatis</h3><p>Pilihan ganda, isian, menjodohkan langsung dinilai. Uraian tinggal dikoreksi.</p></div>
+      <div class="feat"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg><h3>Anti-curang</h3><p>Deteksi pindah tab, kunci otomatis, soal dan pilihan diacak.</p></div>
+      <div class="feat"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><h3>Pantau langsung</h3><p>Lihat siapa yang sedang mengerjakan, tambah waktu, atau kumpulkan paksa.</p></div>
+      <div class="feat"><svg viewBox="0 0 24 24"><path d="M7 3h10v18H7zM11 18h2"/></svg><h3>Bisa di HP</h3><p>Pasang seperti aplikasi. Jawaban tetap aman walau sinyal putus.</p></div>
     </section>
   `, { nav: false }));
 });
+
 
 // ===== Halaman hukum (dibutuhkan layar persetujuan Google) =====
 const CONTACT = "admin@bantuguruyuk.web.id";
 const UPDATED = "28 Oktober 2026";
 const legalPage = (title: string, body: string) => base(title, `
-  <article class="card legal">
-    <p><a href="/">← cbtgas</a></p>
+  <div style="padding:20px 0"><a class="brand" href="/">${LOGO}</a></div>
+  <article class="card legal" style="max-width:760px;margin:8px auto 0;padding:32px">
     <h1>${title}</h1>
     <p class="muted">Terakhir diperbarui: ${UPDATED}</p>
     ${body}
@@ -290,7 +329,7 @@ const legalPage = (title: string, body: string) => base(title, `
 `, { nav: false });
 
 pages.get("/privasi", (c) => c.html(legalPage("Kebijakan Privasi", `
-  <p>cbtgas adalah layanan ujian berbasis komputer (CBT) untuk sekolah. Halaman ini menjelaskan data apa yang kami simpan, untuk apa, dan hak Anda atasnya.</p>
+  <p>CBT Yuk adalah layanan ujian berbasis komputer (CBT) untuk sekolah. Halaman ini menjelaskan data apa yang kami simpan, untuk apa, dan hak Anda atasnya.</p>
 
   <h2>Data yang kami simpan</h2>
   <ul>
@@ -330,10 +369,10 @@ pages.get("/privasi", (c) => c.html(legalPage("Kebijakan Privasi", `
 `)));
 
 pages.get("/syarat", (c) => c.html(legalPage("Syarat Layanan", `
-  <p>Dengan memakai cbtgas, Anda menyetujui syarat berikut.</p>
+  <p>Dengan memakai CBT Yuk, Anda menyetujui syarat berikut.</p>
 
   <h2>Layanan</h2>
-  <p>cbtgas menyediakan alat untuk membuat soal, menyelenggarakan ujian daring, dan melihat hasilnya. Layanan diberikan apa adanya dan dapat berubah atau terhenti sewaktu-waktu, misalnya untuk pemeliharaan.</p>
+  <p>CBT Yuk menyediakan alat untuk membuat soal, menyelenggarakan ujian daring, dan melihat hasilnya. Layanan diberikan apa adanya dan dapat berubah atau terhenti sewaktu-waktu, misalnya untuk pemeliharaan.</p>
 
   <h2>Akun</h2>
   <ul>
@@ -373,13 +412,12 @@ pages.get("/register", (c) => {
     <p class="err">Belum ada sesi pendaftaran. Mulai dari tombol
     <b>Daftarkan sekolah baru</b> di halaman utama.</p>`;
   return c.html(base("Daftar sekolah", `
-    <div class="card">
-      <h1>Daftar sekolah baru</h1>
-      <p class="sub">Email Google Anda akan menjadi admin pertama sekolah ini.</p>
+    <div style="padding:20px 0"><a class="brand" href="/">${LOGO}</a></div>
+    <div class="card" style="max-width:540px;margin:16px auto 0;padding:28px">
+      <h1>Daftarkan sekolah Anda</h1>
+      <p class="sub">Gratis selama masa uji coba. Akun Google Anda menjadi admin pertama sekolah ini.</p>
       ${notice}
       <form id="f" ${hasPending ? "" : "style=\"opacity:.5;pointer-events:none\""}>
-        <label>Kode sekolah <span class="muted">(huruf kecil, angka, strip; 3–32 karakter)</span></label>
-        <input name="code" required pattern="[a-z0-9\\-]{3,32}" placeholder="contoh: sma-nusa-1">
         <label>Nama sekolah</label>
         <input name="name" required placeholder="SMA Nusantara 1">
         <label>Jenjang</label>
@@ -475,10 +513,12 @@ pages.get("/app", async (c) => {
     <div class="live-row"><span class="txt"><b>${esc(e.title)}</b><br><span class="muted">${e.status === "draft" ? "Draf, belum dijadwalkan" : `Dibuka ${e.starts_at ? new Date(e.starts_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }) : ""}`}</span></span>
     <a class="btn" href="/app/exams/${esc(e.id)}">Atur</a></div>`).join("");
 
+  const owner = await isOwner(sql, sess.email);
   return c.html(base("Beranda", `
+    ${owner ? `<a class="card" href="/owner" style="display:flex;justify-content:space-between;align-items:center;text-decoration:none;color:inherit;padding:14px 20px"><span><b>Pemantauan layanan</b> <span class="muted">· lihat semua sekolah uji coba</span></span><span>→</span></a>` : ""}
     <div class="page-head">
       <div><h1>${esc(school?.name ?? "Sekolah")}</h1>
-      <p>Kode sekolah untuk siswa: <code>${esc(school?.code ?? "")}</code></p></div>
+      <p>Siswa masuk di <b>${esc(new URL(c.req.url).host)}/s/login</b> dengan username dan PIN.</p></div>
       <a class="btn primary" href="/app/exams/new">+ Buat ujian</a>
     </div>
 
@@ -571,8 +611,9 @@ pages.get("/app/students", async (c) => {
     <div class="page-head">
       <div><h1>Siswa & kelas</h1><p>${studentList.length} siswa di ${classList.length} kelas. Buat kelas dulu, lalu masukkan siswanya.</p></div>
       <div class="row" style="margin:0">
-        <button type="button" id="btnImport">Import CSV</button>
-        <input type="file" id="fileCsv" accept=".csv,text/csv" hidden>
+        <button type="button" id="btnTpl">Unduh template Excel</button>
+        <button type="button" class="primary" id="btnImport">Impor dari Excel</button>
+        <input type="file" id="fileXls" accept=".xlsx,.xls,.csv" hidden>
       </div>
     </div>
 
@@ -617,8 +658,7 @@ pages.get("/app/students", async (c) => {
           </div>
           <div class="row"><button class="primary" type="submit">Simpan siswa</button></div>
           <p class="muted" style="margin-top:8px">
-            Banyak siswa sekaligus? Pakai <b>Import CSV</b> di kanan atas dengan kolom
-            <code>name,username,class,gender,nisn,pin</code>.
+            Banyak siswa sekaligus? Unduh <b>template Excel</b> di kanan atas, isi, lalu klik <b>Impor dari Excel</b>.
           </p>
           <p class="err" id="errstu" hidden></p>
         </form>
@@ -713,22 +753,46 @@ pages.get("/app/students", async (c) => {
         }
       });
 
-      $('#btnImport').addEventListener('click', () => $('#fileCsv').click());
-      $('#fileCsv').addEventListener('change', async (e) => {
-        const file = e.target.files[0]; if (!file) return;
-        const text = await file.text();
-        const r = await fetch('/api/students/import', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'text/csv' }, body: text,
-        });
-        const j = await r.json().catch(() => ({ error: 'HTTP ' + r.status }));
-        if (!r.ok) { alert('Import gagal: ' + (j.error || r.status)); return; }
-        let msg = j.ok + ' siswa diimport.';
-        if (j.fail && j.fail.length) {
-          msg += '\\n' + j.fail.length + ' baris gagal:\\n' +
-            j.fail.slice(0, 10).map((x) => '  baris ' + x.row + ': ' + x.error).join('\\n');
-        }
-        alert(msg); location.reload();
+      // Impor Excel: baca di browser (SheetJS), petakan judul kolom bahasa
+      // Indonesia/Inggris ke format yang diterima /api/students/import.
+      const XLSX_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      const loadXlsx = () => window.XLSX ? Promise.resolve(window.XLSX) : new Promise((ok, no) => {
+        const sc = document.createElement('script'); sc.src = XLSX_SRC; sc.onload = () => ok(window.XLSX); sc.onerror = () => no(new Error('Gagal memuat pembaca Excel. Periksa koneksi.'));
+        document.head.appendChild(sc);
+      });
+      const COLS = { name: ['nama', 'nama lengkap', 'name'], username: ['username', 'user', 'nama pengguna'], class: ['kelas', 'class'],
+        gender: ['jk', 'jenis kelamin', 'gender', 'l/p'], nisn: ['nisn'], pin: ['pin', 'password', 'kata sandi'] };
+      $('#btnTpl').addEventListener('click', async () => {
+        const X = await loadXlsx();
+        const ws = X.utils.aoa_to_sheet([['Nama', 'Username', 'Kelas', 'JK', 'NISN', 'PIN'],
+          ['Andi Saputra', 'andi.saputra', 'X-IPA-1', 'L', '0012345678', '123456'],
+          ['Siti Aminah', 'siti.aminah', 'X-IPA-1', 'P', '', '654321']]);
+        ws['!cols'] = [{ wch: 24 }, { wch: 18 }, { wch: 12 }, { wch: 5 }, { wch: 14 }, { wch: 10 }];
+        const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'Siswa');
+        X.writeFile(wb, 'template-siswa-cbt-yuk.xlsx');
+      });
+      $('#btnImport').addEventListener('click', () => $('#fileXls').click());
+      $('#fileXls').addEventListener('change', async (e) => {
+        const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+        try {
+          const X = await loadXlsx();
+          const wb = X.read(await file.arrayBuffer(), { type: 'array' });
+          const rows = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
+          if (rows.length < 2) throw new Error('File kosong.');
+          const head = rows[0].map((h) => String(h).trim().toLowerCase());
+          const idx = {}; for (const [k, names] of Object.entries(COLS)) idx[k] = head.findIndex((h) => names.includes(h));
+          if (idx.name < 0 || idx.username < 0 || idx.pin < 0) throw new Error('Kolom wajib: Nama, Username, PIN. Pakai template agar aman.');
+          const q = (v) => '"' + String(v ?? '').trim().replace(/"/g, '""') + '"';
+          const keys = Object.keys(COLS);
+          const csv = [keys.join(',')].concat(rows.slice(1).filter((r) => r.some((v) => String(v).trim()))
+            .map((r) => keys.map((k) => q(idx[k] >= 0 ? r[idx[k]] : '')).join(','))).join('\\n');
+          const r = await fetch('/api/students/import', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'text/csv' }, body: csv });
+          const j = await r.json().catch(() => ({ error: 'HTTP ' + r.status }));
+          if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+          let msg = j.ok + ' siswa berhasil diimpor.';
+          if (j.fail && j.fail.length) msg += '\\n' + j.fail.length + ' baris gagal:\\n' + j.fail.slice(0, 10).map((x) => '  baris ' + x.row + ': ' + x.error).join('\\n');
+          alert(msg); location.reload();
+        } catch (x) { alert('Impor gagal: ' + x.message); }
       });
 
       fedit.addEventListener('submit', async (e) => {
@@ -906,6 +970,134 @@ pages.get("/app/exams", async (c) => {
         else { err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
 
+    </script>
+  `, { role: sess.role }));
+});
+
+// Pemantauan layanan (pemilik CBT Yuk): semua sekolah, terutama yang masih uji coba.
+// Hanya email di tabel system_owners.
+const isOwner = async (sql: ReturnType<typeof connect>, email: string) =>
+  (await sql`select 1 from system_owners where email = ${email.toLowerCase()}`).length > 0;
+
+pages.get("/owner", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  if (!sess) return c.redirect("/");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  if (!(await isOwner(sql, sess.email))) return c.notFound();
+  const rows = await withTenant(sql, { schoolId: "", role: "owner" }, (tx) => tx`
+    select s.id, s.name, s.level, s.plan, s.created_at, s.operator_name, s.operator_phone, s.active,
+      (select email from users u where u.school_id = s.id and u.role = 'admin' order by u.created_at limit 1) as admin_email,
+      (select count(*) from students x where x.school_id = s.id and x.username not like 'tamu-%')::int as students,
+      (select count(*) from questions x where x.school_id = s.id)::int as questions,
+      (select count(*) from exams x where x.school_id = s.id)::int as exams,
+      (select count(*) from exam_sessions x where x.school_id = s.id)::int as sessions,
+      greatest((select max(started_at) from exam_sessions x where x.school_id = s.id),
+               (select max(created_at) from audit_log x where x.school_id = s.id)) as last_active
+    from schools s order by s.created_at desc`);
+  type R = { id: string; name: string; level: string; plan: string; created_at: string; operator_name: string; operator_phone: string;
+    active: boolean; admin_email: string | null; students: number; questions: number; exams: number; sessions: number; last_active: string | null };
+  const list = rows as unknown as R[];
+  const now = Date.now(), DAY = 86_400_000;
+  const days = (iso: string | null) => iso ? Math.floor((now - new Date(iso).getTime()) / DAY) : null;
+  const ago = (iso: string | null) => { const d = days(iso); return d === null ? "belum pernah" : d === 0 ? "hari ini" : `${d} hari lalu`; };
+  const wa = (p: string) => { const d = p.replace(/\D/g, "").replace(/^0/, "62"); return d.length >= 9 ? `https://wa.me/${d}` : ""; };
+  const stage = (r: R) => r.sessions > 0 ? (days(r.last_active)! <= 7 ? ["Aktif", "open"] : ["Diam", "closed"])
+    : r.exams > 0 ? ["Siapkan ujian", "scheduled"] : r.students > 0 ? ["Isi siswa", "scheduled"] : ["Baru daftar", ""];
+  const trial = list.filter((r) => r.plan === "trial");
+  const newWeek = list.filter((r) => days(r.created_at)! <= 7).length;
+  const activeWeek = list.filter((r) => r.last_active && days(r.last_active)! <= 7).length;
+  const body = list.map((r) => {
+    const [label, cls] = stage(r); const link = wa(r.operator_phone);
+    return `<tr>
+      <td><b>${esc(r.name)}</b><br><span class="muted">${esc(r.level)} · ${esc(r.admin_email ?? "-")}</span></td>
+      <td><span class="pill ${cls}">${label}</span>${r.plan !== "trial" ? ` <span class="pill">${esc(r.plan)}</span>` : ""}</td>
+      <td>${new Date(r.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "short", timeZone: "Asia/Jakarta" })}<br><span class="muted">${ago(r.created_at)}</span></td>
+      <td style="text-align:right">${r.students}</td><td style="text-align:right">${r.questions}</td>
+      <td style="text-align:right">${r.exams}</td><td style="text-align:right">${r.sessions}</td>
+      <td>${ago(r.last_active)}</td>
+      <td>${esc(r.operator_name)}<br>${link ? `<a href="${link}" target="_blank" rel="noopener">${esc(r.operator_phone)}</a>` : esc(r.operator_phone)}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="9" class="muted">Belum ada sekolah.</td></tr>`;
+  return c.html(base("Pemantauan", `
+    <div class="page-head"><div><h1>Pemantauan layanan</h1><p>Semua sekolah yang mendaftar, urut dari yang terbaru. Hanya terlihat oleh pemilik layanan.</p></div></div>
+    <div class="card stats">
+      <div class="stat"><b>${list.length}</b><span>Total sekolah</span></div>
+      <div class="stat"><b>${trial.length}</b><span>Masih uji coba</span></div>
+      <div class="stat"><b>${newWeek}</b><span>Daftar 7 hari</span></div>
+      <div class="stat live"><b>${activeWeek}</b><span>Aktif 7 hari</span></div>
+      <div class="stat"><b>${list.reduce((a, r) => a + r.sessions, 0)}</b><span>Total sesi ujian</span></div>
+    </div>
+    <div class="card">
+      <h2>Sekolah</h2>
+      <p class="muted" style="margin-top:-6px">Tahap: <b>Baru daftar</b> → <b>Isi siswa</b> → <b>Siapkan ujian</b> → <b>Aktif</b> (ada ujian dikerjakan 7 hari terakhir) atau <b>Diam</b>. Klik nomor HP untuk menghubungi lewat WhatsApp.</p>
+      <table>
+        <thead><tr><th>Sekolah</th><th>Tahap</th><th>Daftar</th><th style="text-align:right">Siswa</th><th style="text-align:right">Soal</th><th style="text-align:right">Ujian</th><th style="text-align:right">Sesi</th><th>Terakhir aktif</th><th>Operator</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `, { role: sess.role }));
+});
+
+// Pengaturan sekolah (admin): identitas + warna merek.
+pages.get("/app/settings", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  if (!sess) return c.redirect("/");
+  if (sess.role !== "admin") return c.redirect("/app");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
+    tx`select name, level, npsn, color, operator_name, operator_phone, plan, created_at from schools where id = ${sess.sid}`);
+  const sc = rows[0] as { name: string; level: string; npsn: string | null; color: string; operator_name: string; operator_phone: string; plan: string; created_at: string };
+  const swatches = Object.entries(BRAND_COLORS).map(([k, v]) => `
+    <label class="sw"><input type="radio" name="color" value="${k}" ${sc.color === k ? "checked" : ""}>
+      <span style="--c:${v.hex}"></span>${v.label}</label>`).join("");
+  const lv = (v: string, t: string) => `<option value="${v}" ${sc.level === v ? "selected" : ""}>${t}</option>`;
+  return c.html(base("Pengaturan", `
+    <div class="page-head"><div><h1>Pengaturan sekolah</h1><p>Identitas dan tampilan yang dilihat guru dan siswa.</p></div></div>
+    <form id="fs" class="two">
+      <div class="card">
+        <h2>Identitas</h2>
+        <label>Nama sekolah</label><input name="name" required value="${esc(sc.name)}">
+        <div class="grid">
+          <div><label>Jenjang</label><select name="level">${lv("SD", "SD")}${lv("SMP", "SMP")}${lv("SMA", "SMA/SMK")}${lv("CAMPURAN", "Campuran")}</select></div>
+          <div><label>NPSN <span class="muted">(opsional)</span></label><input name="npsn" value="${esc(sc.npsn ?? "")}"></div>
+        </div>
+        <div class="grid">
+          <div><label>Nama operator</label><input name="operator_name" value="${esc(sc.operator_name)}"></div>
+          <div><label>No. HP operator</label><input name="operator_phone" inputmode="tel" value="${esc(sc.operator_phone)}"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Warna merek</h2>
+        <p class="muted" style="margin-top:-6px">Dipakai untuk tombol, menu, dan pilihan jawaban siswa.</p>
+        <div class="sws">${swatches}</div>
+        <div class="prev"><button type="button" class="primary" tabindex="-1">Tombol utama</button><span class="pill scheduled">Terjadwal</span><span class="pv-opt"><i>A</i>Jawaban terpilih</span></div>
+        <p class="muted" style="margin-bottom:0">Paket: <b>${esc(sc.plan === "trial" ? "Uji coba" : sc.plan)}</b> · terdaftar ${new Date(sc.created_at).toLocaleDateString("id-ID", { dateStyle: "long", timeZone: "Asia/Jakarta" })}</p>
+      </div>
+      <div class="row" style="grid-column:1/-1;margin:0"><button class="primary" type="submit">Simpan perubahan</button><span id="msg" class="muted" role="status"></span></div>
+    </form>
+    <style>
+      .sws { display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      .sw { display:flex; align-items:center; gap:10px; border:1.5px solid var(--line); border-radius: 12px; padding: 10px 12px; margin:0; cursor:pointer; font-weight:600; }
+      .sw input { position:absolute; opacity:0; }
+      .sw span { width:22px; height:22px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 2px rgba(255,255,255,.5); }
+      .sw:has(input:checked) { border-color: var(--brand); background: var(--soft); }
+      .sw:has(input:focus-visible) { outline: 3px solid color-mix(in srgb, var(--brand) 45%, transparent); }
+      .prev { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin: 18px 0 14px; padding: 14px; border: 1px dashed var(--line); border-radius: 14px; }
+      .pv-opt { display:inline-flex; gap:8px; align-items:center; border:1.5px solid var(--brand); background: var(--soft); border-radius: 12px; padding: 6px 10px; font-weight:600; font-size:14px; }
+      .pv-opt i { width:24px; height:24px; border-radius:50%; background: var(--brand); color: var(--brand-ink); display:grid; place-items:center; font-style:normal; font-size:12px; font-weight:800; }
+      @media (max-width: 520px) { .sws { grid-template-columns: 1fr 1fr; } }
+    </style>
+    <script>
+      const HEX = ${JSON.stringify(Object.fromEntries(Object.entries(BRAND_COLORS).map(([k, v]) => [k, v.hex])))};
+      const f = document.getElementById('fs'), msg = document.getElementById('msg');
+      f.addEventListener('change', (e) => { if (e.target.name === 'color') document.documentElement.style.setProperty('--brand', HEX[e.target.value]); });
+      f.addEventListener('submit', async (e) => {
+        e.preventDefault(); msg.className = 'muted'; msg.textContent = 'Menyimpan…';
+        const d = Object.fromEntries(new FormData(f));
+        const r = await fetch('/api/school', { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) { msg.textContent = 'Tersimpan.'; } else { msg.className = 'err'; msg.textContent = j.error || 'Gagal menyimpan.'; }
+      });
     </script>
   `, { role: sess.role }));
 });
@@ -1677,7 +1869,7 @@ pages.get("/app/students/:id/report", async (c) => {
     </div>
   </div>
   <div class="foot">
-    Dokumen ini dicetak otomatis dari cbtgas pada ${new Date().toLocaleString("id-ID")}.
+    Dokumen ini dicetak otomatis dari CBT Yuk pada ${new Date().toLocaleString("id-ID")}.
     Kode verifikasi: <span class="verif">${esc(verifCode)}</span>.
   </div>
 </main></body></html>`);
@@ -2947,31 +3139,55 @@ pages.get("/app/questions", async (c) => {
   `, { role: sess.role }));
 });
 
-pages.get("/demo", async (c) => {
-  const schoolId = "adee329a-8b27-45ca-a0c2-9e47ea2f45a3";
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const [school, students] = await withTenant(
-    sql, { schoolId, role: "teacher" },
-    async (tx) => {
-      const s = await tx`select name, code, level from schools where id = ${schoolId}`;
-      const st = await tx`select name, username from students order by name limit 100`;
-      return [s[0] as { name: string; code: string; level: string } | undefined, st] as const;
-    },
-  );
-  const rows = (students as unknown as Array<{ name: string; username: string }>)
-    .map((s) => `<tr><td>${esc(s.name)}</td><td>${esc(s.username)}</td></tr>`).join("");
-  return c.html(base("Data demo", `
-    <div class="card">
-      <h1>Data demo</h1>
-      <p class="sub">${esc(school?.name ?? "?")} · ${esc(school?.level ?? "")} · kode <code>${esc(school?.code ?? "")}</code></p>
-      <table>
-        <thead><tr><th>Nama</th><th>Username</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <div class="row"><a class="btn" href="/">Kembali</a></div>
+pages.get("/demo", (c) => {
+  const on = c.env.DEMO_LOGIN === "1";
+  return c.html(base("Coba demo", `
+    <style>
+      .dm-head { text-align:center; padding: 28px 0 8px; }
+      .dm-head h1 { font-size: clamp(30px, 4.5vw, 44px); letter-spacing: -.03em; margin: 14px 0 8px; }
+      .dm-head p { color: var(--mut); margin: 0 auto; max-width: 52ch; font-size: 17px; }
+      .dm { display:grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 860px; margin: 28px auto 8px; }
+      .dm form, .dm .card { margin: 0; display:flex; flex-direction:column; }
+      .dm .card { padding: 26px; }
+      .dm .ic { width:48px; height:48px; border-radius: 14px; background: var(--soft); color: var(--brand); display:grid; place-items:center; }
+      .dm .ic svg { width: 26px; height: 26px; fill:none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .dm h2 { margin: 16px 0 6px; font-size: 20px; }
+      .dm ul { margin: 6px 0 22px; padding-left: 18px; color: var(--mut); font-size: 14.5px; flex: 1; } .dm li { margin: 6px 0; }
+      .dm button { width: 100%; min-height: 52px; font-size: 16px; border-radius: 14px; }
+      @media (max-width: 720px) { .dm { grid-template-columns: 1fr; } }
+    </style>
+    <div class="top" style="display:flex;justify-content:space-between;align-items:center;padding:20px 0"><a class="brand" href="/">${LOGO}</a><a href="/" style="font-weight:600">← Beranda</a></div>
+    <div class="dm-head">
+      <span class="eyebrow" style="display:inline-flex;font-size:13px;font-weight:700;color:var(--brand);background:var(--soft);padding:6px 12px;border-radius:999px">Tanpa daftar, tanpa token</span>
+      <h1>Mau coba sebagai siapa?</h1>
+      <p>Semua data di demo adalah contoh. Silakan klik apa saja.</p>
     </div>
+    ${on ? `
+    <div class="dm">
+      <form class="card" method="post" action="/demo/siswa">
+        <span class="ic"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"/></svg></span>
+        <h2>Siswa</h2>
+        <ul>
+          <li>Langsung ke layar konfirmasi peserta seperti TKA. Nama, kelas, dan token sudah terisi.</li>
+          <li>Kerjakan tryout 8 soal berbagai tipe dengan timer 15 menit.</li>
+          <li>Kumpulkan dan lihat nilainya.</li>
+        </ul>
+        <button class="primary" type="submit">Mulai sebagai siswa</button>
+      </form>
+      <form class="card" method="post" action="/auth/dev-login">
+        <span class="ic"><svg viewBox="0 0 24 24"><path d="M3 5h18v12H3zM8 21h8M12 17v4"/></svg></span>
+        <h2>Guru / admin sekolah</h2>
+        <ul>
+          <li>Lihat dasbor, kelas, siswa, dan bank soal sekolah contoh.</li>
+          <li>Buat ujian lewat panduan 4 langkah.</li>
+          <li>Pantau siswa yang sedang mengerjakan dan lihat analisis nilai.</li>
+        </ul>
+        <button type="submit">Masuk sebagai admin</button>
+      </form>
+    </div>` : `<div class="card" style="max-width:520px;margin:28px auto;text-align:center"><p>Demo sedang dimatikan.</p></div>`}
   `, { nav: false }));
 });
+
 
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[ch]!));

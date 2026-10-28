@@ -45,7 +45,7 @@ function redirectUri(origin: string): string {
 function authError(title: string, detail: string, status: number): Response {
   const esc = (t: string) => t.replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]!));
   const html = `<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} · cbtgas</title><style>${SHARED_CSS} main{max-width:520px;margin:10vh auto;padding:0 20px}</style></head>
+<title>${esc(title)} · CBT Yuk</title><style>${SHARED_CSS} main{max-width:520px;margin:10vh auto;padding:0 20px}</style></head>
 <body><main><div class="card"><h1>${esc(title)}</h1><p class="sub">${esc(detail)}</p>
 <div class="row"><a class="btn primary" href="/">Kembali ke beranda</a><a class="btn" href="/auth/google/start?mode=register">Daftarkan sekolah baru</a></div></div></main></body></html>`;
   return new Response(html, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
@@ -161,25 +161,34 @@ auth.post("/auth/register-school", async (c) => {
   if (!pending || !pending.email || !googleSub) return c.json({ error: "pending expired" }, 400);
 
   const body = (await c.req.json().catch(() => null)) as null | {
-    code: string; name: string; level: "SD" | "SMP" | "SMA" | "CAMPURAN";
+    name: string; level: "SD" | "SMP" | "SMA" | "CAMPURAN";
     npsn?: string; operator_name: string; operator_phone: string;
   };
-  if (!body?.code || !body.name || !body.level || !body.operator_name || !body.operator_phone) {
-    return c.json({ error: "missing fields" }, 400);
+  if (!body?.name?.trim() || !body.level || !body.operator_name?.trim() || !body.operator_phone?.trim()) {
+    return c.json({ error: "Lengkapi nama sekolah, jenjang, nama operator, dan nomor HP." }, 400);
   }
 
+  // Kode sekolah dibuat otomatis dari nama (dipakai internal, siswa tidak perlu tahu).
+  const slug = body.name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
+  const baseCode = slug.length >= 3 ? slug : `sekolah-${slug}`.replace(/-+$/, "");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  let schoolId: string;
-  try {
-    const r = await sql`select register_school(
-      ${body.code}, ${body.name}, ${body.level}, ${body.npsn ?? null},
-      ${body.operator_name}, ${body.operator_phone}, ${pending.email}, ${googleSub}
-    ) as id`;
-    schoolId = (r[0] as { id: string }).id;
-  } catch (e) {
-    const msg = (e as Error).message || "register failed";
-    return c.json({ error: msg }, 409);
+  let schoolId = "";
+  for (let attempt = 0; attempt < 6 && !schoolId; attempt++) {
+    const code = attempt === 0 ? baseCode : `${baseCode}-${1000 + Math.floor(Math.random() * 9000)}`;
+    try {
+      const r = await sql`select register_school(
+        ${code}, ${body.name.trim()}, ${body.level}, ${body.npsn?.trim() || null},
+        ${body.operator_name.trim()}, ${body.operator_phone.trim()}, ${pending.email}, ${googleSub}
+      ) as id`;
+      schoolId = (r[0] as { id: string }).id;
+    } catch (e) {
+      const err = e as { code?: string; constraint_name?: string; message?: string };
+      // Bentrok kode → coba lagi dengan akhiran acak. Galat lain langsung dilaporkan.
+      if (err.code === "23505" && (err.constraint_name ?? "").includes("code")) continue;
+      return c.json({ error: err.message || "Pendaftaran gagal." }, 409);
+    }
   }
+  if (!schoolId) return c.json({ error: "Pendaftaran gagal, coba lagi." }, 409);
 
   // Ambil user admin yang baru dibuat (sudah di-insert oleh register_school)
   const u = await withTenant(
@@ -200,7 +209,7 @@ auth.post("/auth/register-school", async (c) => {
 });
 
 auth.post("/auth/logout", (c) => {
-  const h = new Headers({ Location: `${c.env.APP_ORIGIN}/` });
+  const h = new Headers({ Location: "/" });
   h.append("Set-Cookie", clearCookie(SESSION_COOKIE));
   return new Response(null, { status: 302, headers: h });
 });
@@ -227,7 +236,7 @@ auth.post("/auth/dev-login", async (c) => {
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL,
   };
   const cookie = await sign(session, c.env.SESSION_SECRET);
-  const headers = new Headers({ Location: `${c.env.APP_ORIGIN}/app` });
+  const headers = new Headers({ Location: "/app" });
   headers.append("Set-Cookie", cookieHeader(SESSION_COOKIE, cookie, { maxAge: SESSION_TTL }));
   return new Response(null, { status: 302, headers });
 });

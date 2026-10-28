@@ -5,9 +5,29 @@ import { pages } from "./pages";
 import { api } from "./api";
 import { student } from "./student";
 import { finalizeSession } from "./scoring";
+import { verify, readCookie } from "./session";
+import { brandHex, APP_NAME } from "./ui";
 
 type Bindings = AuthBindings & { APP_ENV: string };
 const app = new Hono<{ Bindings: Bindings }>();
+
+// Warna merek sekolah yang sedang login (staf atau siswa). Halaman memuat
+// file ini setelah CSS dasar, jadi cukup menimpa --brand.
+app.get("/brand.css", async (c) => {
+  const cookie = c.req.header("Cookie");
+  const tok = readCookie(cookie, "cbt_sess") ?? readCookie(cookie, "cbt_sstu");
+  const s = tok ? await verify(tok, c.env.SESSION_SECRET) : null;
+  let hex = brandHex(null);
+  if (s?.sid) {
+    const sql = connect(c.env.HYPERDRIVE.connectionString);
+    const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+      tx`select color from schools where id = ${s.sid}`);
+    hex = brandHex((r[0] as { color: string } | undefined)?.color);
+  }
+  return new Response(`:root{--brand:${hex}}`, {
+    headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "private, no-cache" },
+  });
+});
 
 app.get("/health", (c) => c.json({ ok: true, env: c.env.APP_ENV }));
 
@@ -50,32 +70,42 @@ app.post("/__cron/run", async (c) => {
 
 // PWA: manifest + service worker + ikon SVG inline (vektor sederhana).
 app.get("/manifest.webmanifest", (c) => c.json({
-  name: "cbtgas · CBT Sekolah",
-  short_name: "cbtgas",
+  id: "/",
+  name: `${APP_NAME} · Ujian Sekolah Online`,
+  short_name: APP_NAME,
   start_url: "/",
+  scope: "/",
   display: "standalone",
-  background_color: "#fafafa",
-  theme_color: "#2563eb",
-  description: "Platform CBT untuk SD-SMA.",
+  orientation: "any",
+  background_color: "#F5F7FB",
+  theme_color: "#2563EB",
+  description: "Ujian berbasis komputer untuk SD, SMP, dan SMA: buat soal, jadwalkan, awasi, dan nilai otomatis.",
+  categories: ["education"],
   icons: [
     { src: "/icon-192.svg", sizes: "192x192", type: "image/svg+xml", purpose: "any" },
     { src: "/icon-512.svg", sizes: "512x512", type: "image/svg+xml", purpose: "any" },
+    { src: "/icon-maskable.svg", sizes: "512x512", type: "image/svg+xml", purpose: "maskable" },
   ],
 }));
 
-// Dua ikon dari SVG yang sama (vektor skalabel; browser pakai sizes atribut).
-const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
-  <rect width="192" height="192" rx="36" fill="#2563eb"/>
-  <text x="96" y="130" font-family="system-ui,sans-serif" font-size="110" font-weight="700" fill="#fff" text-anchor="middle">C</text>
+// Logo: gelembung jawaban yang sudah dicentang di atas kotak biru.
+const iconSvg = (pad: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B82F6"/><stop offset="1" stop-color="#1D4ED8"/></linearGradient></defs>
+  <rect width="512" height="512" rx="${pad ? 0 : 116}" fill="url(#g)"/>
+  <circle cx="256" cy="256" r="${150 - pad}" fill="#fff"/>
+  <path d="M${190 + pad / 3} 262 l46 46 l${86 - pad / 2} -${96 - pad / 2}" fill="none" stroke="#2563EB" stroke-width="${44 - pad / 4}" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`;
-app.get("/icon-192.svg", (c) => new Response(ICON_SVG, { headers: { "Content-Type": "image/svg+xml" } }));
-app.get("/icon-512.svg", (c) => new Response(ICON_SVG, { headers: { "Content-Type": "image/svg+xml" } }));
+const svgRes = (body: string) => new Response(body, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" } });
+app.get("/icon-192.svg", () => svgRes(iconSvg(0)));
+app.get("/icon-512.svg", () => svgRes(iconSvg(0)));
+app.get("/icon-maskable.svg", () => svgRes(iconSvg(40)));
+app.get("/favicon.ico", () => svgRes(iconSvg(0)));
 
 // Service worker: hanya cache shell (landing + login siswa). Semua request
 // data (/api/*, /s/take/*) selalu network. Dibatasi runtime cache ringan
 // untuk GET /s/login & / supaya PWA bisa buka saat offline sampai login.
 app.get("/sw.js", (c) => {
-  const sw = `const CACHE = 'cbtgas-shell-v2';
+  const sw = `const CACHE = 'cbtyuk-shell-v3';
 const SHELL = ['/', '/s/login', '/manifest.webmanifest', '/icon-192.svg'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -157,6 +187,9 @@ async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed
       const expired = await tx`select id from exam_sessions where status = 'active' and deadline_at <= now()`;
       for (const row of expired as unknown as Array<{ id: string }>) await finalizeSession(tx, row.id, "expired");
       await tx`delete from rate_counters where window_start < now() - interval '1 day'`;
+      // Siswa tamu dari tombol demo (beserta sesi & jawabannya) dihapus setelah 6 jam.
+      await tx`delete from students where username like 'tamu-%' and created_at < now() - interval '6 hours'
+               and school_id = (select id from schools where code = 'demo-sma')`;
       console.log(`cron: opened=${opened.length} closed=${closed.length} expired=${expired.length}`);
       return { opened: opened.length, closed: closed.length, expired: expired.length };
     });

@@ -1,4 +1,4 @@
-// Portal siswa: login dengan username + PIN + kode sekolah; kerjakan ujian.
+// Portal siswa: login dengan username + PIN; kerjakan ujian.
 // Cookie sesi siswa terpisah (cbt_sstu) agar tidak campur dengan sesi staf.
 
 import { Hono } from "hono";
@@ -9,7 +9,7 @@ import {
 } from "./session";
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
-import { SHARED_CSS } from "./ui";
+import { SHARED_CSS, LOGO } from "./ui";
 import { createSession, finalizeSession } from "./scoring";
 
 type Bindings = {
@@ -19,6 +19,7 @@ type Bindings = {
   APP_ENV: string;
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
+  DEMO_LOGIN?: string;
 };
 
 const STUDENT_COOKIE = "cbt_sstu";
@@ -47,9 +48,10 @@ export const student = new Hono<{ Bindings: Bindings }>();
 
 const page = (title: string, body: string) => `<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title} · cbtgas siswa</title>
+<title>${title} · CBT Yuk</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#14213D">
+<meta name="theme-color" content="#F5F7FB">
+<link rel="icon" href="/icon-192.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
@@ -59,7 +61,7 @@ const page = (title: string, body: string) => `<!doctype html>
 <script>(function(){try{var t=localStorage.getItem('theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <style>${SHARED_CSS}
   main { max-width: 760px; margin: 0 auto; padding: 24px 16px 96px; }
-  .q { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px; margin-bottom: 14px; }
+  .q { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 20px 22px; margin-bottom: 14px; box-shadow: var(--shadow); }
   @media (max-width: 520px) { .q { padding: 16px; border-radius: 16px; } }
   .q > p:first-of-type { margin-top: 0; }
   .q p { font-size: 16.5px; line-height: 1.6; }
@@ -73,11 +75,11 @@ const page = (title: string, body: string) => `<!doctype html>
   .opt:hover { border-color: color-mix(in srgb, var(--fg) 35%, var(--line)); }
   .opt > input { position:absolute; opacity:0; width:1px; height:1px; }
   .opt::before { counter-increment: opt; content: counter(opt, upper-alpha); flex: 0 0 auto; width: 34px; height: 34px;
-         border-radius: 50%; border: 2px solid var(--fg); display:grid; place-items:center; font-weight: 800; font-size: 14px;
+         border-radius: 50%; border: 2px solid color-mix(in srgb, var(--fg) 55%, var(--line)); display:grid; place-items:center; font-weight: 800; font-size: 14px;
          transition: background .12s, border-color .12s, color .12s; }
   .opt:has(> input[type=checkbox])::before { border-radius: 9px; }
-  .opt:has(> input:checked) { border-color: var(--fg); background: color-mix(in srgb, var(--pencil) 10%, var(--surface)); }
-  .opt:has(> input:checked)::before { background: var(--pencil); border-color: var(--pencil); color: #14213D; }
+  .opt:has(> input:checked) { border-color: var(--brand); background: var(--soft); }
+  .opt:has(> input:checked)::before { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
   .opt:has(> input:focus-visible) { outline: 3px solid var(--pencil); outline-offset: 2px; }
   .opt .opt-letter { display:none; }
 
@@ -85,12 +87,12 @@ const page = (title: string, body: string) => `<!doctype html>
   .nav { display:grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 8px; margin: 0 0 18px; }
   .nav button { min-height: 42px; min-width: 0; padding: 0; border-radius: 50%; aspect-ratio: 1; font-size: 13px;
                 font-variant-numeric: tabular-nums; border: 1.5px solid var(--line); }
-  .nav button.ans { background: var(--fg); border-color: var(--fg); color: var(--surface); }
-  .nav button.cur { border: 2.5px solid var(--pencil); }
-  .nav button.ans.cur { box-shadow: 0 0 0 2.5px var(--pencil); }
+  .nav button.ans { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+  .nav button.cur { border: 2.5px solid var(--fg); }
+  .nav button.ans.cur { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--brand); }
 
   .timer { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 18px; letter-spacing: .02em;
-           padding: 6px 14px; border-radius: 999px; background: var(--fg); color: var(--surface); }
+           padding: 6px 14px; border-radius: 999px; background: var(--soft); color: var(--brand); }
   .timer.warn { background: var(--danger); color: #fff; }
   .exam-head { position: sticky; top: 0; z-index: 30; background: color-mix(in srgb, var(--paper) 92%, transparent);
                backdrop-filter: blur(8px); margin: -24px -16px 18px; padding: 12px 16px; border-bottom: 1px solid var(--line);
@@ -116,7 +118,8 @@ const page = (title: string, body: string) => `<!doctype html>
   .chat-box { flex: 1; overflow-y: auto; min-height: 140px; max-height: 300px; padding: 6px; border: 1.5px solid var(--line);
               border-radius: 12px; background: var(--paper); font-size: 14px; }
   .badge { margin-left: 6px; background: var(--danger); color: #fff; padding: 1px 7px; border-radius: 999px; font-size: 11px; }
-</style></head><body><main>${body}</main>
+</style>
+<link rel="stylesheet" href="/brand.css"></head><body><main>${body}</main>
 <script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});</script>
 </body></html>`;
 
@@ -395,26 +398,30 @@ student.get("/s/history/:sid", async (c) => {
 });
 
 student.get("/s/login", (c) => c.html(page("Masuk siswa", `
-  <div class="card">
-    <h1>Masuk sebagai siswa</h1>
-    <p class="sub">Pakai kode sekolah, username, dan PIN dari guru.</p>
-    <form id="f">
-      <label>Kode sekolah</label><input name="code" required placeholder="demo-sma">
-      <label>Username</label><input name="username" required placeholder="andi.saputra">
-      <label>PIN</label><input name="pin" type="password" required pattern="\\d{4,8}" placeholder="PIN 4–8 digit">
-      <div class="row"><button class="primary" type="submit">Masuk</button>
-        <a class="btn" href="/s/forgot">Lupa PIN?</a></div>
-      <p class="err" id="err" hidden></p>
-    </form>
+  <div style="max-width:420px;margin:6vh auto 0">
+    <a class="brand" href="/" style="margin-bottom:22px">${LOGO}</a>
+    <div class="card" style="padding:26px">
+      <h1>Masuk siswa</h1>
+      <p class="sub">Pakai username dan PIN dari guru.</p>
+      <form id="f">
+        <label for="u">Username</label><input id="u" name="username" required autocomplete="username" autocapitalize="none" placeholder="mis. andi.saputra">
+        <label for="p">PIN</label><input id="p" name="pin" type="password" inputmode="numeric" autocomplete="current-password" required pattern="\\d{4,8}" placeholder="4–8 angka">
+        <button class="primary" type="submit" style="width:100%;min-height:50px;margin-top:18px">Masuk</button>
+        <p class="err" id="err" role="alert" hidden></p>
+      </form>
+      <p class="muted" style="margin:16px 0 0;text-align:center"><a href="/s/forgot">Lupa PIN?</a> · <a href="/demo">Coba demo</a></p>
+    </div>
   </div>
   <script>
     document.getElementById('f').addEventListener('submit', async (e) => {
       e.preventDefault();
       const err = document.getElementById('err'); err.hidden = true;
+      const btn = e.target.querySelector('button'); btn.disabled = true;
       const d = Object.fromEntries(new FormData(e.target));
       const r = await fetch('/s/login', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
       if (r.ok) { location.href = '/s'; return; }
+      btn.disabled = false;
       const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false;
     });
   </script>
@@ -423,45 +430,40 @@ student.get("/s/login", (c) => c.html(page("Masuk siswa", `
 student.post("/s/login", async (c) => {
   const rl = await checkOrLimit(c.env, c.req.raw.headers, "s_login", 10);
   if (rl) return rl;
-  const body = await c.req.json().catch(() => null) as null | { code: string; username: string; pin: string };
-  if (!body?.code || !body?.username || !body?.pin) return c.json({ error: "data kurang" }, 400);
+  const body = await c.req.json().catch(() => null) as null | { username: string; pin: string };
+  if (!body?.username || !body?.pin) return c.json({ error: "Isi username dan PIN." }, 400);
 
+  // Tanpa kode sekolah: cari username di semua sekolah aktif, cocokkan PIN.
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  // resolve_school adalah SECURITY DEFINER tidak butuh konteks RLS.
-  const sch = await sql`select id from resolve_school(${body.code})`;
-  if (sch.length === 0) return c.json({ error: "kode sekolah tidak dikenal" }, 404);
-  const sid = (sch[0] as { id: string }).id;
-
-  // Set konteks role 'student' tanpa user_id dulu, lalu cari siswa.
-  const stu = await withTenant(sql, { schoolId: sid, role: "student" }, (tx) =>
-    tx`select id, name, pin_hash, locked_until, pin_failed_count
-       from students where username = ${body.username} and active`,
-  );
-  if (stu.length === 0) return c.json({ error: "username/PIN salah" }, 401);
-  const u = stu[0] as { id: string; name: string; pin_hash: string; locked_until: string | null; pin_failed_count: number };
-
-  if (u.locked_until && new Date(u.locked_until).getTime() > Date.now()) {
-    return c.json({ error: "akun terkunci; hubungi guru" }, 423);
+  type Cand = { id: string; school_id: string; name: string; pin_hash: string; locked_until: string | null; pin_failed_count: number };
+  const cands = await sql`select * from find_students_by_username(${body.username})` as unknown as Cand[];
+  if (cands.length === 0) return c.json({ error: "Username atau PIN salah." }, 401);
+  let u: Cand | null = null;
+  for (const x of cands) {
+    if (x.locked_until && new Date(x.locked_until).getTime() > Date.now()) continue;
+    if (await verifyPin(body.pin, x.pin_hash)) { u = x; break; }
   }
-
-  const ok = await verifyPin(body.pin, u.pin_hash);
-  if (!ok) {
-    const nextCount = u.pin_failed_count + 1;
-    const lock = nextCount >= 5 ? new Date(Date.now() + 15 * 60_000).toISOString() : null;
-    await withTenant(sql, { schoolId: sid, role: "student", userId: u.id }, (tx) =>
-      tx`update students set pin_failed_count = ${nextCount}, locked_until = ${lock}
-         where id = ${u.id}`,
-    );
-    return c.json({ error: "username/PIN salah" }, 401);
+  if (!u) {
+    // Hitung gagal hanya bila username unik (tidak tahu sekolah mana yang dimaksud kalau ganda).
+    if (cands.length === 1) {
+      const x = cands[0];
+      if (x.locked_until && new Date(x.locked_until).getTime() > Date.now()) {
+        return c.json({ error: "Akun terkunci 15 menit karena PIN salah berkali-kali. Hubungi guru." }, 423);
+      }
+      const next = x.pin_failed_count + 1;
+      const lock = next >= 5 ? new Date(Date.now() + 15 * 60_000).toISOString() : null;
+      await withTenant(sql, { schoolId: x.school_id, role: "student", userId: x.id }, (tx) =>
+        tx`update students set pin_failed_count = ${next}, locked_until = ${lock} where id = ${x.id}`);
+    }
+    return c.json({ error: "Username atau PIN salah." }, 401);
   }
-  // Reset counter + catat login
-  await withTenant(sql, { schoolId: sid, role: "student", userId: u.id }, (tx) =>
-    tx`update students set pin_failed_count = 0, locked_until = null where id = ${u.id}`,
-  );
+  const sid = u.school_id, uid = u.id;
+  await withTenant(sql, { schoolId: sid, role: "student", userId: uid }, (tx) =>
+    tx`update students set pin_failed_count = 0, locked_until = null where id = ${uid}`);
 
   const session: StudentSession = {
-    uid: u.id, sid, role: "student",
-    email: `${body.username}@${body.code}`,
+    uid, sid, role: "student",
+    email: `${body.username}@siswa`,
     exp: Math.floor(Date.now() / 1000) + STUDENT_TTL,
   };
   const cookie = await sign(session as unknown as Session, c.env.SESSION_SECRET);
@@ -470,43 +472,45 @@ student.post("/s/login", async (c) => {
   return new Response(JSON.stringify({ ok: true }), { headers: h });
 });
 
-// Lupa PIN: siswa isi kode sekolah + username, system masukkan ke antrian
+
+// Lupa PIN: siswa isi username, system masukkan ke antrian
 // pin_resets. Guru/admin menyetujui lewat dashboard PIN 6-digit baru
 // ditampilkan sekali untuk disampaikan ke siswa.
 student.post("/s/forgot", async (c) => {
   const rl = await checkOrLimit(c.env, c.req.raw.headers, "s_forgot", 5);
   if (rl) return rl;
-  const body = await c.req.json().catch(() => null) as null | { code: string; username: string };
-  if (!body?.code || !body?.username) return c.json({ error: "data kurang" }, 400);
+  const body = await c.req.json().catch(() => null) as null | { username: string };
+  if (!body?.username) return c.json({ error: "Isi username." }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const sch = await sql`select id from resolve_school(${body.code})`;
-  if (sch.length === 0) return c.json({ error: "kode sekolah tidak dikenal" }, 404);
-  const sid = (sch[0] as { id: string }).id;
-  const notify = await withTenant(sql, { schoolId: sid, role: "student" }, async (tx) => {
-    const stu = await tx`select id, name from students where username = ${body.username} and active`;
-    if (stu.length === 0) return null;  // Diam-diam ok supaya tidak membocorkan username ada/tidak.
-    const stuRow = stu[0] as { id: string; name: string };
-    const existing = await tx`select id from pin_resets where student_id = ${stuRow.id} and status = 'pending'`;
-    if (existing.length === 0) {
-      await tx`insert into pin_resets (school_id, student_id) values (${sid}, ${stuRow.id})`;
-    }
-    const sch = await tx`select name from schools where id = ${sid}`;
-    const admins = await tx`select email from users where role in ('admin','teacher') and active`;
-    return {
-      schoolName: (sch[0] as { name: string } | undefined)?.name ?? "",
-      studentName: stuRow.name,
-      username: body.username,
-      recipients: (admins as unknown as Array<{ email: string }>).map((x) => x.email),
-    };
-  });
-  // Kirim email ke guru/admin (best-effort). Tidak gagalkan permintaan siswa.
-  if (notify && notify.recipients.length) {
-    const mail = pinNotifyEmail({
-      schoolName: notify.schoolName, studentName: notify.studentName,
-      username: notify.username, origin: c.env.APP_ORIGIN,
+  const found = await sql`select school_id from find_students_by_username(${body.username})`;
+  // Username yang sama bisa ada di beberapa sekolah: ajukan ke semuanya.
+  for (const { school_id: sid } of found as unknown as Array<{ school_id: string }>) {
+    const notify = await withTenant(sql, { schoolId: sid, role: "student" }, async (tx) => {
+      const stu = await tx`select id, name from students where lower(username) = lower(trim(${body.username})) and active`;
+      if (stu.length === 0) return null;  // Diam-diam ok supaya tidak membocorkan username ada/tidak.
+      const stuRow = stu[0] as { id: string; name: string };
+      const existing = await tx`select id from pin_resets where student_id = ${stuRow.id} and status = 'pending'`;
+      if (existing.length === 0) {
+        await tx`insert into pin_resets (school_id, student_id) values (${sid}, ${stuRow.id})`;
+      }
+      const sch = await tx`select name from schools where id = ${sid}`;
+      const admins = await tx`select email from users where role in ('admin','teacher') and active`;
+      return {
+        schoolName: (sch[0] as { name: string } | undefined)?.name ?? "",
+        studentName: stuRow.name,
+        username: body.username,
+        recipients: (admins as unknown as Array<{ email: string }>).map((x) => x.email),
+      };
     });
-    for (const to of notify.recipients) {
-      await sendEmail(c.env, to, mail.subject, mail.html);
+    // Kirim email ke guru/admin (best-effort). Tidak gagalkan permintaan siswa.
+    if (notify && notify.recipients.length) {
+      const mail = pinNotifyEmail({
+        schoolName: notify.schoolName, studentName: notify.studentName,
+        username: notify.username, origin: c.env.APP_ORIGIN,
+      });
+      for (const to of notify.recipients) {
+        await sendEmail(c.env, to, mail.subject, mail.html);
+      }
     }
   }
   return c.json({ ok: true, message: "Permintaan reset diajukan. Hubungi guru untuk mendapat PIN baru." });
@@ -517,8 +521,7 @@ student.get("/s/forgot", (c) => c.html(page("Lupa PIN", `
     <h1>Lupa PIN</h1>
     <p class="sub">Kirim permintaan ke guru untuk reset. Guru akan memberi Anda PIN baru.</p>
     <form id="f">
-      <label>Kode sekolah</label><input name="code" required placeholder="demo-sma">
-      <label>Username</label><input name="username" required placeholder="andi.saputra">
+      <label>Username</label><input name="username" required autocapitalize="none" placeholder="andi.saputra">
       <div class="row"><button class="primary" type="submit">Ajukan reset</button>
         <a class="btn" href="/s/login">Kembali</a></div>
       <p id="msg" style="margin-top:12px"></p>
@@ -595,13 +598,112 @@ student.get("/s/me", async (c) => {
 });
 
 student.post("/s/logout", (c) => {
-  const h = new Headers({ Location: `${c.env.APP_ORIGIN}/s/login` });
+  const h = new Headers({ Location: "/s/login" });
   h.append("Set-Cookie", clearCookie(STUDENT_COOKIE));
   return new Response(null, { status: 302, headers: h });
 });
 
 // Mulai (atau lanjutkan) sesi ujian: buat exam_sessions kalau belum ada, hitung
 // deadline dari starts_at atau now() + duration.
+
+// ===== Demo siswa =====
+// Tombol "Coba demo → sebagai siswa" membuat siswa tamu sekali pakai di sekolah
+// demo, lalu menampilkan layar konfirmasi peserta ala TKA/ANBK dengan token
+// yang sudah terisi. Siswa tamu dihapus cron setelah 6 jam.
+const DEMO_EXAM = "Tryout Demo CBT Yuk";
+const DEMO_NAMES = ["Rina Amelia", "Bagas Pratama", "Salsa Nabila", "Dimas Saputra", "Aulia Rahma",
+  "Fajar Nugroho", "Nadia Putri", "Raka Aditya", "Citra Lestari", "Yoga Permana"];
+
+student.post("/demo/siswa", async (c) => {
+  if (c.env.DEMO_LOGIN !== "1") return c.notFound();
+  const rl = await checkOrLimit(c.env, c.req.raw.headers, "demo_siswa", 20);
+  if (rl) return rl;
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sch = await sql`select id from resolve_school('demo-sma')`;
+  if (sch.length === 0) return c.text("Sekolah demo belum disiapkan.", 503);
+  const sid = (sch[0] as { id: string }).id;
+  const rand = crypto.getRandomValues(new Uint8Array(4));
+  const tag = [...rand].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const name = DEMO_NAMES[rand[0] % DEMO_NAMES.length];
+  const uid = await withTenant(sql, { schoolId: sid, role: "admin" }, async (tx) => {
+    const cls = await tx`select ec.class_id from exams e join exam_classes ec on ec.exam_id = e.id
+                         where e.title = ${DEMO_EXAM} and e.status = 'open' limit 1`;
+    if (cls.length === 0) return null;
+    const ins = await tx`insert into students (school_id, class_id, name, username, pin_hash)
+      values (${sid}, ${(cls[0] as { class_id: string }).class_id}, ${name}, ${"tamu-" + tag}, 'tamu-tanpa-pin')
+      returning id`;
+    return (ins[0] as { id: string }).id;
+  });
+  if (!uid) return c.text("Ujian demo belum disiapkan.", 503);
+  const session: StudentSession = { uid, sid, role: "student", email: `tamu-${tag}@demo`,
+    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 2 };
+  const cookie = await sign(session as unknown as Session, c.env.SESSION_SECRET);
+  const h = new Headers({ Location: "/demo/konfirmasi" });
+  h.append("Set-Cookie", cookieHeader(STUDENT_COOKIE, cookie, { maxAge: 60 * 60 * 2 }));
+  return new Response(null, { status: 303, headers: h });
+});
+
+student.get("/demo/konfirmasi", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.redirect("/demo");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const d = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
+    const me = await tx`select s.name, s.username, c.name as class_name, sc.name as school
+                        from students s left join classes c on c.id = s.class_id join schools sc on sc.id = s.school_id
+                        where s.id = ${stu.uid}`;
+    const ex = await tx`select e.id, e.title, e.duration_minutes,
+                          (select count(*) from exam_questions where exam_id = e.id)::int as n
+                        from exams e where e.title = ${DEMO_EXAM} and e.status = 'open' limit 1`;
+    return { me: me[0], ex: ex[0] };
+  });
+  const me = d.me as { name: string; username: string; class_name: string | null; school: string } | undefined;
+  const ex = d.ex as { id: string; title: string; duration_minutes: number; n: number } | undefined;
+  if (!me || !ex) return c.redirect("/demo");
+  const token = [...crypto.getRandomValues(new Uint8Array(6))].map((b) => "ABCDEFGHJKLMNPQRSTUVWXYZ"[b % 24]).join("");
+  return c.html(page("Konfirmasi peserta", `
+    <style>
+      .tka-top { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 18px; }
+      .tka-top .brand { font-size: 17px; }
+      .tka-tag { font-size: 12px; font-weight: 700; color: var(--brand); background: var(--soft); padding: 4px 10px; border-radius: 999px; }
+      .tka-grid { display:grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items:start; }
+      @media (max-width: 680px) { .tka-grid { grid-template-columns: 1fr; } }
+      .tka-row { display:grid; grid-template-columns: 130px 1fr; gap: 6px 12px; padding: 11px 0; border-top: 1px solid var(--line); }
+      .tka-row:first-of-type { border-top: none; }
+      .tka-row dt { color: var(--mut); font-size: 13.5px; } .tka-row dd { margin: 0; font-weight: 700; }
+      .token { font: 800 26px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .3em; text-align:center; text-transform: uppercase; min-height: 60px; }
+      .steps-mini { margin: 0; padding-left: 18px; color: var(--mut); font-size: 14px; } .steps-mini li { margin: 6px 0; }
+    </style>
+    <div class="tka-top"><span class="brand">${LOGO}</span><span class="tka-tag">Mode demo</span></div>
+    <div class="tka-grid">
+      <div class="card">
+        <h1 style="font-size:22px">Konfirmasi data peserta</h1>
+        <p class="sub" style="margin-bottom:6px">Periksa data Anda. Jika sudah benar, masukkan token dari pengawas lalu tekan <b>Mulai</b>.</p>
+        <dl style="margin:0">
+          <div class="tka-row"><dt>No. peserta</dt><dd>${esc(me.username.toUpperCase())}</dd></div>
+          <div class="tka-row"><dt>Nama peserta</dt><dd>${esc(me.name)}</dd></div>
+          <div class="tka-row"><dt>Kelas</dt><dd>${esc(me.class_name ?? "-")}</dd></div>
+          <div class="tka-row"><dt>Sekolah</dt><dd>${esc(me.school)}</dd></div>
+          <div class="tka-row"><dt>Mata ujian</dt><dd>${esc(ex.title)}</dd></div>
+          <div class="tka-row"><dt>Waktu</dt><dd>${ex.duration_minutes} menit · ${ex.n} soal</dd></div>
+        </dl>
+      </div>
+      <form class="card" method="post" action="/s/exams/${esc(ex.id)}/start">
+        <label for="tok" style="margin-top:0">Token ujian</label>
+        <input id="tok" class="token" value="${token}" readonly aria-describedby="tokHint">
+        <p class="muted" id="tokHint" style="margin:8px 0 0">Untuk demo, token sudah terisi otomatis.</p>
+        <button class="primary" type="submit" style="width:100%; min-height:52px; margin-top:16px; font-size:16px">Mulai ujian</button>
+        <h3 style="margin:22px 0 8px">Yang akan Anda coba</h3>
+        <ol class="steps-mini">
+          <li>Soal pilihan ganda, benar/salah, pilihan kompleks, menjodohkan, isian, dan uraian.</li>
+          <li>Ragu-ragu, nomor soal, timer, kalkulator, dan chat ke pengawas.</li>
+          <li>Jawaban tersimpan otomatis. Nilai keluar setelah dikumpulkan.</li>
+        </ol>
+      </form>
+    </div>
+    <p class="muted" style="text-align:center;margin-top:8px"><a href="/demo">Kembali ke pilihan demo</a></p>
+  `));
+});
+
 student.post("/s/exams/:id/start", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.redirect("/s/login");

@@ -4,7 +4,7 @@
 
 type EmailEnv = {
   RESEND_API_KEY?: string;
-  EMAIL_FROM?: string;   // mis. "cbtgas <noreply@bantuguruyuk.web.id>"
+  EMAIL_FROM?: string;   // mis. "CBT Yuk <noreply@bantuguruyuk.web.id>"
   APP_ORIGIN: string;
 };
 
@@ -12,7 +12,7 @@ export async function sendEmail(env: EmailEnv, to: string, subject: string, html
   { ok: true; id?: string } | { ok: false; error: string } | { ok: true; skipped: true }
 > {
   if (!env.RESEND_API_KEY) return { ok: true, skipped: true };
-  const from = env.EMAIL_FROM || "cbtgas <noreply@onboarding.resend.dev>";
+  const from = env.EMAIL_FROM || "CBT Yuk <noreply@onboarding.resend.dev>";
   try {
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -34,14 +34,14 @@ export function inviteEmail(opts: {
   invitedEmail: string; schoolName: string; role: string; origin: string;
 }): { subject: string; html: string } {
   return {
-    subject: `Undangan staf ${opts.schoolName} di cbtgas`,
+    subject: `Undangan staf ${opts.schoolName} di CBT Yuk`,
     html: `
       <div style="font-family:system-ui,sans-serif;max-width:560px;margin:auto;padding:20px">
         <h2 style="margin:0 0 12px">Anda diundang sebagai ${esc(opts.role)}</h2>
         <p>Sekolah <b>${esc(opts.schoolName)}</b> mengundang Anda untuk masuk ke
-        <b>cbtgas</b> (platform CBT).</p>
+        <b>CBT Yuk</b> (ujian sekolah online).</p>
         <p><a href="${esc(opts.origin)}/auth/google/start?mode=login"
-              style="background:#2563eb;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">
+              style="background:#2563EB;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">
           Masuk dengan Google
         </a></p>
         <p style="color:#777;font-size:13px">Masuklah pakai alamat Google yang
@@ -62,7 +62,7 @@ export function pinNotifyEmail(opts: {
         (<code>${esc(opts.username)}</code>) meminta reset PIN di
         <b>${esc(opts.schoolName)}</b>.</p>
         <p><a href="${esc(opts.origin)}/app/pin-resets"
-          style="background:#2563eb;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">
+          style="background:#2563EB;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">
           Buka antrian reset
         </a></p>
       </div>`,
