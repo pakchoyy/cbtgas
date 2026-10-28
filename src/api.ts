@@ -1680,9 +1680,9 @@ api.post("/api/exams/:id/questions", async (c) => {
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     await tx`delete from exam_questions where exam_id = ${id}`;
-    for (let i = 0; i < body.question_ids.length; i++) {
-      await tx`insert into exam_questions (exam_id, question_id, school_id, position)
-               values (${id}, ${body.question_ids[i]}, ${s.sid}, ${i + 1})`;
+    if (body.question_ids.length) {
+      const rows = body.question_ids.map((qid, i) => ({ exam_id: id, question_id: qid, school_id: s.sid, position: i + 1 }));
+      await tx`insert into exam_questions ${tx(rows, "exam_id", "question_id", "school_id", "position")}`;
     }
   });
   return c.json({ ok: true, count: body.question_ids.length });
@@ -1697,8 +1697,9 @@ api.post("/api/exams/:id/classes", async (c) => {
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     await tx`delete from exam_classes where exam_id = ${id}`;
-    for (const cid of body.class_ids) {
-      await tx`insert into exam_classes (exam_id, class_id, school_id) values (${id}, ${cid}, ${s.sid})`;
+    if (body.class_ids.length) {
+      const rows = body.class_ids.map((cid) => ({ exam_id: id, class_id: cid, school_id: s.sid }));
+      await tx`insert into exam_classes ${tx(rows, "exam_id", "class_id", "school_id")}`;
     }
   });
   return c.json({ ok: true, count: body.class_ids.length });

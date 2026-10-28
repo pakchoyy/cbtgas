@@ -451,7 +451,7 @@ pages.get("/app", async (c) => {
     [k.classes > 0, "Buat kelas", "Misalnya X-IPA-1. Siswa dan ujian dikelompokkan per kelas.", "/app/students", "Buat kelas"],
     [k.students > 0, "Masukkan siswa", "Satu per satu atau sekaligus lewat file CSV. Siswa masuk pakai username + PIN.", "/app/students", "Tambah siswa"],
     [k.questions > 0, "Tulis soal", "Pilihan ganda, isian, uraian, menjodohkan, dan lainnya.", "/app/questions", "Buka bank soal"],
-    [k.published > 0, "Buat & jadwalkan ujian", "Pilih soal, kelas peserta, durasi, lalu buka ujiannya.", "/app/exams", "Buat ujian"],
+    [k.published > 0, "Buat & jadwalkan ujian", "Pilih soal, kelas peserta, durasi, lalu buka ujiannya.", "/app/exams/new", "Buat ujian"],
   ];
   const doneCount = steps.filter((x) => x[0]).length;
   const nextIdx = steps.findIndex((x) => !x[0]);
@@ -479,7 +479,7 @@ pages.get("/app", async (c) => {
     <div class="page-head">
       <div><h1>${esc(school?.name ?? "Sekolah")}</h1>
       <p>Kode sekolah untuk siswa: <code>${esc(school?.code ?? "")}</code></p></div>
-      <a class="btn primary" href="/app/exams">+ Buat ujian</a>
+      <a class="btn primary" href="/app/exams/new">+ Buat ujian</a>
     </div>
 
     ${doneCount < steps.length ? `
@@ -836,8 +836,6 @@ pages.get("/app/exams", async (c) => {
     const g = await tx`select id, title from exam_groups order by title`;
     return [e, g] as const;
   });
-  type Gg = { id: string; title: string };
-  const groupOpts = (groups as unknown as Gg[]).map((g) => `<option value="${esc(g.id)}">${esc(g.title)}</option>`).join("");
   type Ex = { id: string; title: string; kind: string; duration_minutes: number; status: string; qc: number; cc: number };
   const list = (exams as unknown as Ex[]).map((e) => `<tr>
     <td><a href="/app/exams/${esc(e.id)}">${esc(e.title)}</a></td>
@@ -849,43 +847,12 @@ pages.get("/app/exams", async (c) => {
   </tr>`).join("") || `<tr><td colspan="6" class="muted">Belum ada ujian.</td></tr>`;
 
   return c.html(base("Ujian", `
-    <div class="card">
-      <h1>Ujian</h1>
-      <p class="sub"><a href="/app">Dashboard</a> · <a href="/app/questions">Bank soal</a></p>
-      <form id="fex">
-        <div class="grid">
-          <div><label>Judul</label><input name="title" required></div>
-          <div><label>Jenis</label>
-            <select name="kind"><option value="harian">Harian</option><option value="pts_pas">PTS/PAS</option><option value="sumatif">Sumatif</option><option value="tryout">Tryout</option></select>
-          </div>
-          <div><label>Durasi (menit)</label><input name="duration_minutes" type="number" min="5" value="60" required></div>
-          <div><label>Mulai (opsional)</label><input name="starts_at" type="datetime-local"></div>
-          <div><label>Berakhir (opsional)</label><input name="ends_at" type="datetime-local"></div>
-          <div>
-            <label>Anti-cheat</label>
-            <select name="anticheat_level">
-              <option value="log">Log saja</option>
-              <option value="warn" selected>Peringatan</option>
-              <option value="lock">Kunci otomatis</option>
-            </select>
-          </div>
-          <div><label>Kunci setelah N pelanggaran</label><input name="lock_after_violations" type="number" min="1" value="3"></div>
-          <div><label><input type="checkbox" name="shuffle_questions"> Acak urutan soal</label></div>
-          <div><label><input type="checkbox" name="shuffle_options"> Acak urutan pilihan</label></div>
-          <div><label>Soal per siswa <span class="muted">(0 = pakai semua; mis. 25 dari 100 soal)</span></label>
-            <input name="questions_per_session" type="number" min="0" value="0"></div>
-          <div><label>Penalti salah <span class="muted">(0 = tidak; 0.25 = kurangi 25% poin per salah)</span></label>
-            <input name="wrong_penalty" type="number" min="0" max="1" step="0.05" value="0"></div>
-          <div><label>Grup / rangkaian <span class="muted">(opsional, <a href="/app/exam-groups">kelola grup</a>)</span></label>
-            <select name="group_id"><option value="">— tanpa grup —</option>${groupOpts}</select></div>
-          <div><label>Posisi dalam grup</label><input name="group_position" type="number" min="1" placeholder="1"></div>
-        </div>
-        <div class="row">
-          <button class="primary" type="submit">Buat ujian</button>
-          <button type="button" id="btnGen">Auto-generate dari bank soal</button>
-        </div>
-        <p class="err" id="errex" hidden></p>
-      </form>
+    <div class="page-head">
+      <div><h1>Ujian</h1><p>${(exams as unknown as Ex[]).length} ujian. Buat baru lewat panduan langkah demi langkah.</p></div>
+      <div class="row" style="margin:0">
+        <button type="button" id="btnGen">Auto-generate dari bank soal</button>
+        <a class="btn primary" href="/app/exams/new">+ Buat ujian</a>
+      </div>
     </div>
     <dialog id="genDlg" style="max-width:420px; width:92%">
       <h3 style="margin:0 0 10px">Auto-generate ujian</h3>
@@ -939,28 +906,223 @@ pages.get("/app/exams", async (c) => {
         else { err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
 
-      document.getElementById('fex').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const err = document.getElementById('errex'); err.hidden = true;
-        const fd = new FormData(e.target);
-        const d = Object.fromEntries(fd);
-        d.duration_minutes = +d.duration_minutes;
-        d.lock_after_violations = d.lock_after_violations ? +d.lock_after_violations : null;
-        d.shuffle_questions = fd.has('shuffle_questions');
-        d.shuffle_options = fd.has('shuffle_options');
-        d.questions_per_session = +d.questions_per_session;
-        const penalty = parseFloat(d.wrong_penalty || '0');
-        delete d.wrong_penalty;
-        d.scoring_config = penalty > 0 ? { wrong_penalty: penalty } : {};
-        d.group_id = d.group_id || null;
-        d.group_position = d.group_position ? +d.group_position : null;
-        for (const k of ['starts_at','ends_at']) if (!d[k]) d[k] = null; else d[k] = new Date(d[k]).toISOString();
-        const r = await fetch('/api/exams', { method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+    </script>
+  `, { role: sess.role }));
+});
+
+// Wizard "Buat ujian": 4 langkah di satu halaman, simpan di akhir.
+pages.get("/app/exams/new", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  if (!sess) return c.redirect("/");
+  if (sess.role === "proctor") return c.redirect("/app/exams");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const [classes, questions, cats, groups] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const cl = await tx`select c.id, c.name, c.year, (select count(*) from students s where s.class_id = c.id and s.active)::int as n
+                        from classes c order by c.year desc, c.name`;
+    const q = await tx`select q.id, q.type, substring(q.content->>'text', 1, 140) as text, q.points, q.category_id
+                       from questions q order by q.created_at desc limit 500`;
+    const ct = await tx`select id, name from categories order by name`;
+    const g = await tx`select id, title from exam_groups order by title`;
+    return [cl, q, ct, g] as const;
+  });
+  const data = JSON.stringify({ classes, questions, cats, groups }).replace(/</g, "\\u003c");
+  return c.html(base("Buat ujian", `
+    <div class="page-head">
+      <div><h1>Buat ujian</h1><p>Empat langkah singkat. Belum ada yang tersimpan sampai langkah terakhir.</p></div>
+      <a class="btn" href="/app/exams">Batal</a>
+    </div>
+    <ol class="wz" id="wz" aria-label="Langkah">
+      <li data-s="1"><i>1</i><span>Dasar</span></li><li data-s="2"><i>2</i><span>Peserta</span></li>
+      <li data-s="3"><i>3</i><span>Soal</span></li><li data-s="4"><i>4</i><span>Jadwal</span></li>
+    </ol>
+
+    <form id="wf" novalidate>
+      <section class="card wstep" data-s="1">
+        <h2>Ujian apa ini?</h2>
+        <label>Judul ujian</label><input name="title" placeholder="mis. Ulangan Harian Matematika Bab 3" required>
+        <div class="grid">
+          <div><label>Jenis</label>
+            <select name="kind"><option value="harian">Ulangan harian</option><option value="pts_pas">PTS / PAS</option><option value="sumatif">Sumatif</option><option value="tryout">Tryout</option></select></div>
+          <div><label>Durasi pengerjaan <span class="muted">(menit)</span></label><input name="duration_minutes" type="number" min="5" value="60" required></div>
+        </div>
+      </section>
+
+      <section class="card wstep" data-s="2" hidden>
+        <h2>Siapa pesertanya?</h2>
+        <p class="muted" style="margin-top:0">Hanya siswa di kelas yang dipilih yang melihat ujian ini.</p>
+        <div id="clsList"></div>
+      </section>
+
+      <section class="card wstep" data-s="3" hidden>
+        <h2>Pilih soal</h2>
+        <div class="wbar">
+          <input id="qSearch" type="search" placeholder="Cari soal…" aria-label="Cari soal">
+          <select id="qCat" aria-label="Kategori"><option value="">Semua kategori</option></select>
+        </div>
+        <div class="row" style="margin:8px 0">
+          <button type="button" id="qAll">Pilih semua yang tampil</button>
+          <button type="button" id="qNone">Kosongkan</button>
+          <span class="muted" id="qCount" style="margin-left:auto"></span>
+        </div>
+        <div class="pick" id="qList"></div>
+        <p class="muted">Belum ada soalnya? <a href="/app/questions" target="_blank" rel="noopener">Tulis di bank soal</a> (tab baru), lalu muat ulang halaman ini.</p>
+      </section>
+
+      <section class="card wstep" data-s="4" hidden>
+        <h2>Kapan dibuka?</h2>
+        <div class="choice">
+          <label class="ch"><input type="radio" name="when" value="draft" checked><span><b>Simpan sebagai draf</b><small>Belum bisa dikerjakan siswa. Bisa dibuka nanti.</small></span></label>
+          <label class="ch"><input type="radio" name="when" value="now"><span><b>Buka sekarang</b><small>Siswa langsung bisa mulai mengerjakan.</small></span></label>
+          <label class="ch"><input type="radio" name="when" value="sched"><span><b>Jadwalkan</b><small>Terbuka dan tertutup otomatis pada waktu yang ditentukan.</small></span></label>
+        </div>
+        <div class="grid" id="schedBox" hidden>
+          <div><label>Mulai</label><input name="starts_at" type="datetime-local"></div>
+          <div><label>Berakhir</label><input name="ends_at" type="datetime-local"></div>
+        </div>
+        <div class="row" style="margin-top:4px">
+          <label><input type="checkbox" name="shuffle_questions"> Acak urutan soal</label>
+          <label><input type="checkbox" name="shuffle_options"> Acak pilihan jawaban</label>
+        </div>
+        <details style="margin-top:12px"><summary>Pengaturan lanjutan</summary>
+          <div class="grid">
+            <div><label>Anti-curang</label>
+              <select name="anticheat_level"><option value="log">Catat saja</option><option value="warn" selected>Beri peringatan</option><option value="lock">Kunci otomatis</option></select></div>
+            <div><label>Kunci setelah <span class="muted">(pelanggaran)</span></label><input name="lock_after_violations" type="number" min="1" value="3"></div>
+            <div><label>Soal per siswa <span class="muted">(0 = semua)</span></label><input name="questions_per_session" type="number" min="0" value="0"></div>
+            <div><label>Penalti salah <span class="muted">(0–1)</span></label><input name="wrong_penalty" type="number" min="0" max="1" step="0.05" value="0"></div>
+            <div><label>Rangkaian <span class="muted">(opsional)</span></label><select name="group_id"><option value="">— tanpa rangkaian —</option></select></div>
+            <div><label>Urutan dalam rangkaian</label><input name="group_position" type="number" min="1"></div>
+          </div>
+        </details>
+        <div class="review" id="review"></div>
+      </section>
+
+      <p class="err" id="wErr" role="alert" hidden></p>
+      <div class="row wnav">
+        <button type="button" id="wBack">Kembali</button>
+        <button type="button" class="primary" id="wNext">Lanjut</button>
+      </div>
+    </form>
+
+    <style>
+      .wz { list-style:none; display:flex; gap:0; padding:0; margin:0 0 18px; counter-reset:x; }
+      .wz li { flex:1; display:flex; align-items:center; gap:8px; color:var(--mut); font-size:13px; font-weight:600; position:relative; }
+      .wz li::after { content:""; flex:1; height:2px; background:var(--line); margin:0 8px; }
+      .wz li:last-child::after { display:none; }
+      .wz i { font-style:normal; width:28px; height:28px; border-radius:50%; display:grid; place-items:center; border:2px solid var(--line); font-weight:800; flex:0 0 auto; }
+      .wz li.on { color:var(--fg); } .wz li.on i { border-color:var(--ink); box-shadow:0 0 0 4px color-mix(in srgb, var(--pencil) 45%, transparent); }
+      .wz li.ok i { background:var(--ok); border-color:var(--ok); color:#fff; }
+      .wz li.ok i { font-size:0; } .wz li.ok i::before { content:"✓"; font-size:13px; }
+      @media (max-width:560px){ .wz li span{display:none} .wz li.on span{display:inline} .wz li::after{margin:0 4px} }
+      .wbar { display:grid; grid-template-columns:1fr 200px; gap:8px; } @media (max-width:560px){ .wbar{grid-template-columns:1fr} }
+      .ch { display:flex; gap:12px; align-items:flex-start; border:1.5px solid var(--line); border-radius:12px; padding:12px 14px; margin:8px 0; cursor:pointer; font-weight:400; }
+      .ch:has(input:checked) { border-color:var(--ink); background:color-mix(in srgb, var(--pencil) 14%, transparent); }
+      .ch span { display:flex; flex-direction:column; } .ch small { color:var(--mut); }
+      .ch input { margin-top:3px; }
+      .review { margin-top:16px; border-top:1px solid var(--line); padding-top:12px; }
+      .review dl { display:grid; grid-template-columns:auto 1fr; gap:6px 16px; margin:8px 0 0; } .review dt{color:var(--mut)} .review dd{margin:0;font-weight:600}
+      .cls { display:flex; align-items:center; gap:12px; border:1.5px solid var(--line); border-radius:12px; padding:10px 14px; margin:8px 0; font-weight:500; min-height:52px; cursor:pointer; }
+      .cls:has(input:checked) { border-color:var(--ink); background:color-mix(in srgb, var(--pencil) 14%, transparent); }
+      .cls small { margin-left:auto; color:var(--mut); font-weight:400; }
+      .wnav { justify-content:space-between; }
+    </style>
+    <script>
+      const D = ${data};
+      const f = document.getElementById('wf'), err = document.getElementById('wErr');
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+      const TYPE = { pg:'Pilihan ganda', benar_salah:'Benar/Salah', isian:'Isian', uraian:'Uraian', pgk_centang:'PG kompleks', menjodohkan:'Menjodohkan', pgk_kategori:'Kategori', simulasi:'Simulasi', dinamis_hitung:'Hitung dinamis' };
+      let step = 1;
+      const pickedQ = new Set();
+
+      // Kelas
+      const cl = document.getElementById('clsList');
+      cl.innerHTML = D.classes.length ? D.classes.map((c) => '<label class="cls"><input type="checkbox" name="cls" value="' + esc(c.id) + '"> ' + esc(c.name) + '<small>' + c.n + ' siswa · ' + esc(c.year) + '</small></label>').join('')
+        : '<p class="muted">Belum ada kelas. <a href="/app/students">Buat kelas dulu</a>, lalu kembali ke sini.</p>';
+      // Rangkaian + kategori
+      D.groups.forEach((g) => f.group_id.insertAdjacentHTML('beforeend', '<option value="' + esc(g.id) + '">' + esc(g.title) + '</option>'));
+      const qCat = document.getElementById('qCat');
+      D.cats.forEach((g) => qCat.insertAdjacentHTML('beforeend', '<option value="' + esc(g.id) + '">' + esc(g.name) + '</option>'));
+
+      // Soal
+      const qList = document.getElementById('qList'), qSearch = document.getElementById('qSearch');
+      const visible = () => { const t = qSearch.value.trim().toLowerCase(), k = qCat.value;
+        return D.questions.filter((q) => (!k || q.category_id === k) && (!t || (q.text || '').toLowerCase().includes(t))); };
+      function drawQ() {
+        const v = visible();
+        qList.innerHTML = v.map((q) => '<label class="qpick"><input type="checkbox" value="' + esc(q.id) + '"' + (pickedQ.has(q.id) ? ' checked' : '') + '><span>' + esc(q.text || '(tanpa teks)') + '<br><span class="muted">' + esc(TYPE[q.type] || q.type) + ' · ' + q.points + ' poin</span></span></label>').join('')
+          || '<p class="muted" style="padding:12px">' + (D.questions.length ? 'Tidak ada soal yang cocok.' : 'Bank soal masih kosong.') + '</p>';
+        document.getElementById('qCount').textContent = pickedQ.size + ' soal dipilih';
+      }
+      qList.addEventListener('change', (e) => { const i = e.target; i.checked ? pickedQ.add(i.value) : pickedQ.delete(i.value); drawQ(); });
+      qSearch.addEventListener('input', drawQ); qCat.addEventListener('change', drawQ);
+      document.getElementById('qAll').onclick = () => { visible().forEach((q) => pickedQ.add(q.id)); drawQ(); };
+      document.getElementById('qNone').onclick = () => { pickedQ.clear(); drawQ(); };
+      drawQ();
+
+      // Jadwal
+      const whenVal = () => f.when.value;
+      f.addEventListener('change', (e) => { if (e.target.name === 'when') document.getElementById('schedBox').hidden = whenVal() !== 'sched'; });
+      const chosenClasses = () => [...f.querySelectorAll('input[name=cls]:checked')].map((i) => i.value);
+
+      function review() {
+        const names = D.classes.filter((c) => chosenClasses().includes(c.id)).map((c) => c.name).join(', ') || '—';
+        const w = { draft: 'Draf (belum dibuka)', now: 'Dibuka sekarang', sched: 'Terjadwal' }[whenVal()];
+        document.getElementById('review').innerHTML = '<b>Ringkasan</b><dl><dt>Judul</dt><dd>' + esc(f.title.value) + '</dd><dt>Durasi</dt><dd>' + esc(f.duration_minutes.value) + ' menit</dd><dt>Peserta</dt><dd>' + esc(names) + '</dd><dt>Soal</dt><dd>' + pickedQ.size + ' soal</dd><dt>Status</dt><dd>' + w + '</dd></dl>';
+      }
+
+      function show(n) {
+        step = n;
+        document.querySelectorAll('.wstep').forEach((el) => el.hidden = +el.dataset.s !== n);
+        document.querySelectorAll('#wz li').forEach((li) => { const s = +li.dataset.s; li.classList.toggle('on', s === n); li.classList.toggle('ok', s < n); });
+        document.getElementById('wBack').style.visibility = n === 1 ? 'hidden' : 'visible';
+        document.getElementById('wNext').textContent = n === 4 ? (whenVal() === 'now' ? 'Buka ujian sekarang' : whenVal() === 'sched' ? 'Jadwalkan ujian' : 'Simpan draf') : 'Lanjut';
+        if (n === 4) review();
+        err.hidden = true; window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      f.addEventListener('change', () => { if (step === 4) show(4); });
+      function check() {
+        if (step === 1) { if (!f.title.value.trim()) return 'Isi judul ujian.'; if (!(+f.duration_minutes.value >= 5)) return 'Durasi minimal 5 menit.'; }
+        if (step === 2 && chosenClasses().length === 0) return 'Pilih minimal satu kelas.';
+        if (step === 3 && pickedQ.size === 0) return 'Pilih minimal satu soal.';
+        if (step === 4 && whenVal() === 'sched') {
+          if (!f.starts_at.value || !f.ends_at.value) return 'Isi waktu mulai dan berakhir.';
+          if (new Date(f.ends_at.value) <= new Date(f.starts_at.value)) return 'Waktu berakhir harus setelah waktu mulai.';
+        }
+        return '';
+      }
+      async function call(url, method, body) {
+        const r = await fetch(url, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const j = await r.json().catch(() => ({}));
-        if (r.ok) { location.href = '/app/exams/' + j.id; return; }
-        err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false;
-      });
+        if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+        return j;
+      }
+      async function save() {
+        const next = document.getElementById('wNext'); next.disabled = true;
+        try {
+          const when = whenVal(), pen = parseFloat(f.wrong_penalty.value || '0');
+          const iso = (v) => v ? new Date(v).toISOString() : null;
+          const ex = await call('/api/exams', 'POST', {
+            title: f.title.value.trim(), kind: f.kind.value, duration_minutes: +f.duration_minutes.value,
+            starts_at: when === 'sched' ? iso(f.starts_at.value) : null, ends_at: when === 'sched' ? iso(f.ends_at.value) : null,
+            shuffle_questions: f.shuffle_questions.checked, shuffle_options: f.shuffle_options.checked,
+            anticheat_level: f.anticheat_level.value, lock_after_violations: f.lock_after_violations.value ? +f.lock_after_violations.value : null,
+            questions_per_session: +f.questions_per_session.value || 0,
+            scoring_config: pen > 0 ? { wrong_penalty: pen } : {},
+            group_id: f.group_id.value || null, group_position: f.group_position.value ? +f.group_position.value : null,
+          });
+          await call('/api/exams/' + ex.id + '/questions', 'POST', { question_ids: D.questions.filter((q) => pickedQ.has(q.id)).map((q) => q.id) });
+          await call('/api/exams/' + ex.id + '/classes', 'POST', { class_ids: chosenClasses() });
+          if (when !== 'draft') await call('/api/exams/' + ex.id, 'PATCH', { status: when === 'now' ? 'open' : 'scheduled' });
+          location.href = '/app/exams/' + ex.id + '?baru=1';
+        } catch (x) { err.textContent = 'Gagal menyimpan: ' + x.message; err.hidden = false; next.disabled = false; }
+      }
+      document.getElementById('wBack').onclick = () => show(step - 1);
+      document.getElementById('wNext').onclick = () => {
+        const m = check(); if (m) { err.textContent = m; err.hidden = false; return; }
+        step === 4 ? save() : show(step + 1);
+      };
+      f.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'search') { e.preventDefault(); document.getElementById('wNext').click(); } });
+      show(1);
     </script>
   `, { role: sess.role }));
 });
@@ -1055,6 +1217,8 @@ pages.get("/app/exams/:id", async (c) => {
   </tr>`).join("") || `<tr><td colspan="6" class="muted">Belum ada data.</td></tr>`;
 
   return c.html(base(ex.title, `
+    <div class="card" id="okBanner" hidden style="border-color:var(--ok)"><b>Ujian tersimpan.</b> Atur detail di bawah, atau kembali ke <a href="/app/exams">daftar ujian</a>.</div>
+    <script>if (new URLSearchParams(location.search).has("baru")) document.getElementById("okBanner").hidden = false;</script>
     <div class="card">
       <h1>${esc(ex.title)} <span class="muted" style="font-weight:normal">· ${esc(ex.kind)} · ${ex.duration_minutes} mnt</span></h1>
       <p class="sub"><a href="/app/exams">Daftar ujian</a></p>

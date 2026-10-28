@@ -15,6 +15,7 @@
 //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (secret), SESSION_SECRET (secret), APP_ORIGIN.
 
 import { Hono } from "hono";
+import { SHARED_CSS } from "./ui";
 import { connect, withTenant } from "./db";
 import {
   Session, sign, verify, cookieHeader, clearCookie, readCookie, randomState,
@@ -37,6 +38,17 @@ const SESSION_TTL = 60 * 60 * 8; // 8 jam
 
 function redirectUri(origin: string): string {
   return `${origin}/auth/google/callback`;
+}
+
+
+// Galat login ditampilkan sebagai halaman, bukan JSON mentah.
+function authError(title: string, detail: string, status: number): Response {
+  const esc = (t: string) => t.replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]!));
+  const html = `<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)} · cbtgas</title><style>${SHARED_CSS} main{max-width:520px;margin:10vh auto;padding:0 20px}</style></head>
+<body><main><div class="card"><h1>${esc(title)}</h1><p class="sub">${esc(detail)}</p>
+<div class="row"><a class="btn primary" href="/">Kembali ke beranda</a><a class="btn" href="/auth/google/start?mode=register">Daftarkan sekolah baru</a></div></div></main></body></html>`;
+  return new Response(html, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
 export const auth = new Hono<{ Bindings: AuthBindings }>();
@@ -67,7 +79,7 @@ auth.get("/auth/google/callback", async (c) => {
   const state = c.req.query("state");
   const cookieState = readCookie(c.req.header("Cookie"), STATE_COOKIE);
   if (!code || !state || !cookieState || state !== cookieState) {
-    return c.json({ error: "bad state" }, 400);
+    return authError("Sesi login kedaluwarsa", "Silakan mulai masuk dengan Google dari awal.", 400);
   }
   const mode = (state.split(".")[1] as Mode) ?? "login";
 
@@ -94,7 +106,7 @@ auth.get("/auth/google/callback", async (c) => {
   const ui = (await uiResp.json()) as {
     sub: string; email: string; email_verified?: boolean; name?: string;
   };
-  if (!ui.email_verified) return c.json({ error: "email not verified" }, 403);
+  if (!ui.email_verified) return authError("Email belum terverifikasi", "Verifikasi email Google Anda terlebih dahulu.", 403);
 
   const email = ui.email.toLowerCase();
   const headers = new Headers({ "Set-Cookie": clearCookie(STATE_COOKIE) });
@@ -114,7 +126,8 @@ auth.get("/auth/google/callback", async (c) => {
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const staff = await sql`select user_id, school_id, role from find_staff_by_email(${email})`;
   if (staff.length === 0) {
-    return c.json({ error: "email tidak terdaftar sebagai staf; minta admin mengundang Anda" }, 403);
+    return authError("Email ini belum terdaftar",
+      `${email} belum menjadi staf di sekolah mana pun. Minta admin sekolah mengundang email ini, atau daftarkan sekolah baru dengan akun ini.`, 403);
   }
   if (staff.length > 1) {
     // Email yang sama diundang di beberapa sekolah: butuh pemilih di frontend.
@@ -241,7 +254,6 @@ export async function requireStaff(
   const s = await verify(token, secret);
   if (!s || !STAFF_ROLES.has(s.role) || !s.email) return null;
   const sql = connect(hyperdrive.connectionString);
-  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`select 1 from find_staff_by_email(${s.email}) where user_id = ${s.uid} and school_id = ${s.sid}`);
+  const rows = await sql`select 1 from find_staff_by_email(${s.email}) where user_id = ${s.uid} and school_id = ${s.sid}`;
   return rows.length ? s : null;
 }
