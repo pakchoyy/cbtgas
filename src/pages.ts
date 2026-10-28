@@ -224,7 +224,7 @@ pages.get("/app", async (c) => {
   if (!sess) return c.redirect("/");
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const [school, classes, students] = await withTenant(
+  const [school, classes, students, overview] = await withTenant(
     sql,
     { schoolId: sess.sid, role: sess.role, userId: sess.uid },
     async (tx) => {
@@ -234,7 +234,13 @@ pages.get("/app", async (c) => {
         select s.id, s.name, s.username, s.gender, s.nisn, s.class_id, c.name as class_name
         from students s left join classes c on c.id = s.class_id
         order by s.name limit 500`;
-      return [s[0] as { name: string; code: string; level: string } | undefined, cl, st] as const;
+      const ov = await tx`select
+          (select count(*) from students where active) as students,
+          (select count(*) from exams where status = 'open') as open_exams,
+          (select count(*) from exam_sessions where status = 'active' and last_seen_at > now() - interval '2 minutes') as online,
+          (select count(*) from exam_sessions where status = 'submitted' and started_at > now() - interval '7 days') as week_submits,
+          (select coalesce(round(avg(final_score)::numeric, 1), 0) from scores where approved_at > now() - interval '30 days' or approved_at is null) as avg_score`;
+      return [s[0] as { name: string; code: string; level: string } | undefined, cl, st, ov[0]] as const;
     },
   );
 
@@ -265,6 +271,7 @@ pages.get("/app", async (c) => {
       </td>
     </tr>`).join("") || `<tr><td colspan="6" class="muted">Belum ada siswa.</td></tr>`;
 
+  const ov = overview as { students: string; open_exams: string; online: string; week_submits: string; avg_score: string };
   return c.html(base("Dashboard", `
     <div class="card">
       <h1>${esc(school?.name ?? "Sekolah")} <span class="muted" style="font-weight:normal">· ${esc(school?.level ?? "")}</span></h1>
@@ -273,10 +280,20 @@ pages.get("/app", async (c) => {
         <form method="post" action="/auth/logout" style="margin:0">
           <button type="submit" data-i18n-src="Keluar">Keluar</button>
         </form>
-        ${sess.role === "admin" ? `<a class="btn" href="/app/users" data-i18n-src="Kelola staf">Kelola staf</a><a class="btn" href="/app/audit" data-i18n-src="Audit log">Audit log</a>` : ""}
+        ${sess.role === "admin" ? `<a class="btn" href="/app/users" data-i18n-src="Kelola staf">Kelola staf</a><a class="btn" href="/app/audit" data-i18n-src="Audit log">Audit log</a><a class="btn" href="/app/bulk">Bulk operasi</a>` : ""}
         <a class="btn" href="/app/pin-resets" data-i18n-src="Reset PIN siswa">Reset PIN siswa</a>
         <button type="button" id="toggleTheme" title="Ganti tema terang/gelap" data-i18n-src="🌓 Tema">🌓 Tema</button>
         <button type="button" id="toggleLang" title="Switch language">🌐 ID / EN</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr))">
+        <div style="text-align:center"><div style="font-size:24px; font-weight:600; color:var(--accent)">${ov.students}</div><div class="muted" style="font-size:12px">Siswa aktif</div></div>
+        <div style="text-align:center"><div style="font-size:24px; font-weight:600; color:#16a34a">${ov.open_exams}</div><div class="muted" style="font-size:12px">Ujian terbuka</div></div>
+        <div style="text-align:center"><div style="font-size:24px; font-weight:600; color:#eab308">${ov.online}</div><div class="muted" style="font-size:12px">Online kini</div></div>
+        <div style="text-align:center"><div style="font-size:24px; font-weight:600">${ov.week_submits}</div><div class="muted" style="font-size:12px">Submit 7 hari</div></div>
+        <div style="text-align:center"><div style="font-size:24px; font-weight:600">${ov.avg_score}</div><div class="muted" style="font-size:12px">Rata-rata nilai</div></div>
       </div>
     </div>
 
@@ -692,6 +709,9 @@ pages.get("/app/exams/:id", async (c) => {
     const manualBtn = needsManual && r.status === "submitted"
       ? ` · <a href="/app/sessions/${esc(r.session_id)}/grade">nilai uraian</a>`
       : "";
+    const certBtn = r.status === "submitted" && r.final_score != null
+      ? ` · <a href="/app/sessions/${esc(r.session_id)}/certificate">🏆 sertifikat</a>`
+      : "";
     const unlockBtn = r.status === "locked"
       ? ` · <a href="#" data-unlock="${esc(r.session_id)}">buka kembali</a>` : "";
     return `<tr>
@@ -700,7 +720,7 @@ pages.get("/app/exams/:id", async (c) => {
       <td><span class="pill ${esc(r.status)}">${esc(r.status)}</span>${r.violation_count ? ` · ${r.violation_count} pelanggaran` : ""}${unlockBtn}</td>
       <td>${r.auto_score ?? "-"}</td>
       <td>${r.manual_score ?? "-"}</td>
-      <td><b>${r.final_score ?? "-"}</b>${manualBtn}</td>
+      <td><b>${r.final_score ?? "-"}</b>${manualBtn}${certBtn}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="6" class="muted">Belum ada peserta.</td></tr>`;
 
@@ -753,6 +773,7 @@ pages.get("/app/exams/:id", async (c) => {
         <a class="btn" href="/app/exams/${esc(examId)}/live">Live monitoring</a>
         <a class="btn" href="/app/exams/${esc(examId)}/lab">Mode lab komputer</a>
         <a class="btn" href="/app/exams/${esc(examId)}/items">Analisis butir soal</a>
+        <a class="btn" href="/app/exams/${esc(examId)}/insights">Insights (distraktor + chat)</a>
       </div>
       <table>
         <thead><tr><th>Siswa</th><th>Kelas</th><th>Status</th><th>Auto</th><th>Manual</th><th>Final</th></tr></thead>
@@ -849,6 +870,91 @@ pages.get("/app/pin-resets", async (c) => {
       });
     </script>
   `));
+});
+
+// Sertifikat pencapaian untuk satu sesi ujian jika nilainya ≥ KKM
+// (default 75). Format cetak A4 landscape, dekorasi border tebal.
+pages.get("/app/sessions/:sid/certificate", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const sessionId = c.req.param("sid");
+  const kkm = parseInt(c.req.query("kkm") ?? "75", 10);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const r = await tx`
+      select st.name as student_name, st.nisn, c.name as class_name,
+             sch.name as school_name, sch.level, e.title as exam_title,
+             e.kind, sc.final_score, es.finished_at
+      from exam_sessions es
+      join students st on st.id = es.student_id
+      join exams e on e.id = es.exam_id
+      join schools sch on sch.id = es.school_id
+      left join classes c on c.id = st.class_id
+      left join scores sc on sc.session_id = es.id
+      where es.id = ${sessionId} and es.status = 'submitted'`;
+    return r[0];
+  });
+  if (!data) return c.notFound();
+  const d = data as {
+    student_name: string; nisn: string | null; class_name: string | null;
+    school_name: string; level: string; exam_title: string; kind: string;
+    final_score: string | null; finished_at: string;
+  };
+  const score = parseFloat(d.final_score ?? "0");
+  const passed = score >= kkm;
+  const verifCode = `${sessionId.slice(0, 8).toUpperCase()}-${(Date.now() % 100000).toString().padStart(5, "0")}`;
+  return c.html(`<!doctype html><html lang="id"><head>
+<meta charset="utf-8"><title>Sertifikat — ${esc(d.student_name)}</title>
+<style>
+  @page { size: A4 landscape; margin: 15mm; }
+  body { font: 15px/1.5 Georgia, 'Times New Roman', serif; margin: 0; background: #f5f5f5; color: #111; }
+  main { max-width: 1000px; margin: 20px auto; background: #fff; padding: 48px 56px; border: 12px double #d4a24a; position: relative; min-height: 540px; }
+  main::before { content:""; position:absolute; inset: 6px; border: 2px solid #d4a24a; pointer-events:none; }
+  h1 { font-size: 44px; text-align: center; margin: 0 0 4px; letter-spacing: 2px; color: #0b3a7a; }
+  h2 { font-size: 20px; text-align: center; margin: 0 0 24px; letter-spacing: 1px; color: #666; font-weight: 400; }
+  .seal { text-align: center; font-size: 48px; margin: 10px 0; }
+  .name { font-size: 32px; text-align: center; font-weight: 600; color: #0b3a7a; margin: 20px 0 6px; border-bottom: 1px solid #d4a24a; display: inline-block; padding: 0 40px 4px; }
+  .center { text-align:center; }
+  .body-txt { text-align: center; font-size: 16px; margin: 10px 40px; line-height: 1.7; }
+  .score-box { text-align: center; margin: 24px 0 10px; }
+  .score { font-size: 56px; font-weight: 700; color: ${passed ? "#16a34a" : "#999"}; font-family: Georgia, serif; }
+  .label { font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 2px; }
+  .footer { display: flex; justify-content: space-between; margin-top: 36px; align-items: flex-end; }
+  .sig { text-align: center; font-size: 13px; }
+  .sig-line { border-bottom: 1px solid #000; width: 220px; margin: 56px auto 6px; }
+  .verif { font-family: monospace; font-size: 11px; color: #999; letter-spacing: 1px; }
+  .no-print { padding: 10px 0; }
+  .no-print button { padding: 8px 14px; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size: 13px; font-family: sans-serif; }
+  @media print { body { background: #fff; } main { max-width: none; margin: 0; padding: 32px 40px; border-color: #c58f3a; } .no-print { display: none; } }
+</style></head><body><main>
+  <div class="no-print">
+    <button onclick="window.print()">🖨 Cetak / Simpan sebagai PDF</button>
+    <a href="/app/exams" style="margin-left:8px; font-family: sans-serif">← Daftar ujian</a>
+  </div>
+  <div class="seal">${passed ? "🏆" : "📜"}</div>
+  <h1>${passed ? "Sertifikat Pencapaian" : "Keterangan Ujian"}</h1>
+  <h2>${esc(d.school_name)} · ${esc(d.level)}</h2>
+  <p class="body-txt">Diberikan kepada:</p>
+  <div class="center"><span class="name">${esc(d.student_name)}</span></div>
+  <p class="body-txt">
+    atas keikutsertaannya dalam ujian <b>${esc(d.exam_title)}</b> (${esc(d.kind)})
+    ${d.class_name ? `kelas <b>${esc(d.class_name)}</b>` : ""}
+    pada ${new Date(d.finished_at).toLocaleDateString("id-ID", { dateStyle: "long" })}${passed ? " dengan hasil memuaskan" : ""}.
+  </p>
+  <div class="score-box">
+    <div class="label">Nilai Akhir</div>
+    <div class="score">${d.final_score ?? "-"}</div>
+    <div class="label">${passed ? `KKM ${kkm} — LULUS` : `KKM ${kkm} — belum tercapai`}</div>
+  </div>
+  <div class="footer">
+    <div class="verif">#${esc(verifCode)}</div>
+    <div class="sig">
+      <div>Mengetahui,</div>
+      <div class="sig-line"></div>
+      <div>Kepala Sekolah</div>
+    </div>
+  </div>
+</main></body></html>`);
 });
 
 // Rapor cetak per siswa: ringkasan nilai + tanda tangan + QR verifikasi.
@@ -1145,6 +1251,81 @@ pages.get("/app/restore", async (c) => {
   </script>`);
 });
 
+pages.get("/app/bulk", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  if (sess.role !== "admin") return c.html(base("Bulk", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">← Dashboard</a></div>`));
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const [classes, exams] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const cl = await tx`select id, name from classes order by name`;
+    const ex = await tx`select e.id, e.title,
+      (select count(*) from exam_sessions where exam_id = e.id) as sess_count
+      from exams e order by e.created_at desc`;
+    return [cl, ex] as const;
+  });
+  type Cl = { id: string; name: string };
+  type Ex = { id: string; title: string; sess_count: string };
+  const classOpts = (classes as unknown as Cl[]).map((cl) => `<option value="${esc(cl.id)}">${esc(cl.name)}</option>`).join("");
+  const examOpts = (exams as unknown as Ex[]).map((e) => `<option value="${esc(e.id)}">${esc(e.title)} (${e.sess_count} sesi)</option>`).join("");
+  return c.html(base("Bulk operasi", `
+    <div class="card">
+      <h1>Operasi massal</h1>
+      <p class="sub"><a href="/app">← Dashboard</a></p>
+    </div>
+    <div class="card">
+      <h2>Reset PIN sekelas</h2>
+      <p class="muted">Generate PIN baru 6-digit untuk setiap siswa aktif di kelas yang dipilih. Daftar ditampilkan sekali untuk dicetak.</p>
+      <label>Kelas</label>
+      <select id="classSel"><option value="">— pilih kelas —</option>${classOpts}</select>
+      <div class="row" style="margin-top:8px"><button class="primary" id="runResetPin">Reset PIN sekelas</button></div>
+      <pre id="pinOut" hidden style="margin-top:10px; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); font-size:12px; max-height:300px; overflow:auto"></pre>
+    </div>
+    <div class="card">
+      <h2>Hapus semua sesi di satu ujian</h2>
+      <p class="muted err">Peringatan: ini menghapus semua sesi + jawaban + skor ujian. Berguna untuk ujian ulang total.</p>
+      <label>Ujian</label>
+      <select id="examSel"><option value="">— pilih ujian —</option>${examOpts}</select>
+      <div class="row" style="margin-top:8px"><button class="danger" id="runWipe">Hapus semua sesi</button></div>
+    </div>
+    <div class="card">
+      <h2>Archive ujian lama</h2>
+      <p class="muted">Set status 'closed' untuk semua ujian open/scheduled yang lebih tua dari N hari.</p>
+      <label>Lebih tua dari (hari)</label>
+      <input id="archDays" type="number" min="1" max="365" value="30">
+      <div class="row" style="margin-top:8px"><button class="primary" id="runArchive">Archive sekarang</button></div>
+    </div>
+    <script>
+      document.getElementById('runResetPin').addEventListener('click', async () => {
+        const id = document.getElementById('classSel').value;
+        if (!id) { alert('Pilih kelas dulu'); return; }
+        if (!confirm('Reset PIN semua siswa kelas ini?')) return;
+        const r = await fetch('/api/classes/' + id + '/reset-pins', { method:'POST', credentials:'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(j.error || r.status); return; }
+        const out = document.getElementById('pinOut');
+        out.hidden = false;
+        out.textContent = j.students.map((s) => s.username.padEnd(20) + s.name.padEnd(28) + ' PIN: ' + s.pin).join('\\n');
+      });
+      document.getElementById('runWipe').addEventListener('click', async () => {
+        const id = document.getElementById('examSel').value;
+        if (!id) { alert('Pilih ujian dulu'); return; }
+        if (!confirm('BENAR-BENAR hapus semua sesi + jawaban + skor ujian ini? Tidak bisa dibatalkan.')) return;
+        const r = await fetch('/api/exams/' + id + '/wipe-sessions', { method:'POST', credentials:'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) alert(j.deleted + ' sesi dihapus.'); else alert(j.error || r.status);
+      });
+      document.getElementById('runArchive').addEventListener('click', async () => {
+        const days = parseInt(document.getElementById('archDays').value, 10) || 30;
+        if (!confirm('Archive semua ujian open/scheduled > ' + days + ' hari lalu?')) return;
+        const r = await fetch('/api/exams/bulk-archive', { method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ older_than_days: days }) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) alert(j.archived + ' ujian di-archive.'); else alert(j.error || r.status);
+      });
+    </script>
+  `));
+});
+
 pages.get("/app/audit", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
@@ -1396,6 +1577,103 @@ pages.get("/app/exams/:id/lab", async (c) => {
         else { err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
     </script>
+  `));
+});
+
+// Analytics guru per ujian: distractor + top kata di chat.
+pages.get("/app/exams/:id/insights", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const examId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const [ex, distractors, chatSummary] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const e = await tx`select title from exams where id = ${examId}`;
+    const d = await tx`with per_option as (
+         select q.id as qid, substring(q.content->>'text', 1, 100) as text,
+                q.content->'options' as options, (k.answer_key->>'index')::int as correct_index,
+                coalesce(a.answer->>'index', 'null') as picked, count(*)::int as n
+         from questions q
+         join exam_questions eq on eq.question_id = q.id and eq.exam_id = ${examId}
+         left join question_keys k on k.question_id = q.id
+         left join answers a on a.question_id = q.id
+            and a.session_id in (select id from exam_sessions where exam_id = ${examId} and status = 'submitted')
+         where q.type in ('pg','benar_salah') and a.answer is not null
+         group by q.id, q.content, k.answer_key, a.answer->>'index'
+       )
+       select qid as id, text, options, correct_index,
+              sum(n)::int as total_answered,
+              jsonb_object_agg(picked, n) as distribution
+       from per_option
+       group by qid, text, options, correct_index
+       order by qid`;
+    const chat = await tx`select m.content, m.from_role, st.name as student_name, m.created_at
+                           from exam_messages m
+                           join exam_sessions es on es.id = m.session_id
+                           join students st on st.id = es.student_id
+                           where es.exam_id = ${examId} and m.from_role = 'student'
+                           order by m.created_at desc limit 50`;
+    return [e[0], d, chat] as const;
+  });
+  if (!ex) return c.notFound();
+  type D = { id: string; text: string; options: string[]; correct_index: number;
+    total_answered: number; distribution: Record<string, number> };
+  const items = (distractors as unknown as D[]).map((q) => {
+    const total = q.total_answered;
+    const bars = q.options.map((opt, idx) => {
+      const n = q.distribution[String(idx)] ?? 0;
+      const pct = total > 0 ? Math.round((n / total) * 100) : 0;
+      const isCorrect = idx === q.correct_index;
+      const color = isCorrect ? "#16a34a" : (pct > 30 ? "#eab308" : "#94a3b8");
+      return `<div style="margin:4px 0">
+        <div style="display:flex;justify-content:space-between;font-size:12px">
+          <span>${String.fromCharCode(65 + idx)}. ${esc(opt)}${isCorrect ? " ✓" : ""}</span>
+          <span>${n} (${pct}%)</span>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--bd);border-radius:4px;height:10px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${color}"></div>
+        </div>
+      </div>`;
+    }).join("");
+    return `<div class="card">
+      <p style="margin:0 0 4px"><b>${esc(q.text)}</b> <span class="muted">(${total} jawaban)</span></p>
+      ${bars}
+    </div>`;
+  }).join("") || `<div class="card"><p class="muted">Belum cukup data (butuh ≥1 sesi submitted dengan soal pg).</p></div>`;
+
+  // Chat topic: naive word frequency, buang stopword.
+  type M = { content: string; student_name: string; created_at: string };
+  const stop = new Set(["yang","dan","di","ini","itu","ke","dari","untuk","dengan","ada","saya","pak","bu","soal","jawab"]);
+  const freq = new Map<string, number>();
+  for (const m of chatSummary as unknown as M[]) {
+    for (const w of m.content.toLowerCase().replace(/[^\p{L}\s]/gu, " ").split(/\s+/)) {
+      if (w.length >= 4 && !stop.has(w)) freq.set(w, (freq.get(w) ?? 0) + 1);
+    }
+  }
+  const topWords = Array.from(freq.entries()).sort((a, b) => b[1] - a[1]).slice(0, 15);
+  const wordsHtml = topWords.length
+    ? topWords.map(([w, n]) => `<span class="pill" style="font-size:${12 + Math.min(n, 8)}px; margin:2px">${esc(w)} <span class="muted">×${n}</span></span>`).join(" ")
+    : `<p class="muted">Belum ada pesan siswa.</p>`;
+  const recentMsgs = (chatSummary as unknown as M[]).slice(0, 10).map((m) => `<li>
+    <b>${esc(m.student_name)}:</b> ${esc(m.content.slice(0, 140))}
+    <span class="muted" style="font-size:11px">· ${new Date(m.created_at).toLocaleTimeString("id-ID")}</span>
+  </li>`).join("");
+
+  return c.html(base(`Insights — ${(ex as { title: string }).title}`, `
+    <div class="card">
+      <h1>Insights ujian</h1>
+      <p class="sub">${esc((ex as { title: string }).title)} · <a href="/app/exams/${esc(examId)}">← Detail ujian</a></p>
+    </div>
+    <div class="card">
+      <h2>Distractor analysis</h2>
+      <p class="muted">Opsi yang jadi "jebakan" paling kuat (kuning: &gt; 30% siswa memilih). Hijau = kunci jawaban.</p>
+    </div>
+    ${items}
+    <div class="card">
+      <h2>Topik di chat siswa</h2>
+      <p class="muted">Kata-kata yang paling sering muncul di pertanyaan siswa selama ujian.</p>
+      <div style="margin:10px 0; line-height: 2.5">${wordsHtml}</div>
+      ${recentMsgs ? `<h3 style="font-size:14px;margin:16px 0 6px">10 pesan terbaru</h3><ol style="margin:0 0 0 20px; font-size:13px">${recentMsgs}</ol>` : ""}
+    </div>
   `));
 });
 

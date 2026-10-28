@@ -190,6 +190,36 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
+// Overview sekolah: angka kunci + aktivitas 30 hari terakhir.
+api.get("/api/overview", async (c) => {
+  const s = getSess(c);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const [counts, active, online, byDay] = await Promise.all([
+      tx`select
+          (select count(*) from students where active) as students,
+          (select count(*) from classes) as classes,
+          (select count(*) from questions) as questions,
+          (select count(*) from exams) as exams,
+          (select count(*) from exam_sessions) as sessions,
+          (select count(*) from exam_sessions where status = 'submitted') as submitted`,
+      tx`select id, title, status, duration_minutes,
+                (select count(*) from exam_sessions where exam_id = e.id and status = 'active') as active_now
+         from exams e where e.status = 'open' order by created_at desc limit 10`,
+      tx`select count(*)::int as n from exam_sessions
+         where status = 'active' and last_seen_at > now() - interval '2 minutes'`,
+      tx`select date_trunc('day', started_at)::date as day,
+                count(*)::int as sessions,
+                count(*) filter (where status = 'submitted')::int as submitted
+         from exam_sessions
+         where started_at > now() - interval '30 days'
+         group by day order by day`,
+    ]);
+    return { counts: counts[0], active, online: (online[0] as { n: number }).n, by_day: byDay };
+  });
+  return c.json(data);
+});
+
 // ===== Staf (users: admin/teacher/proctor) =====
 
 api.get("/api/users", async (c) => {
@@ -622,6 +652,66 @@ api.post("/api/pin-resets/:id/reject", async (c) => {
        where id = ${c.req.param("id")} and status = 'pending'`,
   );
   return c.json({ ok: true });
+});
+
+// ===== Bulk operations =====
+
+// Reset PIN semua siswa aktif di satu kelas. Admin menerima daftar
+// {username, pin} satu kali untuk dibagikan.
+api.post("/api/classes/:id/reset-pins", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
+  const classId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const stus = await tx`select id, username, name from students where class_id = ${classId} and active`;
+    const out: Array<{ username: string; name: string; pin: string }> = [];
+    for (const row of stus as unknown as Array<{ id: string; username: string; name: string }>) {
+      const buf = new Uint8Array(4); crypto.getRandomValues(buf);
+      const n = ((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]) >>> 0;
+      const pin = String(n % 1_000_000).padStart(6, "0");
+      const hash = await hashPin(pin);
+      await tx`update students set pin_hash = ${hash}, pin_failed_count = 0, locked_until = null
+               where id = ${row.id}`;
+      out.push({ username: row.username, name: row.name, pin });
+    }
+    await audit(tx, actorFromSession(s), "class.reset_pins", "class", classId, { count: out.length });
+    return out;
+  });
+  return c.json({ ok: true, count: result.length, students: result });
+});
+
+// Hapus semua sesi (dan jawaban/skor) sebuah ujian — berguna untuk ujian
+// ulang total atau cleanup test data.
+api.post("/api/exams/:id/wipe-sessions", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
+  const examId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const d = await tx`delete from exam_sessions where exam_id = ${examId} returning id`;
+    await audit(tx, actorFromSession(s), "exam.wipe_sessions", "exam", examId, { count: d.length });
+    return d.length;
+  });
+  return c.json({ ok: true, deleted: result });
+});
+
+// Archive ujian: set status 'closed' untuk semua ujian berumur > N hari
+// dan masih open/scheduled. Payload: { older_than_days: 30 }.
+api.post("/api/exams/bulk-archive", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
+  const body = await c.req.json().catch(() => null) as null | { older_than_days?: number };
+  const days = Math.max(1, Math.min(365, body?.older_than_days ?? 30));
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const u = await tx`update exams set status = 'closed'
+      where status in ('open','scheduled') and created_at < now() - make_interval(days => ${days})
+      returning id`;
+    await audit(tx, actorFromSession(s), "exam.bulk_archive", null, null, { count: u.length, days });
+    return u.length;
+  });
+  return c.json({ ok: true, archived: r, days });
 });
 
 // Reset PIN siswa (admin/guru). Body: { pin: "4-8 digit" }
@@ -1328,6 +1418,35 @@ api.get("/api/reports/scores.csv", async (c) => {
       "Content-Disposition": `attachment; filename="rekap-skor-sekolah.csv"`,
     },
   });
+});
+
+// Distractor analysis: untuk soal pg, berapa % siswa memilih tiap opsi?
+// Berguna untuk cari distractor efektif dan opsi yang bikin bingung.
+api.get("/api/exams/:id/distractors", async (c) => {
+  const s = getSess(c);
+  const examId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`with per_option as (
+         select q.id as qid, substring(q.content->>'text', 1, 100) as text,
+                q.content->'options' as options, (k.answer_key->>'index')::int as correct_index,
+                coalesce(a.answer->>'index', 'null') as picked, count(*)::int as n
+         from questions q
+         join exam_questions eq on eq.question_id = q.id and eq.exam_id = ${examId}
+         left join question_keys k on k.question_id = q.id
+         left join answers a on a.question_id = q.id
+            and a.session_id in (select id from exam_sessions where exam_id = ${examId} and status = 'submitted')
+         where q.type in ('pg','benar_salah') and a.answer is not null
+         group by q.id, q.content, k.answer_key, a.answer->>'index'
+       )
+       select qid as id, text, options, correct_index,
+              sum(n)::int as total_answered,
+              jsonb_object_agg(picked, n) as distribution
+       from per_option
+       group by qid, text, options, correct_index
+       order by qid`,
+  );
+  return c.json(rows);
 });
 
 // Statistik butir soal: p-value (proporsi benar) + daya pembeda (D).
