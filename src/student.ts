@@ -139,8 +139,9 @@ student.get("/s", async (c) => {
       </table>
     </div>
     <div class="card">
-      <h2>Riwayat skor</h2>
+      <h2>Riwayat & rekomendasi</h2>
       <p class="muted"><a href="/s/history">Lihat semua ujian yang pernah saya kerjakan →</a></p>
+      <p class="muted"><a href="/s/rekomendasi">📚 Rekomendasi belajar untuk kategori lemah →</a></p>
     </div>
   `));
 });
@@ -183,6 +184,97 @@ student.get("/s/history", async (c) => {
         <tbody>${list}</tbody>
       </table>
     </div>
+  `));
+});
+
+// Rekomendasi review: identifikasi kategori lemah siswa, lalu tampilkan
+// soal (dengan kunci) dari kategori tersebut sebagai bahan belajar.
+student.get("/s/rekomendasi", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.redirect("/s/login");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
+    const weak = await tx`
+      select cat.id as cat_id, coalesce(cat.name, '(tanpa kategori)') as category,
+             count(*)::int as total,
+             sum(case
+               when q.type = 'pg'          and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'benar_salah' and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'isian'       and exists(
+                 select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                 where lower(trim(x.value)) = lower(trim(a.answer->>'text'))) then 1
+               else 0 end)::int as benar
+      from answers a
+      join questions q on q.id = a.question_id
+      join exam_sessions es on es.id = a.session_id
+      left join question_keys k on k.question_id = q.id
+      left join categories cat on cat.id = q.category_id
+      where es.student_id = ${stu.uid} and es.status = 'submitted'
+      group by cat.id, cat.name
+      having count(*) >= 2 and sum(case
+               when q.type = 'pg'          and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'benar_salah' and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'isian'       and exists(
+                 select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                 where lower(trim(x.value)) = lower(trim(a.answer->>'text'))) then 1
+               else 0 end)::numeric / count(*) < 0.7
+      order by (sum(case
+               when q.type = 'pg'          and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'benar_salah' and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'isian'       and exists(
+                 select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                 where lower(trim(x.value)) = lower(trim(a.answer->>'text'))) then 1
+               else 0 end)::numeric / count(*)) asc`;
+    const weakRows = weak as unknown as Array<{ cat_id: string | null; category: string; total: number; benar: number }>;
+    if (weakRows.length === 0) return { weak: [] as typeof weakRows, items: [] as Array<{ id: string; type: string; content: Record<string, unknown>; answer_key: unknown; cat_name: string | null }> };
+    const catIds = weakRows.map((r) => r.cat_id).filter((x): x is string => !!x);
+    const items = catIds.length
+      ? await tx`
+          select q.id, q.type, q.content, k.answer_key, cat.name as cat_name
+          from questions q
+          left join question_keys k on k.question_id = q.id
+          left join categories cat on cat.id = q.category_id
+          where q.category_id in ${tx(catIds)}
+            and q.type in ('pg','benar_salah')
+            and q.id in (
+              select distinct a.question_id from answers a
+              join exam_sessions es on es.id = a.session_id
+              where es.student_id = ${stu.uid} and es.status = 'submitted'
+            )
+          limit 20`
+      : [];
+    return { weak: weakRows, items };
+  });
+  type I = { id: string; type: string; content: { text: string; options?: string[] };
+    answer_key: { index: number } | null; cat_name: string | null };
+  const weakList = (data.weak).map((r) => {
+    const pct = Math.round((r.benar / r.total) * 100);
+    return `<li>${esc(r.category)}: <b>${pct}%</b> benar (${r.benar}/${r.total})</li>`;
+  }).join("");
+  const items = (data.items as unknown as I[]).map((q, idx) => {
+    const key = q.answer_key?.index;
+    const opts = (q.content.options ?? []).map((o, k) => {
+      const isKey = k === key;
+      return `<li ${isKey ? "style=\"color:var(--ok);font-weight:600\"" : ""}>${String.fromCharCode(65 + k)}. ${esc(o)}${isKey ? " ✓" : ""}</li>`;
+    }).join("");
+    return `<div class="q">
+      <p><b>Soal belajar ${idx + 1}</b> <span class="muted">· ${esc(q.cat_name ?? "")}</span></p>
+      <p>${esc(q.content.text)}</p>
+      <ol type="A" style="margin:4px 0 0 20px">${opts}</ol>
+    </div>`;
+  }).join("");
+  return c.html(page("Rekomendasi review", `
+    <div class="card">
+      <h1>Rekomendasi belajar</h1>
+      <p class="sub">Berdasar jawaban Anda di ujian-ujian sebelumnya. <a href="/s">← Portal</a></p>
+      ${data.weak.length === 0
+        ? `<p class="muted">Belum ada kategori lemah terdeteksi (atau belum cukup data).</p>`
+        : `<p>Kategori yang perlu diperkuat:</p><ul style="margin:4px 0 0 20px">${weakList}</ul>`}
+    </div>
+    ${items ? `<div class="card"><h2>Soal untuk latihan ulang</h2>
+      <p class="muted">Soal berikut berasal dari kategori lemah di atas; kunci jawaban ditampilkan.</p>
+      ${items}
+    </div>` : ""}
   `));
 });
 
@@ -578,8 +670,41 @@ student.get("/s/take/:sid", async (c) => {
     <div class="card">
       <div class="row" style="justify-content:space-between">
         <div><h1 style="margin:0">${esc(data.title!)}</h1></div>
-        <div><span class="timer" id="t">--:--</span> <span id="qbadge" class="muted" style="font-size:11px"></span></div>
+        <div>
+          <button type="button" id="calcBtn" title="Kalkulator">🧮</button>
+          <span class="timer" id="t">--:--</span>
+          <span id="qbadge" class="muted" style="font-size:11px"></span>
+        </div>
       </div>
+    </div>
+    <div id="calc" hidden style="position:fixed; bottom:20px; right:20px; width:240px; background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.25); z-index:50">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+        <b>Kalkulator</b>
+        <button type="button" id="calcClose" style="padding:2px 8px">×</button>
+      </div>
+      <input id="calcDisp" readonly style="width:100%; padding:8px; border:1px solid var(--bd); border-radius:6px; background:var(--bg); color:var(--fg); font: 16px/1 ui-monospace, monospace; text-align:right; margin-bottom:6px">
+      <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:4px">
+        <button type="button" data-k="C" style="background:#ef44441a; color:var(--danger)">C</button>
+        <button type="button" data-k="(">(</button>
+        <button type="button" data-k=")")</button>
+        <button type="button" data-k="/">÷</button>
+        <button type="button" data-k="7">7</button>
+        <button type="button" data-k="8">8</button>
+        <button type="button" data-k="9">9</button>
+        <button type="button" data-k="*">×</button>
+        <button type="button" data-k="4">4</button>
+        <button type="button" data-k="5">5</button>
+        <button type="button" data-k="6">6</button>
+        <button type="button" data-k="-">−</button>
+        <button type="button" data-k="1">1</button>
+        <button type="button" data-k="2">2</button>
+        <button type="button" data-k="3">3</button>
+        <button type="button" data-k="+">+</button>
+        <button type="button" data-k="0" style="grid-column: span 2">0</button>
+        <button type="button" data-k=".">.</button>
+        <button type="button" data-k="=" class="primary">=</button>
+      </div>
+      <p class="muted" style="font-size:11px; margin:6px 0 0">Mendukung + − × ÷ ( ) . dan angka. Hasil koma 4 digit.</p>
     </div>
     <div class="card">
       <div class="nav" id="nav"></div>
@@ -748,6 +873,15 @@ student.get("/s/take/:sid", async (c) => {
         const q = Q.find((x) => x.id === qid);
         let outPayload = Object.assign({ question_id: qid }, payload);
         if (q && q.perm && typeof payload.index === 'number') outPayload.index = q.perm[payload.index];
+        // Branching: jika soal punya content.branches dan pilihan ini punya
+        // target, loncat ke soal target (jika ada dalam urutan sesi).
+        if (q && q.content.branches && typeof payload.index === 'number') {
+          const target = q.content.branches[String(payload.index)];
+          if (target) {
+            const nextIdx = Q.findIndex((x) => x.id === target);
+            if (nextIdx >= 0 && nextIdx !== i) { i = nextIdx; setTimeout(render, 150); }
+          }
+        }
         try {
           const r = await fetch('/s/take/' + D.sessionId + '/answer', {
             method: 'POST', credentials: 'same-origin',
@@ -798,6 +932,37 @@ student.get("/s/take/:sid", async (c) => {
           alert('Peringatan ('+kind+'). Pelanggaran: '+violations + (remain!==null?', sisa toleransi: '+remain:''));
         }
       }
+      // Kalkulator sederhana (parser dua stack, bukan eval).
+      const calc = document.getElementById('calc');
+      const calcDisp = document.getElementById('calcDisp');
+      document.getElementById('calcBtn').onclick = () => { calc.hidden = !calc.hidden; };
+      document.getElementById('calcClose').onclick = () => { calc.hidden = true; };
+      function compute(expr) {
+        // Shunting-yard infix → postfix lalu evaluasi.
+        const tokens = expr.match(/\\d+(?:\\.\\d+)?|[+\\-*/()]/g); if (!tokens) return '0';
+        const prec = { '+':1,'-':1,'*':2,'/':2 };
+        const out = []; const ops = [];
+        for (const t of tokens) {
+          if (/\\d/.test(t)) out.push(parseFloat(t));
+          else if (t === '(') ops.push(t);
+          else if (t === ')') { while (ops.length && ops[ops.length-1] !== '(') out.push(ops.pop()); ops.pop(); }
+          else { while (ops.length && ops[ops.length-1] !== '(' && prec[ops[ops.length-1]] >= prec[t]) out.push(ops.pop()); ops.push(t); }
+        }
+        while (ops.length) out.push(ops.pop());
+        const st = [];
+        for (const t of out) {
+          if (typeof t === 'number') st.push(t);
+          else { const b = st.pop(), a = st.pop(); st.push(t==='+'?a+b:t==='-'?a-b:t==='*'?a*b:b===0?NaN:a/b); }
+        }
+        const r = st[0]; return isFinite(r) ? +r.toFixed(4) + '' : 'ERR';
+      }
+      calc.addEventListener('click', (e) => {
+        const k = e.target.dataset.k; if (!k) return;
+        if (k === 'C') { calcDisp.value = ''; return; }
+        if (k === '=') { calcDisp.value = compute(calcDisp.value); return; }
+        calcDisp.value += k;
+      });
+
       // Heartbeat 15 dtk untuk live monitoring guru.
       async function heartbeat() {
         try { await fetch('/s/take/' + D.sessionId + '/ping', { method:'POST', credentials:'same-origin' }); } catch(_) {}

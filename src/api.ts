@@ -448,6 +448,16 @@ api.post("/api/questions", async (c) => {
     return c.json({ error: `tipe '${type}' belum didukung` }, 400);
   }
   if (image) content.image = image;
+  // Branching opsional: content.branches[option_index] = next_question_id.
+  // Hanya untuk tipe dengan pilihan (pg, benar_salah). Klien merender dan
+  // menerapkan logika navigasi — server tidak mengubah scoring.
+  if (body.branches && typeof body.branches === "object") {
+    const b: Record<string, string> = {};
+    for (const [k, v] of Object.entries(body.branches as Record<string, unknown>)) {
+      if (typeof v === "string" && v.length > 10) b[k] = v;
+    }
+    if (Object.keys(b).length) content.branches = b;
+  }
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
@@ -1231,6 +1241,59 @@ api.get("/api/reports/scores.csv", async (c) => {
       "Content-Disposition": `attachment; filename="rekap-skor-sekolah.csv"`,
     },
   });
+});
+
+// Statistik butir soal: p-value (proporsi benar) + daya pembeda (D).
+// D = p(kelompok atas 27%) - p(kelompok bawah 27%).
+// Tafsir D: >0.4 sangat baik, 0.3-0.4 baik, 0.2-0.3 cukup, <0.2 jelek.
+// Tafsir p-value: 0.3-0.7 ideal (tidak terlalu mudah/sulit).
+api.get("/api/exams/:id/items", async (c) => {
+  const s = getSess(c);
+  const examId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`with
+      sessions as (
+        select es.id, sc.final_score,
+               ntile(4) over (order by sc.final_score) as quartile
+        from exam_sessions es
+        left join scores sc on sc.session_id = es.id
+        where es.exam_id = ${examId} and es.status = 'submitted'
+      ),
+      answered as (
+        select a.question_id, a.session_id, s.quartile,
+               case q.type
+                 when 'pg'          then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
+                 when 'benar_salah' then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
+                 when 'isian'       then exists(
+                   select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                   where lower(trim(x.value)) = lower(trim(a.answer->>'text')))
+                 when 'pgk_centang' then (
+                   select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
+                 ) = (
+                   select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
+                 )
+                 when 'menjodohkan' then a.answer->'pairs' = k.answer_key->'pairs'
+                 when 'uraian'      then (a.answer->>'manual_score')::numeric >= q.points * 0.5
+                 else false end as benar
+        from answers a
+        join sessions s on s.id = a.session_id
+        join questions q on q.id = a.question_id
+        left join question_keys k on k.question_id = q.id
+      )
+      select q.id, q.type, substring(q.content->>'text', 1, 120) as text,
+             count(ans.session_id)::int as n,
+             coalesce(round(avg(case when ans.benar then 1 else 0 end)::numeric, 3), 0) as p_value,
+             coalesce(round(
+               (avg(case when ans.benar and ans.quartile = 4 then 1 else 0 end) -
+                avg(case when ans.benar and ans.quartile = 1 then 1 else 0 end))::numeric, 3), 0) as discrimination
+      from questions q
+      join exam_questions eq on eq.question_id = q.id and eq.exam_id = ${examId}
+      left join answered ans on ans.question_id = q.id
+      group by q.id, q.type, q.content->>'text'
+      order by discrimination desc nulls last, p_value asc`,
+  );
+  return c.json(rows);
 });
 
 // Ringkasan rata-rata per kelas untuk sebuah ujian.

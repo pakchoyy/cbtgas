@@ -641,6 +641,7 @@ pages.get("/app/exams/:id", async (c) => {
         <a class="btn" href="/api/exams/${esc(examId)}/scores.csv">Download CSV</a>
         <a class="btn" href="/app/exams/${esc(examId)}/live">Live monitoring</a>
         <a class="btn" href="/app/exams/${esc(examId)}/lab">Mode lab komputer</a>
+        <a class="btn" href="/app/exams/${esc(examId)}/items">Analisis butir soal</a>
       </div>
       <table>
         <thead><tr><th>Siswa</th><th>Kelas</th><th>Status</th><th>Auto</th><th>Manual</th><th>Final</th></tr></thead>
@@ -1287,6 +1288,91 @@ pages.get("/app/exams/:id/lab", async (c) => {
   `));
 });
 
+// Statistik butir soal (item analysis) per ujian.
+pages.get("/app/exams/:id/items", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const examId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const [ex, items] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const e = await tx`select title from exams where id = ${examId}`;
+    const i = await tx`with
+      sessions as (
+        select es.id, sc.final_score,
+               ntile(4) over (order by sc.final_score) as quartile
+        from exam_sessions es
+        left join scores sc on sc.session_id = es.id
+        where es.exam_id = ${examId} and es.status = 'submitted'
+      ),
+      answered as (
+        select a.question_id, a.session_id, s.quartile,
+               case q.type
+                 when 'pg'          then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
+                 when 'benar_salah' then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
+                 when 'isian'       then exists(
+                   select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                   where lower(trim(x.value)) = lower(trim(a.answer->>'text')))
+                 when 'pgk_centang' then (
+                   select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
+                 ) = (
+                   select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
+                 )
+                 when 'menjodohkan' then a.answer->'pairs' = k.answer_key->'pairs'
+                 when 'uraian'      then (a.answer->>'manual_score')::numeric >= q.points * 0.5
+                 else false end as benar
+        from answers a
+        join sessions s on s.id = a.session_id
+        join questions q on q.id = a.question_id
+        left join question_keys k on k.question_id = q.id
+      )
+      select q.id, q.type, substring(q.content->>'text', 1, 120) as text,
+             count(ans.session_id)::int as n,
+             coalesce(round(avg(case when ans.benar then 1 else 0 end)::numeric, 3), 0) as p_value,
+             coalesce(round(
+               (avg(case when ans.benar and ans.quartile = 4 then 1 else 0 end) -
+                avg(case when ans.benar and ans.quartile = 1 then 1 else 0 end))::numeric, 3), 0) as discrimination
+      from questions q
+      join exam_questions eq on eq.question_id = q.id and eq.exam_id = ${examId}
+      left join answered ans on ans.question_id = q.id
+      group by q.id, q.type, q.content->>'text'
+      order by discrimination desc nulls last, p_value asc`;
+    return [e[0], i] as const;
+  });
+  if (!ex) return c.notFound();
+  type R = { id: string; type: string; text: string; n: number; p_value: string; discrimination: string };
+  const items2 = items as unknown as R[];
+  const rows = items2.map((r) => {
+    const p = parseFloat(r.p_value); const d = parseFloat(r.discrimination);
+    const pTag = p >= 0.3 && p <= 0.7 ? "ok" : p < 0.3 ? "sulit" : "mudah";
+    const dLabel = d >= 0.4 ? "sangat baik" : d >= 0.3 ? "baik" : d >= 0.2 ? "cukup" : d >= 0 ? "jelek" : "terbalik";
+    const dColor = d >= 0.4 ? "#16a34a" : d >= 0.3 ? "#2563eb" : d >= 0.2 ? "#eab308" : "#ef4444";
+    const pColor = pTag === "ok" ? "#16a34a" : pTag === "sulit" ? "#ef4444" : "#eab308";
+    return `<tr>
+      <td style="max-width:380px"><span class="pill">${esc(r.type)}</span> ${esc(r.text)}</td>
+      <td style="text-align:right">${r.n}</td>
+      <td style="text-align:right"><span style="color:${pColor}">${r.p_value}</span><br><span class="muted" style="font-size:11px">${esc(pTag)}</span></td>
+      <td style="text-align:right"><span style="color:${dColor}">${r.discrimination}</span><br><span class="muted" style="font-size:11px">${esc(dLabel)}</span></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="4" class="muted">Belum cukup data. Minimal 4 sesi submitted untuk kelompok atas/bawah.</td></tr>`;
+  return c.html(base(`Analisis butir — ${(ex as { title: string }).title}`, `
+    <div class="card">
+      <h1>Analisis butir soal</h1>
+      <p class="sub">${esc((ex as { title: string }).title)} · <a href="/app/exams/${esc(examId)}">← Detail ujian</a></p>
+      <p class="muted">
+        <b>p-value</b> = proporsi siswa menjawab benar (ideal 0.3–0.7).<br>
+        <b>Daya pembeda (D)</b> = benar kelompok atas 25% − benar kelompok bawah 25%
+        (≥0.4 sangat baik, 0.3–0.4 baik, 0.2–0.3 cukup, &lt;0.2 jelek, negatif terbalik).
+      </p>
+    </div>
+    <div class="card">
+      <table style="width:100%; border-collapse:collapse">
+        <thead><tr><th>Soal</th><th style="text-align:right">N</th><th style="text-align:right">p-value</th><th style="text-align:right">D</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `));
+});
+
 // Live monitoring untuk guru/admin: refresh otomatis tiap 3 detik.
 pages.get("/app/exams/:id/live", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
@@ -1595,6 +1681,9 @@ pages.get("/app/questions", async (c) => {
         <input type="file" id="imgFile" accept="image/*">
         <div id="imgPrev" style="margin:8px 0"></div>
 
+        <label>Branching <span class="muted">(opsional; untuk pg/benar_salah. Format JSON: <code>{"0":"&lt;question_id&gt;"}</code> — jika siswa pilih opsi 0, lompat ke soal itu)</span></label>
+        <input name="branches_json" placeholder='{"0":"qid-tujuan","1":"qid-lain"}'>
+
         <label>Poin</label>
         <input name="points" type="number" step="0.5" min="0.5" value="1" required>
         <div class="row">
@@ -1689,6 +1778,12 @@ pages.get("/app/questions", async (c) => {
         const passage_id = e.target.passage_id.value || null;
         const payload = { type, text, points, category_id, passage_id };
         if (imageData) payload.image = imageData;
+        // Branching JSON (opsional).
+        const bRaw = e.target.branches_json ? e.target.branches_json.value.trim() : '';
+        if (bRaw) {
+          try { payload.branches = JSON.parse(bRaw); }
+          catch (_) { err.textContent = 'Branching JSON tidak valid.'; err.hidden = false; return; }
+        }
         if (type === 'pg') {
           const opts = [...e.target.querySelectorAll('input[name=opt]')].map((x) => x.value.trim()).filter(Boolean);
           const correctEl = e.target.querySelector('input[name=correct]:checked');
