@@ -172,7 +172,7 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
 ${opts.nav === false ? "" : sidebar(opts.role ?? "")}
 <main>
 ${body}
-<footer>cbtgas · CBT sekolah</footer>
+<footer>cbtgas · CBT sekolah · <a href="/privasi">Privasi</a> · <a href="/syarat">Syarat</a></footer>
 <div id="installCard" class="card" hidden>
   <p style="margin:0 0 10px"><b>Pasang cbtgas di perangkat ini?</b></p>
   <div class="row" style="margin:0"><button class="primary" id="installBtn">Pasang</button><button id="installClose">Nanti</button></div>
@@ -275,6 +275,96 @@ pages.get("/", async (c) => {
     </section>
   `, { nav: false }));
 });
+
+// ===== Halaman hukum (dibutuhkan layar persetujuan Google) =====
+const CONTACT = "admin@bantuguruyuk.web.id";
+const UPDATED = "28 Oktober 2026";
+const legalPage = (title: string, body: string) => base(title, `
+  <article class="card legal">
+    <p><a href="/">← cbtgas</a></p>
+    <h1>${title}</h1>
+    <p class="muted">Terakhir diperbarui: ${UPDATED}</p>
+    ${body}
+  </article>
+  <style>.legal h2{margin-top:26px}.legal li{margin:6px 0}.legal ul{padding-left:20px}</style>
+`, { nav: false });
+
+pages.get("/privasi", (c) => c.html(legalPage("Kebijakan Privasi", `
+  <p>cbtgas adalah layanan ujian berbasis komputer (CBT) untuk sekolah. Halaman ini menjelaskan data apa yang kami simpan, untuk apa, dan hak Anda atasnya.</p>
+
+  <h2>Data yang kami simpan</h2>
+  <ul>
+    <li><b>Staf sekolah (admin, guru, pengawas):</b> alamat email dan peran. Bila masuk dengan Google, kami menerima email, nama, dan pengenal akun Google Anda. Kami tidak meminta akses ke Gmail, Drive, kontak, atau data Google lain.</li>
+    <li><b>Sekolah:</b> nama, jenjang, kode sekolah, serta nama dan nomor telepon operator saat pendaftaran.</li>
+    <li><b>Siswa:</b> nama, username, kelas, jenis kelamin dan NISN (opsional), email wali (opsional), serta PIN yang disimpan dalam bentuk hash, bukan teks asli.</li>
+    <li><b>Aktivitas ujian:</b> jawaban, nilai, waktu mulai dan selesai, pesan ke pengawas, serta catatan pelanggaran ujian (misalnya berpindah tab).</li>
+    <li><b>Catatan audit:</b> tindakan penting staf, seperti membuat ujian atau mereset PIN.</li>
+    <li><b>Cookie:</b> hanya cookie sesi untuk menjaga Anda tetap masuk. Kami tidak memakai cookie iklan atau pelacak.</li>
+  </ul>
+
+  <h2>Untuk apa data dipakai</h2>
+  <p>Hanya untuk menjalankan layanan: mengautentikasi pengguna, menyelenggarakan dan menilai ujian, menampilkan hasil kepada guru dan siswa, serta mengirim email yang diminta sekolah (misalnya rapor ke wali). Kami tidak menjual data dan tidak memakainya untuk iklan.</p>
+
+  <h2>Siapa yang bisa melihat</h2>
+  <p>Data setiap sekolah terpisah dari sekolah lain. Staf hanya melihat data sekolahnya sendiri; siswa hanya melihat ujian dan hasilnya sendiri.</p>
+
+  <h2>Pihak ketiga yang memproses data</h2>
+  <ul>
+    <li>Cloudflare, untuk menjalankan aplikasi dan jaringannya.</li>
+    <li>Neon, untuk basis data.</li>
+    <li>Google, hanya untuk fitur masuk dengan Google.</li>
+    <li>Resend, hanya bila sekolah mengirim email (rapor atau undangan).</li>
+  </ul>
+
+  <h2>Penyimpanan dan penghapusan</h2>
+  <p>Data disimpan selama sekolah memakai layanan. Admin sekolah dapat menghapus siswa, kelas, dan ujian dari dasbor. Untuk menghapus akun atau seluruh data sekolah, hubungi kami di <a href="mailto:${CONTACT}">${CONTACT}</a>.</p>
+
+  <h2>Anak-anak</h2>
+  <p>Siswa dapat berusia di bawah 18 tahun. Akun siswa dibuat dan dikelola oleh sekolah, dan data mereka dipakai hanya untuk keperluan pendidikan di sekolah tersebut. Orang tua atau wali dapat meminta akses atau penghapusan data melalui sekolah atau kontak di bawah.</p>
+
+  <h2>Keamanan</h2>
+  <p>Koneksi memakai HTTPS, PIN di-hash, dan akses data dibatasi per sekolah di tingkat basis data. Tidak ada sistem yang sepenuhnya bebas risiko, tetapi kami berusaha menjaga data sebaik mungkin.</p>
+
+  <h2>Kontak</h2>
+  <p>Pertanyaan atau permintaan terkait data: <a href="mailto:${CONTACT}">${CONTACT}</a>.</p>
+`)));
+
+pages.get("/syarat", (c) => c.html(legalPage("Syarat Layanan", `
+  <p>Dengan memakai cbtgas, Anda menyetujui syarat berikut.</p>
+
+  <h2>Layanan</h2>
+  <p>cbtgas menyediakan alat untuk membuat soal, menyelenggarakan ujian daring, dan melihat hasilnya. Layanan diberikan apa adanya dan dapat berubah atau terhenti sewaktu-waktu, misalnya untuk pemeliharaan.</p>
+
+  <h2>Akun</h2>
+  <ul>
+    <li>Admin sekolah bertanggung jawab atas akun staf dan siswa di sekolahnya.</li>
+    <li>Jaga kerahasiaan akun Google dan PIN. Segera hubungi kami bila akun disalahgunakan.</li>
+    <li>Jangan membagikan kunci jawaban atau akun kepada pihak yang tidak berhak.</li>
+  </ul>
+
+  <h2>Penggunaan yang dilarang</h2>
+  <ul>
+    <li>Mengakses data sekolah lain atau mencoba menembus pembatasan akses.</li>
+    <li>Mengganggu layanan, misalnya dengan serangan atau permintaan berlebihan.</li>
+    <li>Mengunggah konten yang melanggar hukum atau hak pihak lain.</li>
+    <li>Berbuat curang dalam ujian atau membantu pihak lain berbuat curang.</li>
+  </ul>
+
+  <h2>Konten sekolah</h2>
+  <p>Soal, nilai, dan data lain yang dimasukkan sekolah tetap milik sekolah. Sekolah memberi kami izin untuk menyimpan dan memprosesnya hanya demi menjalankan layanan. Soal yang sekolah terbitkan ke bank publik dapat diunduh siapa saja.</p>
+
+  <h2>Batas tanggung jawab</h2>
+  <p>Kami berupaya menjaga layanan tetap andal, tetapi tidak menjamin layanan bebas gangguan atau galat. Sekolah disarankan mengunduh cadangan data secara berkala dan menyiapkan rencana cadangan untuk ujian penting. Sejauh diizinkan hukum, kami tidak bertanggung jawab atas kerugian tidak langsung akibat penggunaan layanan.</p>
+
+  <h2>Penghentian</h2>
+  <p>Kami dapat membatasi atau menghentikan akses yang melanggar syarat ini. Sekolah dapat berhenti memakai layanan kapan saja dan meminta penghapusan data.</p>
+
+  <h2>Perubahan</h2>
+  <p>Syarat ini dapat diperbarui. Tanggal pembaruan tertera di atas halaman; pemakaian layanan setelah perubahan berarti Anda menyetujuinya.</p>
+
+  <h2>Kontak</h2>
+  <p><a href="mailto:${CONTACT}">${CONTACT}</a></p>
+`)));
 
 pages.get("/register", (c) => {
   // Butuh cookie pending_registration (diset oleh /auth/google/callback mode=register).
