@@ -3,6 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Domain kustom (zona cbt-yuk.web.id ada di akun Cloudflare yang sama).
+routes = [{ pattern = "cbt-yuk.web.id", custom_domain = true }]
+
 # Hyperdrive menunjuk ke Neon. Login pakai role cbt_login (NOBYPASSRLS,
 # non-pemilik tabel); cbt_app dipakai lewat SET ROLE di dalam transaksi.
 [[hyperdrive]]
@@ -17,7 +20,7 @@ crons = ["* * * * *"]
 APP_ENV = "production"
 # Tombol "Coba demo" + /auth/dev-login (masuk sebagai admin sekolah demo-sma). Hapus untuk mematikan.
 DEMO_LOGIN = "1"
-APP_ORIGIN = "https://cbt-api.pulsachoy.workers.dev"
+APP_ORIGIN = "https://cbt-yuk.web.id"
 
 # Secrets (set via `wrangler secret put`):
 #   GOOGLE_CLIENT_ID       — OAuth 2.0 Client ID (Web application) di Google Cloud
