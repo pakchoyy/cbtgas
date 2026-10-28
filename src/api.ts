@@ -4,8 +4,9 @@ import { Hono } from "hono";
 import { connect, withTenant } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
 import { hashPin } from "./hash";
+import { sendEmail, inviteEmail, pinNotifyEmail } from "./email";
 
-export const api = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
+export const api = new Hono<{ Bindings: AuthBindings & { APP_ENV: string; RESEND_API_KEY?: string; EMAIL_FROM?: string } }>();
 
 api.use("/api/*", async (c, next) => {
   // /api/students sudah ada di index.ts (dengan fallback dev). Semua selain itu wajib sesi.
@@ -216,12 +217,17 @@ api.post("/api/users", async (c) => {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return c.json({ error: "format email salah" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   try {
-    const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-      tx`insert into users (school_id, email, name, role)
+    const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+      const u = await tx`insert into users (school_id, email, name, role)
          values (${s.sid}, ${email}, ${body.name ?? null}, ${body.role})
-         returning id, email, role, active`,
-    );
-    return c.json(r[0], 201);
+         returning id, email, role, active`;
+      const sch = await tx`select name from schools where id = ${s.sid}`;
+      return { user: u[0], schoolName: (sch[0] as { name: string } | undefined)?.name ?? "" };
+    });
+    // Kirim email undangan (best-effort, tidak gagalkan request).
+    const mail = inviteEmail({ invitedEmail: email, schoolName: r.schoolName, role: body.role, origin: c.env.APP_ORIGIN });
+    const sent = await sendEmail(c.env, email, mail.subject, mail.html);
+    return c.json({ ...r.user, email_sent: sent.ok && !("skipped" in sent) });
   } catch (e) {
     return c.json({ error: (e as Error).message }, 409);
   }
@@ -411,6 +417,70 @@ api.post("/api/sessions/:sid/unlock", async (c) => {
   return c.json({ ok: true, ...(r[0] as object) });
 });
 
+// Antrian permintaan reset PIN dari siswa.
+api.get("/api/pin-resets", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select pr.id, pr.student_id, pr.status, pr.requested_at, pr.approved_at, pr.new_pin,
+              st.name as student_name, st.username
+       from pin_resets pr join students st on st.id = pr.student_id
+       where pr.status = 'pending' or pr.new_pin is not null
+       order by pr.requested_at desc`,
+  );
+  return c.json(rows);
+});
+
+// Setujui reset PIN: generate 6 digit acak, simpan hash, kembalikan ke guru
+// SATU KALI (dikosongkan di request yang sama di call berikutnya).
+api.post("/api/pin-resets/:id/approve", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const prId = c.req.param("id");
+  // Generate 6 digit acak crypto.
+  const buf = new Uint8Array(4); crypto.getRandomValues(buf);
+  const n = ((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]) >>> 0;
+  const newPin = String(n % 1_000_000).padStart(6, "0");
+  const pin_hash = await hashPin(newPin);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const pr = await tx`select student_id, status from pin_resets where id = ${prId}`;
+    if (pr.length === 0) throw new Error("permintaan tidak ditemukan");
+    if ((pr[0] as { status: string }).status !== "pending") throw new Error("permintaan sudah diproses");
+    const stuId = (pr[0] as { student_id: string }).student_id;
+    await tx`update students set pin_hash = ${pin_hash}, pin_failed_count = 0, locked_until = null
+             where id = ${stuId}`;
+    await tx`update pin_resets set status = 'approved', approved_by = ${s.uid}, approved_at = now(),
+             new_pin = ${newPin} where id = ${prId}`;
+    return { student_id: stuId };
+  }).catch((e) => ({ error: (e as Error).message }));
+  if ("error" in r) return c.json(r, 400);
+  return c.json({ ok: true, pin: newPin, ...r });
+});
+
+// Hapus pin plain-text setelah guru klik "sudah disampaikan ke siswa".
+api.post("/api/pin-resets/:id/clear", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`update pin_resets set new_pin = null where id = ${c.req.param("id")}`,
+  );
+  return c.json({ ok: true });
+});
+
+api.post("/api/pin-resets/:id/reject", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`update pin_resets set status = 'rejected', approved_by = ${s.uid}, approved_at = now()
+       where id = ${c.req.param("id")} and status = 'pending'`,
+  );
+  return c.json({ ok: true });
+});
+
 // Reset PIN siswa (admin/guru). Body: { pin: "4-8 digit" }
 api.post("/api/students/:id/reset-pin", async (c) => {
   const s = getSess(c);
@@ -479,6 +549,46 @@ api.post("/api/sessions/:sid/manual-score", async (c) => {
     return { ok: true, final: final_score };
   });
   return c.json(out);
+});
+
+// Export bank soal ke CSV (round-trip dengan /api/questions/import).
+api.get("/api/questions/export.csv", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select q.type, q.content, q.points, k.answer_key, k.rubric, cat.name as category
+       from questions q
+       left join question_keys k on k.question_id = q.id
+       left join categories cat on cat.id = q.category_id
+       order by q.created_at desc`,
+  );
+  type R = { type: string; content: { text: string; options?: string[] }; points: string;
+    answer_key: { index?: number; accepted?: string[] } | null; rubric: string | null; category: string | null };
+  const esc = (v: unknown) => {
+    if (v == null) return "";
+    const t = typeof v === "string" ? v : String(v);
+    return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  const lines = ["type,text,options,correct,accepted,rubric,points,category"];
+  for (const r of rows as unknown as R[]) {
+    let options = "", correct = "", accepted = "";
+    if (r.type === "pg") {
+      options = (r.content.options ?? []).join("|");
+      correct = r.answer_key?.index != null ? String(r.answer_key.index) : "";
+    } else if (r.type === "benar_salah") {
+      correct = r.answer_key?.index === 0 ? "true" : "false";
+    } else if (r.type === "isian") {
+      accepted = (r.answer_key?.accepted ?? []).join("|");
+    }
+    lines.push([r.type, r.content.text, options, correct, accepted, r.rubric, r.points, r.category].map(esc).join(","));
+  }
+  return new Response(lines.join("\n") + "\n", {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="bank-soal.csv"`,
+    },
+  });
 });
 
 // Import bank soal dari CSV. Format header:
@@ -634,6 +744,50 @@ api.patch("/api/exams/:id", async (c) => {
   );
   if (r.length === 0) return c.json({ error: "not found" }, 404);
   return c.json(r[0]);
+});
+
+// Analytics per siswa: tren skor + persen benar per kategori.
+api.get("/api/students/:id/analytics", async (c) => {
+  const s = getSess(c);
+  const id = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const info = await tx`select name, username from students where id = ${id}`;
+    if (info.length === 0) return null;
+    const timeline = await tx`
+      select e.title, es.finished_at, sc.final_score
+      from exam_sessions es
+      join exams e on e.id = es.exam_id
+      left join scores sc on sc.session_id = es.id
+      where es.student_id = ${id} and es.status = 'submitted'
+      order by es.finished_at`;
+    // Persen benar per kategori: hitung soal + benar dari semua jawaban siswa.
+    const byCat = await tx`
+      select coalesce(cat.name, '(tanpa kategori)') as category,
+             count(*)::int as total,
+             sum(case
+               when q.type = 'pg'          and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'benar_salah' and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'isian'       and exists(
+                 select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                 where lower(trim(x.value)) = lower(trim(a.answer->>'text'))) then 1
+               when q.type = 'uraian' and (a.answer->>'manual_score')::numeric >= q.points * 0.5 then 1
+               else 0 end)::int as benar
+      from answers a
+      join questions q on q.id = a.question_id
+      join exam_sessions es on es.id = a.session_id
+      left join question_keys k on k.question_id = q.id
+      left join categories cat on cat.id = q.category_id
+      where es.student_id = ${id} and es.status = 'submitted'
+      group by cat.name order by cat.name`;
+    const violations = await tx`
+      select count(*)::int as n, kind
+      from violations v join exam_sessions es on es.id = v.session_id
+      where es.student_id = ${id} group by kind order by kind`;
+    return { info: info[0], timeline, byCat, violations };
+  });
+  if (!data) return c.json({ error: "siswa tidak ditemukan" }, 404);
+  return c.json(data);
 });
 
 // Export CSV skor peserta satu ujian.

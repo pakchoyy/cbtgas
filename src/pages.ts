@@ -228,7 +228,7 @@ pages.get("/app", async (c) => {
     </tr>`).join("") || `<tr><td colspan="4" class="muted">Belum ada kelas.</td></tr>`;
 
   const studentRows = studentList.map((s) => `<tr data-sid="${esc(s.id)}">
-      <td>${esc(s.name)}</td>
+      <td><a href="/app/students/${esc(s.id)}/analytics">${esc(s.name)}</a></td>
       <td>${esc(s.username)}</td>
       <td>${esc(s.class_name ?? "-")}</td>
       <td>${s.gender ?? ""}</td>
@@ -248,6 +248,7 @@ pages.get("/app", async (c) => {
           <button type="submit">Keluar</button>
         </form>
         ${sess.role === "admin" ? `<a class="btn" href="/app/users">Kelola staf</a>` : ""}
+        <a class="btn" href="/app/pin-resets">Reset PIN siswa</a>
         <button type="button" id="toggleTheme" title="Ganti tema terang/gelap">🌓 Tema</button>
       </div>
     </div>
@@ -672,6 +673,159 @@ pages.get("/app/exams/:id", async (c) => {
   `));
 });
 
+// Antrian permintaan reset PIN dari siswa.
+pages.get("/app/pin-resets", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
+    tx`select pr.id, pr.status, pr.requested_at, pr.approved_at, pr.new_pin,
+              st.name as student_name, st.username
+       from pin_resets pr join students st on st.id = pr.student_id
+       where pr.status = 'pending' or pr.new_pin is not null
+       order by pr.requested_at desc`,
+  );
+  type R = { id: string; status: string; requested_at: string; approved_at: string | null;
+    new_pin: string | null; student_name: string; username: string };
+  const list = (rows as unknown as R[]).map((r) => {
+    const timeStr = new Date(r.requested_at).toLocaleString("id-ID");
+    if (r.new_pin) {
+      return `<tr>
+        <td><b>${esc(r.student_name)}</b> (<code>${esc(r.username)}</code>)<br><span class="muted">${timeStr}</span></td>
+        <td><span class="pill" style="background:#16a34a1a;border-color:#16a34a;color:#16a34a">PIN baru: ${esc(r.new_pin)}</span></td>
+        <td style="text-align:right"><button data-clear="${esc(r.id)}">Sudah disampaikan</button></td>
+      </tr>`;
+    }
+    return `<tr>
+      <td><b>${esc(r.student_name)}</b> (<code>${esc(r.username)}</code>)<br><span class="muted">${timeStr}</span></td>
+      <td><span class="pill">${esc(r.status)}</span></td>
+      <td style="text-align:right">
+        <button class="primary" data-approve="${esc(r.id)}">Setujui &amp; generate PIN</button>
+        <button class="danger" data-reject="${esc(r.id)}">Tolak</button>
+      </td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="3" class="muted">Tidak ada permintaan.</td></tr>`;
+  return c.html(base("Reset PIN siswa", `
+    <div class="card">
+      <h1>Permintaan reset PIN siswa</h1>
+      <p class="sub"><a href="/app">← Dashboard</a></p>
+      <p class="muted">Setujui akan menghasilkan PIN 6-digit baru. Tampilkan ke siswa, lalu klik "Sudah disampaikan" supaya PIN polos dihapus dari tampilan.</p>
+    </div>
+    <div class="card">
+      <table style="width:100%; border-collapse:collapse">
+        <tbody>${list}</tbody>
+      </table>
+    </div>
+    <script>
+      document.body.addEventListener('click', async (e) => {
+        const id = e.target.dataset.approve || e.target.dataset.reject || e.target.dataset.clear;
+        if (!id) return;
+        const action = e.target.dataset.approve ? 'approve' : (e.target.dataset.reject ? 'reject' : 'clear');
+        if (action === 'reject' && !confirm('Tolak permintaan ini?')) return;
+        const r = await fetch('/api/pin-resets/' + id + '/' + action, { method:'POST', credentials:'same-origin' });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || r.status); return; }
+        location.reload();
+      });
+    </script>
+  `));
+});
+
+// Analitik seorang siswa: tren nilai + persen benar per kategori.
+pages.get("/app/students/:id/analytics", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const studentId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const info = await tx`select name, username from students where id = ${studentId}`;
+    if (info.length === 0) return null;
+    const timeline = await tx`
+      select e.title, es.finished_at, sc.final_score
+      from exam_sessions es
+      join exams e on e.id = es.exam_id
+      left join scores sc on sc.session_id = es.id
+      where es.student_id = ${studentId} and es.status = 'submitted'
+      order by es.finished_at`;
+    const byCat = await tx`
+      select coalesce(cat.name, '(tanpa kategori)') as category,
+             count(*)::int as total,
+             sum(case
+               when q.type = 'pg'          and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'benar_salah' and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'isian'       and exists(
+                 select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                 where lower(trim(x.value)) = lower(trim(a.answer->>'text'))) then 1
+               when q.type = 'uraian' and (a.answer->>'manual_score')::numeric >= q.points * 0.5 then 1
+               else 0 end)::int as benar
+      from answers a
+      join questions q on q.id = a.question_id
+      join exam_sessions es on es.id = a.session_id
+      left join question_keys k on k.question_id = q.id
+      left join categories cat on cat.id = q.category_id
+      where es.student_id = ${studentId} and es.status = 'submitted'
+      group by cat.name order by cat.name`;
+    return { info: info[0], timeline, byCat };
+  });
+  if (!data) return c.notFound();
+  const info = data.info as { name: string; username: string };
+  type T = { title: string; finished_at: string; final_score: string | null };
+  type C = { category: string; total: number; benar: number };
+  const tl = data.timeline as unknown as T[];
+  const by = data.byCat as unknown as C[];
+  // Build an SVG line chart manually (no external libs).
+  const w = 640, h = 220, pad = 28;
+  const scores = tl.map((r) => Number(r.final_score ?? 0));
+  const pts = scores.map((v, i) => {
+    const x = pad + (scores.length === 1 ? (w - 2*pad)/2 : (w - 2*pad) * i / (scores.length - 1));
+    const y = h - pad - (h - 2*pad) * (v / 100);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const dots = scores.map((v, i) => {
+    const x = pad + (scores.length === 1 ? (w - 2*pad)/2 : (w - 2*pad) * i / (scores.length - 1));
+    const y = h - pad - (h - 2*pad) * (v / 100);
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="#2563eb"/>`;
+  }).join("");
+  const grid = [0, 25, 50, 75, 100].map((v) => {
+    const y = h - pad - (h - 2*pad) * (v / 100);
+    return `<line x1="${pad}" y1="${y}" x2="${w-pad}" y2="${y}" stroke="var(--bd)" stroke-dasharray="2,3"/>
+      <text x="4" y="${y+3}" fill="var(--mut)" font-size="10">${v}</text>`;
+  }).join("");
+  const chart = scores.length
+    ? `<svg viewBox="0 0 ${w} ${h}" style="width:100%; max-width:${w}px; display:block">
+         ${grid}
+         <polyline fill="none" stroke="#2563eb" stroke-width="2" points="${pts}"/>
+         ${dots}
+       </svg>`
+    : `<p class="muted">Belum ada ujian yang diselesaikan.</p>`;
+
+  const catBars = by.map((r) => {
+    const pct = r.total ? Math.round((r.benar / r.total) * 100) : 0;
+    const color = pct >= 75 ? "#16a34a" : (pct >= 50 ? "#eab308" : "#ef4444");
+    return `<div style="margin:8px 0">
+      <div class="row" style="justify-content:space-between;margin:0 0 4px"><span>${esc(r.category)}</span><span class="muted">${r.benar}/${r.total} (${pct}%)</span></div>
+      <div style="background:var(--bg);border:1px solid var(--bd);border-radius:6px;overflow:hidden;height:12px">
+        <div style="height:100%;width:${pct}%;background:${color}"></div>
+      </div>
+    </div>`;
+  }).join("") || `<p class="muted">Belum ada jawaban terekam.</p>`;
+
+  return c.html(base(`Analitik — ${info.name}`, `
+    <div class="card">
+      <h1>${esc(info.name)}</h1>
+      <p class="sub"><code>${esc(info.username)}</code> · <a href="/app">← Dashboard</a></p>
+    </div>
+    <div class="card">
+      <h2>Tren nilai akhir</h2>
+      ${chart}
+    </div>
+    <div class="card">
+      <h2>Kelemahan per kategori</h2>
+      <p class="muted">Persen jawaban benar dari seluruh ujian yang diselesaikan.</p>
+      ${catBars}
+    </div>
+  `));
+});
+
 pages.get("/app/users", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
@@ -987,6 +1141,7 @@ pages.get("/app/questions", async (c) => {
           <button class="primary" type="submit">Tambah soal</button>
           <button type="button" id="btnImportQ">Import CSV</button>
           <input type="file" id="fileCsvQ" accept=".csv,text/csv" hidden>
+          <a class="btn" href="/api/questions/export.csv">Export CSV</a>
         </div>
         <p class="muted" style="margin-top:8px">
           CSV: header <code>type,text,options,correct,accepted,rubric,points,category</code>.

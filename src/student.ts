@@ -7,12 +7,15 @@ import { verifyPin } from "./hash";
 import {
   cookieHeader, clearCookie, readCookie, sign, verify, Session,
 } from "./session";
+import { sendEmail, pinNotifyEmail } from "./email";
 
 type Bindings = {
   HYPERDRIVE: Hyperdrive;
   SESSION_SECRET: string;
   APP_ORIGIN: string;
   APP_ENV: string;
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
 };
 
 const STUDENT_COOKIE = "cbt_sstu";
@@ -264,7 +267,8 @@ student.get("/s/login", (c) => c.html(page("Masuk siswa", `
       <label>Kode sekolah</label><input name="code" required placeholder="demo-sma">
       <label>Username</label><input name="username" required placeholder="andi.saputra">
       <label>PIN</label><input name="pin" type="password" required pattern="\\d{4,8}" placeholder="PIN 4–8 digit">
-      <div class="row"><button class="primary" type="submit">Masuk</button></div>
+      <div class="row"><button class="primary" type="submit">Masuk</button>
+        <a class="btn" href="/s/forgot">Lupa PIN?</a></div>
       <p class="err" id="err" hidden></p>
     </form>
   </div>
@@ -328,6 +332,72 @@ student.post("/s/login", async (c) => {
   h.append("Set-Cookie", cookieHeader(STUDENT_COOKIE, cookie, { maxAge: STUDENT_TTL }));
   return new Response(JSON.stringify({ ok: true }), { headers: h });
 });
+
+// Lupa PIN: siswa isi kode sekolah + username, system masukkan ke antrian
+// pin_resets. Guru/admin menyetujui lewat dashboard → PIN 6-digit baru
+// ditampilkan sekali untuk disampaikan ke siswa.
+student.post("/s/forgot", async (c) => {
+  const body = await c.req.json().catch(() => null) as null | { code: string; username: string };
+  if (!body?.code || !body?.username) return c.json({ error: "data kurang" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sch = await sql`select id from resolve_school(${body.code})`;
+  if (sch.length === 0) return c.json({ error: "kode sekolah tidak dikenal" }, 404);
+  const sid = (sch[0] as { id: string }).id;
+  const notify = await withTenant(sql, { schoolId: sid, role: "student" }, async (tx) => {
+    const stu = await tx`select id, name from students where username = ${body.username} and active`;
+    if (stu.length === 0) return null;  // Diam-diam ok supaya tidak membocorkan username ada/tidak.
+    const stuRow = stu[0] as { id: string; name: string };
+    const existing = await tx`select id from pin_resets where student_id = ${stuRow.id} and status = 'pending'`;
+    if (existing.length === 0) {
+      await tx`insert into pin_resets (school_id, student_id) values (${sid}, ${stuRow.id})`;
+    }
+    const sch = await tx`select name from schools where id = ${sid}`;
+    const admins = await tx`select email from users where role in ('admin','teacher') and active`;
+    return {
+      schoolName: (sch[0] as { name: string } | undefined)?.name ?? "",
+      studentName: stuRow.name,
+      username: body.username,
+      recipients: (admins as unknown as Array<{ email: string }>).map((x) => x.email),
+    };
+  });
+  // Kirim email ke guru/admin (best-effort). Tidak gagalkan permintaan siswa.
+  if (notify && notify.recipients.length) {
+    const mail = pinNotifyEmail({
+      schoolName: notify.schoolName, studentName: notify.studentName,
+      username: notify.username, origin: c.env.APP_ORIGIN,
+    });
+    for (const to of notify.recipients) {
+      await sendEmail(c.env, to, mail.subject, mail.html);
+    }
+  }
+  return c.json({ ok: true, message: "Permintaan reset diajukan. Hubungi guru untuk mendapat PIN baru." });
+});
+
+student.get("/s/forgot", (c) => c.html(page("Lupa PIN", `
+  <div class="card">
+    <h1>Lupa PIN</h1>
+    <p class="sub">Kirim permintaan ke guru untuk reset. Guru akan memberi Anda PIN baru.</p>
+    <form id="f">
+      <label>Kode sekolah</label><input name="code" required placeholder="demo-sma">
+      <label>Username</label><input name="username" required placeholder="andi.saputra">
+      <div class="row"><button class="primary" type="submit">Ajukan reset</button>
+        <a class="btn" href="/s/login">Kembali</a></div>
+      <p id="msg" style="margin-top:12px"></p>
+    </form>
+  </div>
+  <script>
+    document.getElementById('f').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const d = Object.fromEntries(new FormData(e.target));
+      const r = await fetch('/s/forgot', { method:'POST', credentials:'same-origin',
+        headers: { 'Content-Type':'application/json' }, body: JSON.stringify(d) });
+      const j = await r.json().catch(() => ({}));
+      const msg = document.getElementById('msg');
+      msg.className = r.ok ? 'muted' : 'err';
+      msg.textContent = j.message || j.error || ('HTTP ' + r.status);
+    });
+  </script>
+`)));
 
 student.post("/s/logout", (c) => {
   const h = new Headers({ Location: `${c.env.APP_ORIGIN}/s/login` });
