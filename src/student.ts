@@ -47,6 +47,9 @@ const page = (title: string, body: string) => `<!doctype html>
 <title>${title} · cbtgas siswa</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#2563eb">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
 <script>(function(){try{var t=localStorage.getItem('theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <style>
   :root { color-scheme: light dark; --fg:#111; --mut:#555; --bg:#fafafa; --card:#fff; --bd:#e5e5e5; --accent:#2563eb; --danger:#b91c1c; --ok:#16a34a; }
@@ -596,6 +599,22 @@ student.get("/s/take/:sid", async (c) => {
       let violations = D.violations || 0; const limit = D.limit || 0; const level = D.anticheat || 'log';
       const nav = document.getElementById('nav'); const qbox = document.getElementById('qbox');
       function escapeHtml(s) { return (s||'').replace(/[&<>\"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]); }
+      // Markdown ringan: **bold**, *italic*, \`code\`, newline → <br>.
+      // Math $...$ dan $$...$$ dilewati, lalu dirender ulang oleh KaTeX.
+      function mdRender(s) {
+        let t = escapeHtml(s);
+        t = t.replace(/\\*\\*([^*]+)\\*\\*/g, '<b>$1</b>');
+        t = t.replace(/\\*([^*]+)\\*/g, '<i>$1</i>');
+        t = t.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
+        t = t.replace(/\\n/g, '<br>');
+        return t;
+      }
+      function katex(el) {
+        if (window.renderMathInElement) renderMathInElement(el, {
+          delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
+          throwOnError: false,
+        });
+      }
       function hasAnswer(qid) {
         const a = A[qid]; if (!a) return false;
         if (typeof a.index === 'number') return true;
@@ -615,7 +634,7 @@ student.get("/s/take/:sid", async (c) => {
             (q.passage.title ? '<p style="margin:0 0 6px"><b>' + escapeHtml(q.passage.title) + '</b></p>' : '') +
             '<p style="margin:0;white-space:pre-wrap">' + escapeHtml(q.passage.body) + '</p></div>';
         }
-        el.innerHTML = head + '<p><b>Soal ' + (i+1) + ' / ' + Q.length + '</b>' + tag + '</p><p>' + escapeHtml(q.content.text) + '</p>';
+        el.innerHTML = head + '<p><b>Soal ' + (i+1) + ' / ' + Q.length + '</b>' + tag + '</p><p>' + mdRender(q.content.text) + '</p>';
         if (q.content.image) {
           const img = document.createElement('img');
           img.src = q.content.image;
@@ -687,6 +706,7 @@ student.get("/s/take/:sid", async (c) => {
           el.appendChild(grid);
         }
         qbox.appendChild(el);
+        katex(el);
         nav.innerHTML = '';
         Q.forEach((qq, k) => {
           const b = document.createElement('button'); b.textContent = k+1;
@@ -904,11 +924,13 @@ student.post("/s/take/:sid/submit", async (c) => {
                                     select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
                                     where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
                                   ) then q.points else 0 end
-          when 'pgk_centang' then case when (
-                                    select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
-                                 ) = (
-                                    select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
-                                 ) then q.points else 0 end
+          when 'pgk_centang' then greatest(0::numeric, (
+            (select count(*) from jsonb_array_elements_text(k.answer_key->'correct') kx
+               where kx::int in (select x::int from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) x))
+            -
+            (select count(*) from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) ax
+               where ax::int not in (select x::int from jsonb_array_elements_text(k.answer_key->'correct') x))
+          )::numeric / nullif(jsonb_array_length(k.answer_key->'correct'), 0) * q.points)
           when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
           else 0 end), 0) as got_auto,
              coalesce(sum(q.points), 0) as total,

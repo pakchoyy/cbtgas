@@ -143,11 +143,13 @@ async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed
                                         select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
                                         where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
                                       ) then q.points else 0 end
-              when 'pgk_centang' then case when (
-                                        select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
-                                     ) = (
-                                        select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
-                                     ) then q.points else 0 end
+              when 'pgk_centang' then greatest(0::numeric, (
+                (select count(*) from jsonb_array_elements_text(k.answer_key->'correct') kx
+                   where kx::int in (select x::int from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) x))
+                -
+                (select count(*) from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) ax
+                   where ax::int not in (select x::int from jsonb_array_elements_text(k.answer_key->'correct') x))
+              )::numeric / nullif(jsonb_array_length(k.answer_key->'correct'), 0) * q.points)
               when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
               else 0 end), 0) as got, coalesce(sum(q.points), 0) as total
           from jsonb_array_elements_text(coalesce(

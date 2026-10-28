@@ -15,6 +15,9 @@ const base = (title: string, body: string) => `<!doctype html>
 <title>${title} · cbtgas</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#2563eb">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
 <script>
   // Terapkan tema sebelum render agar tidak flash.
   (function(){ try { var t = localStorage.getItem('theme');
@@ -293,7 +296,7 @@ pages.get("/app", async (c) => {
           <input type="file" id="fileCsv" accept=".csv,text/csv" hidden>
           <a class="btn" href="/app/exams">Kelola ujian</a>
           <a class="btn" href="/api/reports/scores.csv">Rekap skor sekolah (CSV)</a>
-          ${sess.role === "admin" ? `<a class="btn" href="/api/reports/backup.json">Backup JSON</a>` : ""}
+          ${sess.role === "admin" ? `<a class="btn" href="/api/reports/backup.json">Backup JSON</a><a class="btn" href="/app/restore">Restore</a>` : ""}
         </div>
         <p class="muted" style="margin-top:8px">
           Format CSV: header <code>name,username,class,gender,nisn,pin</code> — kolom
@@ -637,6 +640,7 @@ pages.get("/app/exams/:id", async (c) => {
       <div class="row" style="margin-bottom:8px">
         <a class="btn" href="/api/exams/${esc(examId)}/scores.csv">Download CSV</a>
         <a class="btn" href="/app/exams/${esc(examId)}/live">Live monitoring</a>
+        <a class="btn" href="/app/exams/${esc(examId)}/lab">Mode lab komputer</a>
       </div>
       <table>
         <thead><tr><th>Siswa</th><th>Kelas</th><th>Status</th><th>Auto</th><th>Manual</th><th>Final</th></tr></thead>
@@ -990,6 +994,45 @@ pages.get("/app/students/:id/analytics", async (c) => {
   `));
 });
 
+pages.get("/app/restore", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  if (sess.role !== "admin") return c.html(base("Restore", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">← Dashboard</a></div>`));
+  return c.html(base("Restore backup", `
+    <div class="card">
+      <h1>Restore backup JSON</h1>
+      <p class="sub"><a href="/app">← Dashboard</a></p>
+      <p class="muted">Upload file <code>backup-*.json</code> hasil ekspor. Sekolah baru akan dibuat dengan kode yang Anda tentukan di bawah; ID lama di-remap. Data operasional (sesi/jawaban/skor) <b>tidak</b> ikut.</p>
+      <form id="f">
+        <label>Kode sekolah baru <span class="muted">(3–32 huruf kecil/digit/strip, belum terpakai)</span></label>
+        <input name="code" required pattern="[a-z0-9\\-]{3,32}" placeholder="sma-copy-1">
+        <label>File backup.json</label>
+        <input type="file" id="file" accept=".json,application/json" required>
+        <div class="row"><button class="primary" type="submit">Restore</button></div>
+        <p class="err" id="err" hidden></p>
+        <pre id="out" style="margin-top:10px; background:var(--bg); padding:10px; border-radius:8px; font-size:12px; max-height:200px; overflow:auto" hidden></pre>
+      </form>
+    </div>
+  `) + `<script>
+    document.getElementById('f').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('err'); err.hidden = true;
+      const out = document.getElementById('out'); out.hidden = true;
+      const code = e.target.code.value.trim().toLowerCase();
+      const file = document.getElementById('file').files[0];
+      if (!file) return;
+      const text = await file.text();
+      const r = await fetch('/api/reports/restore?code=' + encodeURIComponent(code), {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: text,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) { out.hidden = false; out.textContent = JSON.stringify(j, null, 2); }
+      else { err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
+    });
+  </script>`);
+});
+
 pages.get("/app/audit", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
@@ -1164,6 +1207,81 @@ pages.get("/app/passages", async (c) => {
         if (!confirm('Hapus bacaan? Soal yang pakai bacaan ini akan jadi tanpa bacaan.')) return;
         const r = await fetch('/api/passages/' + id, { method:'DELETE', credentials:'same-origin' });
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+      });
+    </script>
+  `));
+});
+
+// Lab komputer mode: guru pilih siswa yang hadir, klik mulai → sesi
+// dibuat untuk mereka semua. Siswa cukup login + buka /s, sesi sudah
+// terdaftar jadi tinggal 'Lanjutkan'.
+pages.get("/app/exams/:id/lab", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const examId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const ex = await tx`select title, status, kind from exams where id = ${examId}`;
+    if (ex.length === 0) return null;
+    const assignedClasses = await tx`select class_id from exam_classes where exam_id = ${examId}`;
+    const classIds = (assignedClasses as unknown as Array<{ class_id: string }>).map((x) => x.class_id);
+    const students = classIds.length
+      ? await tx`select s.id, s.name, s.username, c.name as class_name,
+                        es.id as session_id, es.status as session_status
+                 from students s
+                 left join classes c on c.id = s.class_id
+                 left join exam_sessions es on es.exam_id = ${examId} and es.student_id = s.id
+                 where s.class_id in ${tx(classIds)} and s.active
+                 order by s.name`
+      : [];
+    return { ex: ex[0], students };
+  });
+  if (!data) return c.notFound();
+  const ex = data.ex as { title: string; status: string; kind: string };
+  type R = { id: string; name: string; username: string; class_name: string | null;
+    session_id: string | null; session_status: string | null };
+  const studs = data.students as unknown as R[];
+  const rows = studs.map((s) => `<tr>
+    <td><input type="checkbox" class="pick" value="${esc(s.id)}" ${s.session_id ? "disabled" : ""}></td>
+    <td>${esc(s.name)}</td>
+    <td><code style="font-size:12px">${esc(s.username)}</code></td>
+    <td>${esc(s.class_name ?? "-")}</td>
+    <td>${s.session_status ? `<span class="pill ${esc(s.session_status)}">${esc(s.session_status)}</span>` : `<span class="muted">belum mulai</span>`}</td>
+  </tr>`).join("") || `<tr><td colspan="5" class="muted">Belum ada siswa di kelas yang ditugaskan.</td></tr>`;
+  return c.html(base(`Lab — ${ex.title}`, `
+    <div class="card">
+      <h1>Lab komputer</h1>
+      <p class="sub">${esc(ex.title)} · <a href="/app/exams/${esc(examId)}">← Detail ujian</a></p>
+      ${ex.status !== "open" ? `<p class="err">Ujian masih <b>${esc(ex.status)}</b>. Buka ujian terlebih dahulu agar lab-start berfungsi.</p>` : ""}
+      <p class="muted">Centang siswa yang hadir di depan komputer, lalu klik <b>Mulai sesi untuk yang dicentang</b>. Sesi mereka langsung dibuat (deadline = sekarang + durasi). Siswa cukup login dan klik 'Lanjutkan'.</p>
+    </div>
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <label><input type="checkbox" id="selAll"> Pilih semua yang belum mulai</label>
+        <button class="primary" id="start" ${ex.status !== "open" ? "disabled" : ""}>Mulai sesi untuk yang dicentang</button>
+      </div>
+      <table style="width:100%; border-collapse:collapse">
+        <thead><tr><th></th><th>Siswa</th><th>Username</th><th>Kelas</th><th>Status sesi</th></tr></thead>
+        <tbody id="tb">${rows}</tbody>
+      </table>
+      <p class="err" id="err" hidden></p>
+    </div>
+    <script>
+      document.getElementById('selAll').addEventListener('change', (e) => {
+        document.querySelectorAll('input.pick').forEach((x) => { if (!x.disabled) x.checked = e.target.checked; });
+      });
+      document.getElementById('start').addEventListener('click', async () => {
+        const err = document.getElementById('err'); err.hidden = true;
+        const ids = [...document.querySelectorAll('input.pick:checked')].map((x) => x.value);
+        if (ids.length === 0) { err.textContent = 'Belum ada siswa dicentang.'; err.hidden = false; return; }
+        if (!confirm('Mulai sesi untuk ' + ids.length + ' siswa?')) return;
+        const r = await fetch('/api/exams/${esc(examId)}/lab-start', {
+          method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ student_ids: ids }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) { alert(j.created + ' sesi dibuat, ' + j.skipped + ' dilewati (sudah ada).'); location.reload(); }
+        else { err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
     </script>
   `));
@@ -1433,8 +1551,9 @@ pages.get("/app/questions", async (c) => {
           <option value="pgk_centang">Pilihan Ganda Kompleks (centang beberapa)</option>
           <option value="menjodohkan">Menjodohkan</option>
         </select>
-        <label>Teks soal</label>
+        <label>Teks soal <span class="muted">(dukung **tebal**, *miring*, \`kode\`, dan matematika $x^2$ atau $$\\int_0^1 x\\,dx$$)</span></label>
         <textarea name="text" required rows="3" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
+        <div id="qPreview" style="margin:6px 0 0; padding:8px 10px; border:1px dashed var(--bd); border-radius:6px; font-size:13px; min-height:28px"></div>
 
         <div id="box_pg">
           <label>Pilihan (centang jawaban benar)</label>
@@ -1511,6 +1630,20 @@ pages.get("/app/questions", async (c) => {
         for (const name of ['pg','bs','isian','uraian','pgkc','mjd']) $$('#box_'+name).hidden = (name !== show);
       }
       $$('#qtype').addEventListener('change', showBox); showBox();
+      // Live preview teks soal.
+      const prevEl = $$('#qPreview');
+      const txtEl = document.querySelector('textarea[name=text]');
+      function esc(s){return (s||'').replace(/[&<>\"']/g,(ch)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]);}
+      function md(s){let t=esc(s);t=t.replace(/\\*\\*([^*]+)\\*\\*/g,'<b>$1</b>');t=t.replace(/\\*([^*]+)\\*/g,'<i>$1</i>');t=t.replace(/\`([^\`]+)\`/g,'<code>$1</code>');return t.replace(/\\n/g,'<br>');}
+      function refreshPreview(){
+        prevEl.innerHTML = md(txtEl.value);
+        if (window.renderMathInElement) renderMathInElement(prevEl, {
+          delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
+          throwOnError: false,
+        });
+      }
+      txtEl.addEventListener('input', refreshPreview);
+      setTimeout(refreshPreview, 300);
       document.getElementById('tb').addEventListener('click', async (e) => {
         const id = e.target.dataset.del; if (!id) return;
         if (!confirm('Hapus soal ini?')) return;

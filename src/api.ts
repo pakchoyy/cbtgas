@@ -462,6 +462,75 @@ api.post("/api/questions", async (c) => {
   return c.json(r, 201);
 });
 
+// Lab komputer mode: guru pilih siswa yang hadir dan mulai sesi serentak
+// untuk mereka semua. Setiap siswa pakai akun masing-masing — ini bukan
+// bypass auth, hanya pre-create session supaya tidak buang waktu klik
+// Mulai satu-satu.
+api.post("/api/exams/:id/lab-start", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const examId = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as null | { student_ids: string[] };
+  if (!body || !Array.isArray(body.student_ids)) return c.json({ error: "bad body" }, 400);
+
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const ex = await tx`select duration_minutes, status, ends_at, shuffle_questions, shuffle_options,
+                               questions_per_session
+                        from exams where id = ${examId}`;
+    if (ex.length === 0) throw new Error("ujian tidak ditemukan");
+    const exam = ex[0] as { duration_minutes: number; status: string;
+      ends_at: string | null; shuffle_questions: boolean; shuffle_options: boolean;
+      questions_per_session: number };
+    if (exam.status !== "open") throw new Error("ujian harus berstatus open");
+    const qs = await tx`select question_id from exam_questions where exam_id = ${examId} order by position`;
+    const baseOrder = (qs as unknown as Array<{ question_id: string }>).map((x) => x.question_id);
+    if (baseOrder.length === 0) throw new Error("ujian belum punya soal");
+
+    const fy = <T>(arr: T[]): T[] => {
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+
+    const created: string[] = []; const skipped: string[] = [];
+    for (const studentId of body.student_ids) {
+      const exist = await tx`select id from exam_sessions where exam_id = ${examId} and student_id = ${studentId}`;
+      if (exist.length) { skipped.push(studentId); continue; }
+      let order = baseOrder.slice();
+      if (exam.questions_per_session > 0 && exam.questions_per_session < order.length) {
+        order = fy(order).slice(0, exam.questions_per_session);
+      }
+      if (exam.shuffle_questions) order = fy(order);
+      const perms: Record<string, number[]> = {};
+      if (exam.shuffle_options) {
+        const qrows = await tx`select id, type, content from questions where id in ${tx(order)}`;
+        for (const q of qrows as unknown as Array<{ id: string; type: string; content: { options?: string[] } }>) {
+          if (q.type === "pg" && Array.isArray(q.content.options) && q.content.options.length > 1) {
+            perms[q.id] = fy(q.content.options.map((_, k) => k));
+          }
+        }
+      }
+      const durMs = Date.now() + exam.duration_minutes * 60_000;
+      const examEnd = exam.ends_at ? new Date(exam.ends_at).getTime() : Number.POSITIVE_INFINITY;
+      const deadline = new Date(Math.min(durMs, examEnd)).toISOString();
+      const ins = await tx`insert into exam_sessions
+        (school_id, exam_id, student_id, deadline_at, question_order)
+        values (${s.sid}, ${examId}, ${studentId}, ${deadline},
+                ${{ order, perms } as unknown as string}) returning id`;
+      created.push((ins[0] as { id: string }).id);
+    }
+    await audit(tx, actorFromSession(s), "exam.lab_start", "exam", examId,
+      { created: created.length, skipped: skipped.length });
+    return { created: created.length, skipped: skipped.length };
+  }).catch((e) => ({ error: (e as Error).message }));
+  if ("error" in result) return c.json(result, 400);
+  return c.json(result);
+});
+
 // Buka kembali sesi yang di-locked oleh anti-cheat. Reset violation_count
 // supaya siswa tidak langsung terkunci lagi di event berikutnya.
 api.post("/api/sessions/:sid/unlock", async (c) => {
@@ -595,11 +664,13 @@ api.post("/api/sessions/:sid/manual-score", async (c) => {
                                     select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
                                     where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
                                   ) then q.points else 0 end
-          when 'pgk_centang' then case when (
-                                    select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
-                                 ) = (
-                                    select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
-                                 ) then q.points else 0 end
+          when 'pgk_centang' then greatest(0::numeric, (
+            (select count(*) from jsonb_array_elements_text(k.answer_key->'correct') kx
+               where kx::int in (select x::int from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) x))
+            -
+            (select count(*) from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) ax
+               where ax::int not in (select x::int from jsonb_array_elements_text(k.answer_key->'correct') x))
+          )::numeric / nullif(jsonb_array_length(k.answer_key->'correct'), 0) * q.points)
           when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
           when 'uraian'      then coalesce((a.answer->>'manual_score')::numeric, 0)
           else 0 end), 0) as got,
@@ -940,6 +1011,144 @@ api.get("/api/exams/:id/scores.csv", async (c) => {
       "Content-Disposition": `attachment; filename="skor-ujian-${id}.csv"`,
     },
   });
+});
+
+// Restore backup: upload JSON hasil /api/reports/backup.json, buat sekolah
+// baru dengan ID baru. Kode sekolah harus dipilih yang belum dipakai
+// (parameter query ?code=xxx). Dibatasi: hanya admin dari sekolah yang
+// sudah ada (bukan unlimited onboarding), dan hanya saat APP_ENV!=production
+// kecuali pemanggil terdaftar di system_owners.
+api.post("/api/reports/restore", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  // Owner-check: untuk production, hanya system_owners (daftar email) yang boleh restore.
+  if (c.env.APP_ENV === "production") {
+    const owner = await sql`select 1 from system_owners where email = ${s.email}`;
+    if (owner.length === 0) return c.json({ error: "restore hanya untuk owner sistem di production" }, 403);
+  }
+  const newCode = c.req.query("code")?.trim().toLowerCase();
+  if (!newCode || !/^[a-z0-9-]{3,32}$/.test(newCode)) {
+    return c.json({ error: "query ?code=<kode-sekolah-baru> wajib (3–32 huruf kecil/digit/strip)" }, 400);
+  }
+  const payload = await c.req.json().catch(() => null) as null | Record<string, unknown>;
+  if (!payload || typeof payload !== "object" || payload.version !== 1 || !payload.school) {
+    return c.json({ error: "format backup tidak valid (version 1 + school required)" }, 400);
+  }
+  type Row = { id: string } & Record<string, unknown>;
+  const data = payload as {
+    school: Row & { code: string; name: string; level: string; operator_name: string; operator_phone: string;
+      npsn: string | null; color: string; plan: string; student_quota: number; concurrent_quota: number };
+    users: Row[]; classes: Row[]; students: Row[]; categories: Row[]; passages: Row[];
+    questions: Row[]; question_keys: Array<{ question_id: string } & Record<string, unknown>>;
+    exams: Row[];
+    exam_classes: Array<{ exam_id: string; class_id: string }>;
+    exam_questions: Array<{ exam_id: string; question_id: string; position: number; weight: number }>;
+  };
+
+  // Jalankan restore sebagai 'owner' lintas-tenant.
+  const result = await withTenant(sql, { schoolId: "", role: "owner" }, async (tx) => {
+    // Cek kode belum terpakai (owner bisa lihat semua schools lewat RLS).
+    const exists = await tx`select 1 from schools where code = ${newCode}`;
+    if (exists.length) throw new Error(`kode '${newCode}' sudah dipakai`);
+
+    // Buat sekolah baru.
+    const sch = data.school;
+    const newSchool = await tx`insert into schools
+      (code, name, level, npsn, operator_name, operator_phone, color, plan,
+       student_quota, concurrent_quota, privacy_consent_at)
+      values (${newCode}, ${sch.name}, ${sch.level}, ${sch.npsn ?? null},
+              ${sch.operator_name}, ${sch.operator_phone}, ${sch.color ?? "biru"}, ${sch.plan ?? "trial"},
+              ${sch.student_quota ?? 300}, ${sch.concurrent_quota ?? 300}, now())
+      returning id`;
+    const newSid = (newSchool[0] as { id: string }).id;
+
+    // Map lama → baru untuk setiap entitas.
+    const idMap = new Map<string, string>();
+    idMap.set(sch.id, newSid);
+
+    async function remapInsert<T extends Row>(rows: T[], build: (r: T, newId: string) => Promise<void>) {
+      for (const r of rows) {
+        const nid = crypto.randomUUID();
+        idMap.set(r.id, nid);
+        await build(r, nid);
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const anyVal = (v: unknown): any => v as any;
+    await remapInsert(data.users, async (u, nid) => {
+      await tx`insert into users (id, school_id, email, name, role, google_sub, active)
+               values (${nid}, ${newSid}, ${anyVal(u.email)}, ${anyVal(u.name) ?? null}, ${anyVal(u.role)}, ${anyVal(u.google_sub) ?? null}, ${anyVal(u.active) ?? true})`;
+    });
+    await remapInsert(data.classes, async (cl, nid) => {
+      await tx`insert into classes (id, school_id, name, grade, year)
+               values (${nid}, ${newSid}, ${anyVal(cl.name)}, ${anyVal(cl.grade) ?? null}, ${anyVal(cl.year)})`;
+    });
+    await remapInsert(data.students, async (st, nid) => {
+      const classIdNew = st.class_id ? idMap.get(st.class_id as string) ?? null : null;
+      await tx`insert into students (id, school_id, class_id, name, nisn, gender, username, pin_hash, active)
+               values (${nid}, ${newSid}, ${classIdNew}, ${anyVal(st.name)}, ${anyVal(st.nisn) ?? null},
+                       ${anyVal(st.gender) ?? null}, ${anyVal(st.username)}, ${anyVal(st.pin_hash)}, ${anyVal(st.active) ?? true})`;
+    });
+    await remapInsert(data.categories, async (cat, nid) => {
+      const parentNew = cat.parent_id ? idMap.get(cat.parent_id as string) ?? null : null;
+      await tx`insert into categories (id, school_id, name, parent_id)
+               values (${nid}, ${newSid}, ${anyVal(cat.name)}, ${parentNew})`;
+    });
+    await remapInsert(data.passages, async (p, nid) => {
+      await tx`insert into passages (id, school_id, title, body)
+               values (${nid}, ${newSid}, ${anyVal(p.title) ?? null}, ${anyVal(p.body)})`;
+    });
+    await remapInsert(data.questions, async (q, nid) => {
+      const authorIdNew = q.author_id ? idMap.get(q.author_id as string) ?? null : null;
+      const catIdNew = q.category_id ? idMap.get(q.category_id as string) ?? null : null;
+      const passIdNew = q.passage_id ? idMap.get(q.passage_id as string) ?? null : null;
+      await tx`insert into questions (id, school_id, author_id, category_id, passage_id,
+                                      type, content, points)
+               values (${nid}, ${newSid}, ${authorIdNew}, ${catIdNew}, ${passIdNew},
+                       ${anyVal(q.type)}, ${anyVal(q.content)}, ${anyVal(q.points)})`;
+    });
+    for (const k of data.question_keys) {
+      const qidNew = idMap.get(k.question_id);
+      if (!qidNew) continue;
+      await tx`insert into question_keys (question_id, school_id, answer_key, rubric)
+               values (${qidNew}, ${newSid}, ${anyVal(k.answer_key)}, ${anyVal(k.rubric) ?? null})`;
+    }
+    await remapInsert(data.exams, async (ex, nid) => {
+      const creatorNew = ex.creator_id ? idMap.get(ex.creator_id as string) ?? null : null;
+      await tx`insert into exams (id, school_id, creator_id, title, kind, duration_minutes,
+                                  shuffle_questions, shuffle_options, anticheat_level,
+                                  lock_after_violations, token_hash, starts_at, ends_at, status,
+                                  questions_per_session)
+               values (${nid}, ${newSid}, ${creatorNew}, ${anyVal(ex.title)}, ${anyVal(ex.kind)}, ${anyVal(ex.duration_minutes)},
+                       ${anyVal(ex.shuffle_questions) ?? false}, ${anyVal(ex.shuffle_options) ?? false},
+                       ${anyVal(ex.anticheat_level) ?? "log"}, ${anyVal(ex.lock_after_violations) ?? null},
+                       ${anyVal(ex.token_hash) ?? null}, ${anyVal(ex.starts_at) ?? null}, ${anyVal(ex.ends_at) ?? null},
+                       'draft', ${anyVal(ex.questions_per_session) ?? 0})`;
+    });
+    for (const ec of data.exam_classes) {
+      const ex = idMap.get(ec.exam_id), cl = idMap.get(ec.class_id);
+      if (ex && cl) await tx`insert into exam_classes (exam_id, class_id, school_id)
+                              values (${ex}, ${cl}, ${newSid})`;
+    }
+    for (const eq of data.exam_questions) {
+      const ex = idMap.get(eq.exam_id), q = idMap.get(eq.question_id);
+      if (ex && q) await tx`insert into exam_questions (exam_id, question_id, school_id, position, weight)
+                             values (${ex}, ${q}, ${newSid}, ${eq.position}, ${eq.weight})`;
+    }
+
+    return {
+      ok: true, new_school_id: newSid, new_code: newCode,
+      counts: {
+        users: data.users.length, classes: data.classes.length, students: data.students.length,
+        categories: data.categories.length, passages: data.passages.length,
+        questions: data.questions.length, exams: data.exams.length,
+      },
+    };
+  }).catch((e) => ({ error: (e as Error).message }));
+  if ("error" in result) return c.json(result, 400);
+  return c.json(result);
 });
 
 // Backup lengkap konfigurasi sekolah ke JSON (tanpa data operasional:
