@@ -472,6 +472,8 @@ pages.get("/app/exams", async (c) => {
           <div><label>Kunci setelah N pelanggaran</label><input name="lock_after_violations" type="number" min="1" value="3"></div>
           <div><label><input type="checkbox" name="shuffle_questions"> Acak urutan soal</label></div>
           <div><label><input type="checkbox" name="shuffle_options"> Acak urutan pilihan</label></div>
+          <div><label>Soal per siswa <span class="muted">(0 = pakai semua; mis. 25 dari 100 soal)</span></label>
+            <input name="questions_per_session" type="number" min="0" value="0"></div>
         </div>
         <div class="row"><button class="primary" type="submit">Buat ujian</button></div>
         <p class="err" id="errex" hidden></p>
@@ -494,6 +496,7 @@ pages.get("/app/exams", async (c) => {
         d.lock_after_violations = d.lock_after_violations ? +d.lock_after_violations : null;
         d.shuffle_questions = fd.has('shuffle_questions');
         d.shuffle_options = fd.has('shuffle_options');
+        d.questions_per_session = +d.questions_per_session;
         for (const k of ['starts_at','ends_at']) if (!d[k]) d[k] = null; else d[k] = new Date(d[k]).toISOString();
         const r = await fetch('/api/exams', { method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
@@ -632,6 +635,7 @@ pages.get("/app/exams/:id", async (c) => {
       <h2>Skor peserta</h2>
       <div class="row" style="margin-bottom:8px">
         <a class="btn" href="/api/exams/${esc(examId)}/scores.csv">Download CSV</a>
+        <a class="btn" href="/app/exams/${esc(examId)}/live">Live monitoring</a>
       </div>
       <table>
         <thead><tr><th>Siswa</th><th>Kelas</th><th>Status</th><th>Auto</th><th>Manual</th><th>Final</th></tr></thead>
@@ -730,6 +734,153 @@ pages.get("/app/pin-resets", async (c) => {
   `));
 });
 
+// Rapor cetak per siswa: ringkasan nilai + tanda tangan + QR verifikasi.
+// Dibuka di browser → Ctrl/Cmd+P → Save as PDF (CSS @media print disiapkan).
+pages.get("/app/students/:id/report", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const studentId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const info = await tx`
+      select s.name, s.username, s.nisn, s.gender, c.name as class_name,
+             sch.name as school_name, sch.level
+      from students s left join classes c on c.id = s.class_id
+      join schools sch on sch.id = s.school_id
+      where s.id = ${studentId}`;
+    if (info.length === 0) return null;
+    const scores = await tx`
+      select e.title, e.kind, es.finished_at, sc.final_score, sc.auto_score, sc.manual_score
+      from exam_sessions es
+      join exams e on e.id = es.exam_id
+      left join scores sc on sc.session_id = es.id
+      where es.student_id = ${studentId} and es.status = 'submitted'
+      order by es.finished_at`;
+    const summary = await tx`
+      select coalesce(cat.name, '(tanpa kategori)') as category,
+             count(*)::int as total,
+             sum(case
+               when q.type = 'pg'          and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'benar_salah' and (k.answer_key->>'index')::int = (a.answer->>'index')::int then 1
+               when q.type = 'isian'       and exists(
+                 select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                 where lower(trim(x.value)) = lower(trim(a.answer->>'text'))) then 1
+               when q.type = 'uraian' and (a.answer->>'manual_score')::numeric >= q.points * 0.5 then 1
+               else 0 end)::int as benar
+      from answers a
+      join questions q on q.id = a.question_id
+      join exam_sessions es on es.id = a.session_id
+      left join question_keys k on k.question_id = q.id
+      left join categories cat on cat.id = q.category_id
+      where es.student_id = ${studentId} and es.status = 'submitted'
+      group by cat.name order by cat.name`;
+    return { info: info[0], scores, summary };
+  });
+  if (!data) return c.notFound();
+  const info = data.info as {
+    name: string; username: string; nisn: string | null; gender: "L"|"P"|null;
+    class_name: string | null; school_name: string; level: string;
+  };
+  type S = { title: string; kind: string; finished_at: string; final_score: string | null;
+    auto_score: string | null; manual_score: string | null };
+  type C = { category: string; total: number; benar: number };
+  const scores = data.scores as unknown as S[];
+  const summary = data.summary as unknown as C[];
+  const avg = scores.length
+    ? (scores.reduce((a, b) => a + Number(b.final_score ?? 0), 0) / scores.length).toFixed(2)
+    : "-";
+  const scoreRows = scores.map((r, i) => `<tr>
+    <td>${i + 1}</td><td>${esc(r.title)}</td><td>${esc(r.kind)}</td>
+    <td>${new Date(r.finished_at).toLocaleDateString("id-ID")}</td>
+    <td style="text-align:right">${r.final_score ?? "-"}</td>
+  </tr>`).join("") || `<tr><td colspan="5" class="muted">Belum ada ujian.</td></tr>`;
+  const catRows = summary.map((r) => {
+    const pct = r.total ? Math.round((r.benar / r.total) * 100) : 0;
+    return `<tr><td>${esc(r.category)}</td><td>${r.benar}/${r.total}</td><td>${pct}%</td></tr>`;
+  }).join("") || `<tr><td colspan="3" class="muted">Belum ada data jawaban.</td></tr>`;
+
+  // Build QR as a <canvas>-fallback-free SVG (minimal manual encoding). Here
+  // just render a short identifier box — opsional. Kalau mau QR real,
+  // integrasikan library di layer frontend; untuk MVP cukup kode verifikasi.
+  const verifCode = `${studentId.slice(0, 8).toUpperCase()}-${(Date.now() % 100000).toString().padStart(5, "0")}`;
+
+  return c.html(`<!doctype html><html lang="id"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rapor — ${esc(info.name)}</title>
+<style>
+  :root { --fg:#000; --mut:#555; --bd:#999; --accent:#2563eb; }
+  * { box-sizing: border-box; }
+  body { font: 13px/1.4 system-ui, sans-serif; color: var(--fg); background: #fff; margin: 0; }
+  main { max-width: 800px; margin: 24px auto; padding: 24px; background: #fff; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 16px 0 6px; border-bottom: 2px solid var(--fg); padding-bottom: 2px; }
+  table { width:100%; border-collapse: collapse; margin: 4px 0; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid #ddd; text-align: left; font-size: 12px; }
+  th { background: #f3f4f6; font-weight: 600; }
+  .head { display:flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+  .meta td { padding: 2px 6px; border: none; font-size: 12px; }
+  .meta td:first-child { color: var(--mut); width: 110px; }
+  .sig { display:flex; justify-content: flex-end; margin-top: 32px; }
+  .sig-box { width: 240px; text-align: center; font-size: 12px; }
+  .sig-line { border-bottom: 1px solid #000; margin-top: 56px; }
+  .foot { margin-top: 24px; font-size: 11px; color: var(--mut); }
+  .verif { font-family: monospace; font-size: 11px; letter-spacing: 1px; }
+  .no-print { padding: 10px 0; border-bottom: 1px dashed #ddd; margin-bottom: 10px; }
+  button { padding: 8px 14px; background: var(--accent); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  @media print {
+    body { background: #fff; }
+    main { max-width: none; margin: 0; padding: 10mm; }
+    .no-print { display: none; }
+    @page { size: A4; margin: 15mm; }
+  }
+</style></head><body><main>
+  <div class="no-print">
+    <button onclick="window.print()">🖨 Cetak / Simpan sebagai PDF</button>
+    <a href="/app/students/${esc(studentId)}/analytics" style="margin-left:8px">← Analitik</a>
+  </div>
+  <div class="head">
+    <div>
+      <h1>Rapor Hasil Ujian</h1>
+      <div style="font-size:12px;color:var(--mut)">${esc(info.school_name)} · ${esc(info.level)}</div>
+    </div>
+    <div style="text-align:right;font-size:12px">
+      <div>${new Date().toLocaleDateString("id-ID", { dateStyle: "long" })}</div>
+      <div class="verif">#${esc(verifCode)}</div>
+    </div>
+  </div>
+  <h2>Identitas Siswa</h2>
+  <table class="meta">
+    <tr><td>Nama</td><td><b>${esc(info.name)}</b></td></tr>
+    <tr><td>Username</td><td><code>${esc(info.username)}</code></td></tr>
+    <tr><td>NISN</td><td>${esc(info.nisn ?? "-")}</td></tr>
+    <tr><td>Kelas</td><td>${esc(info.class_name ?? "-")}</td></tr>
+    <tr><td>Jenis Kelamin</td><td>${info.gender === "L" ? "Laki-laki" : info.gender === "P" ? "Perempuan" : "-"}</td></tr>
+  </table>
+  <h2>Nilai Ujian</h2>
+  <table>
+    <thead><tr><th>No</th><th>Judul</th><th>Jenis</th><th>Tanggal</th><th style="text-align:right">Nilai</th></tr></thead>
+    <tbody>${scoreRows}</tbody>
+    <tfoot><tr><th colspan="4" style="text-align:right">Rata-rata</th><th style="text-align:right">${avg}</th></tr></tfoot>
+  </table>
+  <h2>Pencapaian per Kategori</h2>
+  <table>
+    <thead><tr><th>Kategori</th><th>Benar / Total</th><th>Persen</th></tr></thead>
+    <tbody>${catRows}</tbody>
+  </table>
+  <div class="sig">
+    <div class="sig-box">
+      <div>Mengetahui, Guru Mata Pelajaran</div>
+      <div class="sig-line"></div>
+      <div style="margin-top:4px">( ______________________ )</div>
+    </div>
+  </div>
+  <div class="foot">
+    Dokumen ini dicetak otomatis dari cbtgas pada ${new Date().toLocaleString("id-ID")}.
+    Kode verifikasi: <span class="verif">${esc(verifCode)}</span>.
+  </div>
+</main></body></html>`);
+});
+
 // Analitik seorang siswa: tren nilai + persen benar per kategori.
 pages.get("/app/students/:id/analytics", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
@@ -812,7 +963,7 @@ pages.get("/app/students/:id/analytics", async (c) => {
   return c.html(base(`Analitik — ${info.name}`, `
     <div class="card">
       <h1>${esc(info.name)}</h1>
-      <p class="sub"><code>${esc(info.username)}</code> · <a href="/app">← Dashboard</a></p>
+      <p class="sub"><code>${esc(info.username)}</code> · <a href="/app">← Dashboard</a> · <a href="/app/students/${esc(studentId)}/report">📄 Rapor cetak</a></p>
     </div>
     <div class="card">
       <h2>Tren nilai akhir</h2>
@@ -915,6 +1066,123 @@ pages.get("/app/users", async (c) => {
           headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ role: sel.value }) });
         if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || r.status); location.reload(); }
       });
+    </script>
+  `));
+});
+
+// Bacaan untuk reading comprehension — satu bacaan dapat dirujuk banyak soal.
+pages.get("/app/passages", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
+    tx`select p.id, p.title, p.body,
+              (select count(*) from questions q where q.passage_id = p.id) as qc
+       from passages p order by p.title nulls last`,
+  );
+  type P = { id: string; title: string | null; body: string; qc: string };
+  const list = (rows as unknown as P[]).map((p) => `<tr>
+    <td><b>${esc(p.title ?? "(tanpa judul)")}</b><br><span class="muted">${esc(p.body.slice(0, 140))}${p.body.length > 140 ? "…" : ""}</span></td>
+    <td>${p.qc} soal</td>
+    <td style="text-align:right"><button class="danger" data-del="${esc(p.id)}">Hapus</button></td>
+  </tr>`).join("") || `<tr><td colspan="3" class="muted">Belum ada bacaan.</td></tr>`;
+  return c.html(base("Bacaan", `
+    <div class="card">
+      <h1>Bacaan (reading comprehension)</h1>
+      <p class="sub"><a href="/app/questions">← Bank soal</a></p>
+      <form id="fp">
+        <label>Judul (opsional)</label>
+        <input name="title" placeholder="Kutipan sejarah proklamasi">
+        <label>Teks bacaan</label>
+        <textarea name="body" required rows="6" style="width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit"></textarea>
+        <div class="row"><button class="primary" type="submit">Simpan bacaan</button></div>
+        <p class="err" id="err" hidden></p>
+      </form>
+    </div>
+    <div class="card">
+      <table><thead><tr><th>Bacaan</th><th>Soal</th><th></th></tr></thead>
+        <tbody id="tb">${list}</tbody></table>
+    </div>
+    <script>
+      document.getElementById('fp').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = document.getElementById('err'); err.hidden = true;
+        const d = Object.fromEntries(new FormData(e.target));
+        const r = await fetch('/api/passages', { method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type':'application/json' }, body: JSON.stringify(d) });
+        if (r.ok) location.reload();
+        else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP '+r.status; err.hidden = false; }
+      });
+      document.getElementById('tb').addEventListener('click', async (e) => {
+        const id = e.target.dataset.del; if (!id) return;
+        if (!confirm('Hapus bacaan? Soal yang pakai bacaan ini akan jadi tanpa bacaan.')) return;
+        const r = await fetch('/api/passages/' + id, { method:'DELETE', credentials:'same-origin' });
+        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+      });
+    </script>
+  `));
+});
+
+// Live monitoring untuk guru/admin: refresh otomatis tiap 3 detik.
+pages.get("/app/exams/:id/live", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const examId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const ex = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
+    tx`select title from exams where id = ${examId}`,
+  );
+  if ((ex as unknown as unknown[]).length === 0) return c.notFound();
+  const title = (ex[0] as { title: string }).title;
+  return c.html(base(`Live — ${title}`, `
+    <div class="card">
+      <h1>Live monitoring</h1>
+      <p class="sub">${esc(title)} · <a href="/app/exams/${esc(examId)}">← Detail ujian</a> · <span id="t" class="muted"></span></p>
+    </div>
+    <div class="card">
+      <table style="width:100%; border-collapse:collapse">
+        <thead><tr><th>Siswa</th><th>Status</th><th>Kemajuan</th><th>Pelanggaran</th><th>Sinyal</th></tr></thead>
+        <tbody id="tb"><tr><td colspan="5" class="muted">Memuat…</td></tr></tbody>
+      </table>
+    </div>
+    <script>
+      const EID = ${JSON.stringify(examId)};
+      const tb = document.getElementById('tb');
+      const t = document.getElementById('t');
+      function timeAgo(iso) {
+        if (!iso) return '—';
+        const s = Math.floor((Date.now() - new Date(iso).getTime())/1000);
+        if (s < 60) return s + ' dtk lalu';
+        if (s < 3600) return Math.floor(s/60) + ' mnt lalu';
+        return Math.floor(s/3600) + ' jam lalu';
+      }
+      function dot(iso) {
+        if (!iso) return '<span style="color:var(--mut)">○</span>';
+        const s = (Date.now() - new Date(iso).getTime())/1000;
+        const color = s < 30 ? 'var(--ok,#16a34a)' : (s < 120 ? '#eab308' : 'var(--danger)');
+        return '<span style="color:' + color + '">●</span>';
+      }
+      async function tick() {
+        try {
+          const r = await fetch('/api/exams/' + EID + '/live', { credentials:'same-origin' });
+          if (!r.ok) throw new Error(r.status);
+          const d = await r.json();
+          t.textContent = 'Terakhir diperbarui ' + new Date().toLocaleTimeString('id-ID');
+          if (d.length === 0) { tb.innerHTML = '<tr><td colspan="5" class="muted">Belum ada peserta.</td></tr>'; return; }
+          tb.innerHTML = d.map((r) => {
+            const pct = r.total > 0 ? Math.round(r.answered * 100 / r.total) : 0;
+            const vio = r.violation_count ? '<span style="color:var(--danger)"><b>' + r.violation_count + '</b></span>' : '0';
+            const bar = '<div style="background:var(--bg);border:1px solid var(--bd);border-radius:4px;height:8px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:#2563eb"></div></div>';
+            return '<tr><td><b>' + escapeHtml(r.student_name) + '</b><br><span class="muted">' + escapeHtml(r.class_name || '-') + '</span></td>'
+              + '<td>' + escapeHtml(r.status) + '</td>'
+              + '<td>' + r.answered + '/' + r.total + ' (' + pct + '%)' + bar + '</td>'
+              + '<td>' + vio + '</td>'
+              + '<td>' + dot(r.last_seen_at) + ' ' + timeAgo(r.last_seen_at) + '</td></tr>';
+          }).join('');
+        } catch (e) { t.textContent = 'Gagal memuat: ' + e; }
+      }
+      function escapeHtml(s){return (s||'').replace(/[&<>\"']/g,(ch)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]);}
+      tick(); setInterval(tick, 3000);
     </script>
   `));
 });
@@ -1046,7 +1314,7 @@ pages.get("/app/questions", async (c) => {
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const catFilter = c.req.query("category") ?? "";
-  const [qs, cats] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+  const [qs, cats, passages] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
     const qsRows = catFilter
       ? await tx`select q.id, q.type, q.content, q.points, q.category_id, k.answer_key, k.rubric,
                         cat.name as category_name
@@ -1060,7 +1328,8 @@ pages.get("/app/questions", async (c) => {
                  left join categories cat on cat.id = q.category_id
                  order by q.created_at desc`;
     const catsRows = await tx`select id, name from categories order by name`;
-    return [qsRows, catsRows] as const;
+    const passagesRows = await tx`select id, title from passages order by title nulls last`;
+    return [qsRows, catsRows, passagesRows] as const;
   });
   type Q = {
     id: string; type: string; points: string;
@@ -1072,6 +1341,9 @@ pages.get("/app/questions", async (c) => {
   const catList = cats as unknown as Cat[];
   const catOpts = catList.map((cl) => `<option value="${esc(cl.id)}" ${cl.id === catFilter ? "selected" : ""}>${esc(cl.name)}</option>`).join("");
   const catOptsForm = catList.map((cl) => `<option value="${esc(cl.id)}">${esc(cl.name)}</option>`).join("");
+  type Pass = { id: string; title: string | null };
+  const passList = passages as unknown as Pass[];
+  const passOptsForm = passList.map((p) => `<option value="${esc(p.id)}">${esc(p.title ?? "(tanpa judul)")}</option>`).join("");
   const typeLabel: Record<string, string> = { pg: "Pil. ganda", benar_salah: "Benar/Salah", isian: "Isian", uraian: "Uraian" };
   const list = (qs as unknown as Q[]).map((q) => {
     let keyInfo = "";
@@ -1097,10 +1369,12 @@ pages.get("/app/questions", async (c) => {
   return c.html(base("Bank soal", `
     <div class="card">
       <h1>Bank soal</h1>
-      <p class="sub"><a href="/app/exams">← Ujian</a> · <a href="/app/categories">Kategori</a></p>
+      <p class="sub"><a href="/app/exams">← Ujian</a> · <a href="/app/categories">Kategori</a> · <a href="/app/passages">Bacaan</a></p>
       <form id="fq">
         <label>Kategori <span class="muted">(opsional, kelola di /app/categories)</span></label>
         <select name="category_id"><option value="">— tanpa kategori —</option>${catOptsForm}</select>
+        <label>Bacaan <span class="muted">(opsional; untuk reading comprehension)</span></label>
+        <select name="passage_id"><option value="">— tanpa bacaan —</option>${passOptsForm}</select>
         <label>Tipe soal</label>
         <select name="type" id="qtype">
           <option value="pg">Pilihan ganda</option>
@@ -1210,7 +1484,8 @@ pages.get("/app/questions", async (c) => {
         const type = $$('#qtype').value;
         const points = +e.target.points.value;
         const category_id = e.target.category_id.value || null;
-        const payload = { type, text, points, category_id };
+        const passage_id = e.target.passage_id.value || null;
+        const payload = { type, text, points, category_id, passage_id };
         if (imageData) payload.image = imageData;
         if (type === 'pg') {
           const opts = [...e.target.querySelectorAll('input[name=opt]')].map((x) => x.value.trim()).filter(Boolean);

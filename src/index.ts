@@ -141,11 +141,17 @@ async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed
                                         where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
                                       ) then q.points else 0 end
               else 0 end), 0) as got, coalesce(sum(q.points), 0) as total
-          from exam_questions eq
-          join questions q on q.id = eq.question_id
+          from jsonb_array_elements_text(coalesce(
+            (select case
+                      when jsonb_typeof(question_order) = 'object' then question_order->'order'
+                      when jsonb_typeof(question_order) = 'array'  then question_order
+                      else null end
+             from exam_sessions where id = ${row.id}),
+            (select to_jsonb(array_agg(question_id)) from exam_questions where exam_id = ${row.exam_id})
+          )) as qid
+          join questions q on q.id = qid.value::uuid
           left join question_keys k on k.question_id = q.id
-          left join answers a on a.session_id = ${row.id} and a.question_id = q.id
-          where eq.exam_id = ${row.exam_id}`;
+          left join answers a on a.session_id = ${row.id} and a.question_id = q.id`;
         const sc = g[0] as { got: string; total: string };
         const total = parseFloat(sc.total); const got = parseFloat(sc.got);
         const auto = total > 0 ? (got / total) * 100 : 0;

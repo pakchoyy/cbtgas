@@ -436,8 +436,8 @@ student.post("/s/exams/:id/start", async (c) => {
     // perm memetakan posisi tampilan → indeks asli (shuffle_options).
     const qs = await tx`select question_id from exam_questions where exam_id = ${examId} order by position`;
     let order = (qs as unknown as Array<{ question_id: string }>).map((x) => x.question_id);
-    const ex = await tx`select shuffle_questions, shuffle_options from exams where id = ${examId}`;
-    const exRow = ex[0] as { shuffle_questions: boolean; shuffle_options: boolean };
+    const ex = await tx`select shuffle_questions, shuffle_options, questions_per_session from exams where id = ${examId}`;
+    const exRow = ex[0] as { shuffle_questions: boolean; shuffle_options: boolean; questions_per_session: number };
     const fy = <T>(arr: T[]): T[] => {
       const a = arr.slice();
       for (let i = a.length - 1; i > 0; i--) {
@@ -446,6 +446,11 @@ student.post("/s/exams/:id/start", async (c) => {
       }
       return a;
     };
+    // Random pool: ambil N soal acak terlebih dulu, lalu shuffle urutan bila perlu.
+    const perSession = exRow?.questions_per_session ?? 0;
+    if (perSession > 0 && perSession < order.length) {
+      order = fy(order).slice(0, perSession);
+    }
     if (exRow?.shuffle_questions) order = fy(order);
     const perms: Record<string, number[]> = {};
     if (exRow?.shuffle_options) {
@@ -497,11 +502,19 @@ student.get("/s/take/:sid", async (c) => {
       Array.isArray(qoRaw) ? { order: qoRaw as string[], perms: {} }
       : (qoRaw as { order: string[]; perms?: Record<string, number[]> });
     const order = qo.order; const perms = qo.perms ?? {};
-    // Load pertanyaan sesuai urutan (tanpa answer_key).
-    const qs = await tx`select id, type, content from questions where id in ${tx(order)}`;
-    const map = new Map<string, { type: string; content: { text: string; options?: string[] } }>();
-    for (const q of qs as unknown as Array<{ id: string; type: string; content: { text: string; options?: string[] } }>) {
-      map.set(q.id, { type: q.type, content: q.content });
+    // Load pertanyaan sesuai urutan (tanpa answer_key). Passage ikut dibawa.
+    const qs = await tx`
+      select q.id, q.type, q.content, q.passage_id, p.title as passage_title, p.body as passage_body
+      from questions q left join passages p on p.id = q.passage_id
+      where q.id in ${tx(order)}`;
+    const map = new Map<string, { type: string; content: { text: string; options?: string[] };
+                                   passage?: { id: string; title: string | null; body: string } }>();
+    for (const q of qs as unknown as Array<{ id: string; type: string; content: { text: string; options?: string[] };
+                                             passage_id: string | null; passage_title: string | null; passage_body: string | null }>) {
+      map.set(q.id, {
+        type: q.type, content: q.content,
+        passage: q.passage_id && q.passage_body ? { id: q.passage_id, title: q.passage_title, body: q.passage_body } : undefined,
+      });
     }
     // Terapkan permutasi opsi (jika ada) di sisi server supaya klien tidak
     // perlu tahu urutan asli — indeks yang dikirim balik ketika save sudah
@@ -513,7 +526,7 @@ student.get("/s/take/:sid", async (c) => {
       if (perm && q.content.options) {
         content = { ...q.content, options: perm.map((k) => q.content.options![k]) };
       }
-      return { id: qid, pos: i + 1, type: q.type, content, perm: perm ?? null };
+      return { id: qid, pos: i + 1, type: q.type, content, perm: perm ?? null, passage: q.passage ?? null };
     });
     // Jawaban sebelumnya. Jika soal pakai perm, remap index asli → index tampilan.
     const prev = await tx`select question_id, answer from answers where session_id = ${sessionId}`;
@@ -594,7 +607,13 @@ student.get("/s/take/:sid", async (c) => {
         const q = Q[i];
         const el = document.createElement('div'); el.className = 'q active';
         const tag = q.type === 'uraian' ? ' <span class="muted">(uraian — dinilai guru)</span>' : '';
-        el.innerHTML = '<p><b>Soal ' + (i+1) + ' / ' + Q.length + '</b>' + tag + '</p><p>' + escapeHtml(q.content.text) + '</p>';
+        let head = '';
+        if (q.passage) {
+          head = '<div style="padding:12px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);margin-bottom:12px">' +
+            (q.passage.title ? '<p style="margin:0 0 6px"><b>' + escapeHtml(q.passage.title) + '</b></p>' : '') +
+            '<p style="margin:0;white-space:pre-wrap">' + escapeHtml(q.passage.body) + '</p></div>';
+        }
+        el.innerHTML = head + '<p><b>Soal ' + (i+1) + ' / ' + Q.length + '</b>' + tag + '</p><p>' + escapeHtml(q.content.text) + '</p>';
         if (q.content.image) {
           const img = document.createElement('img');
           img.src = q.content.image;
@@ -687,6 +706,13 @@ student.get("/s/take/:sid", async (c) => {
           alert('Peringatan ('+kind+'). Pelanggaran: '+violations + (remain!==null?', sisa toleransi: '+remain:''));
         }
       }
+      // Heartbeat 15 dtk untuk live monitoring guru.
+      async function heartbeat() {
+        try { await fetch('/s/take/' + D.sessionId + '/ping', { method:'POST', credentials:'same-origin' }); } catch(_) {}
+        setTimeout(heartbeat, 15000);
+      }
+      heartbeat();
+
       document.addEventListener('visibilitychange', () => { if (document.hidden) report('visibility_hidden'); });
       window.addEventListener('blur', () => report('tab_blur'));
       document.addEventListener('contextmenu', (e) => { e.preventDefault(); report('contextmenu'); });
@@ -723,6 +749,20 @@ student.post("/s/take/:sid/answer", async (c) => {
        on conflict (session_id, question_id)
        do update set answer = coalesce(answers.answer, '{}'::jsonb) || ${ans as unknown as string},
                      updated_at = now()`,
+  );
+  return c.json({ ok: true });
+});
+
+// Heartbeat: klien ping tiap 15 detik, server update last_seen_at supaya
+// guru bisa melihat siapa yang online di /app/exams/:id/live.
+student.post("/s/take/:sid/ping", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.json({ error: "unauthorized" }, 401);
+  const sessionId = c.req.param("sid");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
+    tx`update exam_sessions set last_seen_at = now()
+       where id = ${sessionId} and student_id = ${stu.uid}`,
   );
   return c.json({ ok: true });
 });
@@ -778,9 +818,8 @@ student.post("/s/take/:sid/submit", async (c) => {
     if (s.length === 0) throw new Error("sesi tidak ditemukan");
     const row = s[0] as { id: string; exam_id: string; status: string };
     if (row.status === "submitted") return { ok: true, already: true };
-    // Hitung auto-score untuk tipe pg, benar_salah, isian. Uraian dibiarkan 0
-    // dulu, menunggu nilai manual dari guru (merubah scores.final_score lewat
-    // /api/sessions/:sid/manual-score).
+    // Hitung auto-score hanya untuk soal yang masuk sesi ini (dukung pool
+    // random). Uraian 0 dulu, menunggu nilai manual dari guru.
     const scored = await tx`
       select coalesce(sum(
         case q.type
@@ -793,11 +832,17 @@ student.post("/s/take/:sid/submit", async (c) => {
           else 0 end), 0) as got_auto,
              coalesce(sum(q.points), 0) as total,
              coalesce(sum(case when q.type = 'uraian' then q.points else 0 end), 0) as manual_pending
-      from exam_questions eq
-      join questions q on q.id = eq.question_id
+      from jsonb_array_elements_text(coalesce(
+        (select case
+                  when jsonb_typeof(question_order) = 'object' then question_order->'order'
+                  when jsonb_typeof(question_order) = 'array'  then question_order
+                  else null end
+         from exam_sessions where id = ${sessionId}),
+        (select to_jsonb(array_agg(question_id)) from exam_questions where exam_id = ${row.exam_id})
+      )) as qid
+      join questions q on q.id = qid.value::uuid
       left join question_keys k on k.question_id = q.id
-      left join answers a on a.session_id = ${sessionId} and a.question_id = q.id
-      where eq.exam_id = ${row.exam_id}`;
+      left join answers a on a.session_id = ${sessionId} and a.question_id = q.id`;
     const sc = scored[0] as { got_auto: string; total: string; manual_pending: string };
     const total = parseFloat(sc.total); const gotAuto = parseFloat(sc.got_auto);
     const manualPending = parseFloat(sc.manual_pending);
