@@ -4,6 +4,7 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 # Domain kustom (zona cbt-yuk.web.id ada di akun Cloudflare yang sama).
+workers_dev = true
 routes = [{ pattern = "cbt-yuk.web.id", custom_domain = true }]
 
 # Hyperdrive menunjuk ke Neon. Login pakai role cbt_login (NOBYPASSRLS,
