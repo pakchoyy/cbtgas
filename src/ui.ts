@@ -115,7 +115,7 @@ export const SHARED_CSS = `
     .stat:nth-child(-n+2) { border-top: none; }
     .stat:nth-child(even) { border-left: 1px solid var(--line); }
     .card { padding: 18px 16px; border-radius: 14px; }
-    td, th { padding-left: 8px; padding-right: 8px; }
+    td, th { padding-left: 8px; padding-right: 8px; white-space: nowrap; }
   }
 
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

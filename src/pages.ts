@@ -9,37 +9,55 @@ import { SHARED_CSS } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
-// Navigasi utama staf. Item "Alat" khusus admin; halamannya menjaga
-// hak akses sendiri, jadi aman ditampilkan ke semua staf.
-const NAV = [
-  ["/app", "Beranda"], ["/app/exams", "Ujian"], ["/app/exam-groups", "Rangkaian"],
-  ["/app/questions", "Bank soal"], ["/app/passages", "Bacaan"], ["/app/categories", "Kategori"],
-  ["/app/pin-resets", "Reset PIN"],
-] as const;
-const TOOLS = [
-  ["/app/users", "Staf"], ["/app/shared-banks", "Bank publik"], ["/app/bulk", "Operasi massal"],
-  ["/app/audit", "Audit log"], ["/app/restore", "Pulihkan backup"],
-] as const;
+// Navigasi staf dikelompokkan per pekerjaan. Grup "Admin" hanya untuk admin;
+// halamannya tetap menjaga hak akses sendiri.
+const NAV_GROUPS: Array<{ title: string; admin?: boolean; items: Array<[string, string, string]> }> = [
+  { title: "", items: [["/app", "Beranda", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"]] },
+  { title: "Ujian", items: [
+    ["/app/exams", "Ujian", "M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"],
+    ["/app/exam-groups", "Rangkaian", "M4 6h16M4 12h16M4 18h10"],
+  ] },
+  { title: "Soal", items: [
+    ["/app/questions", "Bank soal", "M5 4h11l3 3v13H5zM9 10h6M9 14h6"],
+    ["/app/passages", "Bacaan", "M4 5h7a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H4zM20 5h-7"],
+    ["/app/categories", "Kategori", "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"],
+  ] },
+  { title: "Siswa", items: [
+    ["/app/students", "Siswa & kelas", "M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 11a3 3 0 1 0 0-6M22 21v-1a5 5 0 0 0-4-4.9"],
+    ["/app/pin-resets", "Reset PIN", "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4"],
+  ] },
+  { title: "Admin", admin: true, items: [
+    ["/app/users", "Staf", "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"],
+    ["/app/shared-banks", "Bank publik", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"],
+    ["/app/bulk", "Operasi massal", "M4 7h16M4 12h16M4 17h16"],
+    ["/app/audit", "Audit log", "M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"],
+    ["/app/restore", "Backup & pulihkan", "M4 12a8 8 0 1 0 3-6.2M4 4v4h4"],
+  ] },
+];
+const icon = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 
-const topbar = () => `
-<header class="topbar">
-  <div class="topbar-in">
-    <a class="brand" href="/app" aria-label="cbtgas, beranda"><span class="brand-dot" aria-hidden="true">C</span>cbtgas</a>
-    <nav class="nav" aria-label="Utama">
-      ${NAV.map(([href, label]) => `<a href="${href}" data-i18n-src="${label}">${label}</a>`).join("")}
-      <details class="tools"><summary>Alat</summary>
-        <div class="tools-menu">${TOOLS.map(([href, label]) => `<a href="${href}">${label}</a>`).join("")}</div>
-      </details>
-    </nav>
-    <div class="top-actions">
-      <button type="button" class="ghost" id="toggleTheme" title="Ganti tema">Tema</button>
-      <button type="button" class="ghost" id="toggleLang" title="Ganti bahasa">ID/EN</button>
-      <form method="post" action="/auth/logout"><button type="submit" class="ghost" data-i18n-src="Keluar">Keluar</button></form>
-    </div>
+const sidebar = (role: string) => `
+<header class="mbar">
+  <button type="button" class="ghost" id="navOpen" aria-label="Buka menu" aria-controls="side" aria-expanded="false">${icon("M4 7h16M4 12h16M4 17h16")}</button>
+  <a class="brand" href="/app"><span class="brand-dot" aria-hidden="true">C</span>cbtgas</a>
+</header>
+<aside class="side" id="side">
+  <a class="brand" href="/app" aria-label="cbtgas, beranda"><span class="brand-dot" aria-hidden="true">C</span>cbtgas</a>
+  <nav class="nav" aria-label="Utama">
+    ${NAV_GROUPS.filter((g) => !g.admin || role === "admin").map((g) => `
+      ${g.title ? `<p class="nav-h">${g.title}</p>` : ""}
+      ${g.items.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span data-i18n-src="${label}">${label}</span></a>`).join("")}
+    `).join("")}
+  </nav>
+  <div class="side-foot">
+    <button type="button" class="ghost" id="toggleTheme">${icon("M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z")}<span>Tema</span></button>
+    <button type="button" class="ghost" id="toggleLang">${icon("M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18")}<span>ID / EN</span></button>
+    <form method="post" action="/auth/logout"><button type="submit" class="ghost">${icon("M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10")}<span data-i18n-src="Keluar">Keluar</span></button></form>
   </div>
-</header>`;
+</aside>
+<div class="scrim" id="scrim" hidden></div>`;
 
-const base = (title: string, body: string, opts: { nav?: boolean } = {}) => `<!doctype html>
+const base = (title: string, body: string, opts: { nav?: boolean; role?: string } = {}) => `<!doctype html>
 <html lang="id">
 <head>
 <meta charset="utf-8">
@@ -66,7 +84,7 @@ const base = (title: string, body: string, opts: { nav?: boolean } = {}) => `<!d
       'Keluar':'Logout', 'Kelola staf':'Manage staff', 'Audit log':'Audit log',
       'Reset PIN siswa':'Reset student PIN', 'Beranda':'Home', 'Ujian':'Exams',
       'Rangkaian':'Series', 'Bank soal':'Question bank', 'Bacaan':'Passages',
-      'Kategori':'Categories', 'Reset PIN':'PIN resets',
+      'Kategori':'Categories', 'Reset PIN':'PIN resets', 'Siswa & kelas':'Students & classes', 'Staf':'Staff', 'Bank publik':'Public banks', 'Operasi massal':'Bulk actions', 'Backup & pulihkan':'Backup & restore',
       'Daftar siswa':'Student list', 'Tambah siswa':'Add student',
       'Tambah kelas':'Add class', 'Kelas':'Classes', 'Siswa':'Students',
       'Download CSV':'Download CSV', 'Live monitoring':'Live monitoring',
@@ -85,43 +103,73 @@ const base = (title: string, body: string, opts: { nav?: boolean } = {}) => `<!d
   }
 </script>
 <style>${SHARED_CSS}
-  /* Staf app shell */
-  main { max-width: 1080px; margin: 0 auto; padding: 28px 20px 64px; }
+  /* Staf app shell: sidebar kiri, konten kanan */
+  body.app { padding-left: 248px; }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 32px 64px; }
   body.public main { max-width: 560px; padding-top: 8vh; }
-  .topbar { position: sticky; top: 0; z-index: 40; background: var(--ink); color: #fff; }
-  .topbar-in { max-width: 1080px; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; gap: 20px; min-height: 56px; }
-  .brand { display:inline-flex; align-items:center; gap:10px; color:#fff; text-decoration:none; font-weight:800; letter-spacing:-.01em; font-size:17px; flex:0 0 auto; }
-  .brand-dot { width:26px; height:26px; border-radius:50%; background:var(--pencil); color:var(--ink); display:grid; place-items:center; font-size:13px; font-weight:800; }
-  .nav { display:flex; align-items:center; gap:2px; flex:1; min-width:0; overflow-x:auto; scrollbar-width:none; }
-  .nav::-webkit-scrollbar { display:none; }
-  .nav a, .tools summary { color: rgba(255,255,255,.72); text-decoration:none; padding: 8px 12px; border-radius: 8px; font-size:14px; font-weight:500; white-space:nowrap; cursor:pointer; min-height:40px; display:inline-flex; align-items:center; }
-  .nav a:hover, .tools summary:hover { color:#fff; background: rgba(255,255,255,.08); }
-  .nav a[aria-current="page"] { color:#fff; background: rgba(255,255,255,.12); box-shadow: inset 0 -2px 0 var(--pencil); }
-  .tools { position: relative; }
-  .tools summary { list-style:none; }
-  .tools summary::-webkit-details-marker { display:none; }
-  .tools summary::after { content:""; width:6px; height:6px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform: rotate(45deg) translate(-2px,-2px); margin-left:8px; }
-  .tools-menu { position: fixed; margin-top: 6px; background: var(--surface); color: var(--fg); border:1px solid var(--line); border-radius: 12px; padding: 6px; min-width: 200px; box-shadow: 0 16px 40px rgba(20,33,61,.18); }
-  .tools-menu a { display:flex; color: var(--fg); padding: 10px 12px; border-radius:8px; }
-  .tools-menu a:hover { background: var(--paper); color: var(--fg); }
-  .top-actions { display:flex; gap:4px; align-items:center; flex:0 0 auto; }
-  .top-actions form { margin:0; }
-  .top-actions .ghost { color: rgba(255,255,255,.8); border-color: transparent; background: transparent; padding: 8px 10px; font-size:13px; }
-  .top-actions .ghost:hover { background: rgba(255,255,255,.1); color:#fff; }
+  .side { position: fixed; inset: 0 auto 0 0; width: 248px; background: var(--ink); color: #fff; display: flex; flex-direction: column;
+          padding: 18px 12px; z-index: 60; overflow-y: auto; }
+  .side .brand { padding: 4px 10px 18px; }
+  .brand { display:inline-flex; align-items:center; gap:10px; color:#fff; text-decoration:none; font-weight:800; letter-spacing:-.01em; font-size:17px; }
+  .brand-dot { width:28px; height:28px; border-radius:50%; background:var(--pencil); color:var(--ink); display:grid; place-items:center; font-size:13px; font-weight:800; }
+  .nav { display:flex; flex-direction:column; gap:2px; flex:1; }
+  .nav-h { margin: 18px 10px 6px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.45); }
+  .nav a, .side-foot .ghost { display:flex; align-items:center; gap:12px; min-height:42px; padding: 8px 10px; border-radius: 10px;
+          color: rgba(255,255,255,.78); text-decoration:none; font-size:14px; font-weight:500; width:100%; justify-content:flex-start; }
+  .nav svg, .side-foot svg, .mbar svg { width:19px; height:19px; flex:0 0 auto; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .nav a:hover, .side-foot .ghost:hover { color:#fff; background: rgba(255,255,255,.08); }
+  .nav a[aria-current="page"] { color: var(--ink); background: var(--pencil); font-weight: 700; }
+  .side-foot { border-top: 1px solid rgba(255,255,255,.12); padding-top: 10px; margin-top: 16px; display:flex; flex-direction:column; gap:2px; }
+  .side-foot form { margin:0; }
+  .side-foot .ghost { border: none; background: transparent; }
+  .mbar { display:none; }
+  .scrim { position: fixed; inset: 0; background: rgba(11,18,34,.5); z-index: 55; }
   footer { color:var(--mut); font-size:12px; text-align:center; margin-top:40px; }
   #installCard { position:fixed; bottom:16px; right:16px; max-width:300px; margin:0; box-shadow: 0 16px 40px rgba(20,33,61,.22); z-index: 50; }
-  @media (max-width: 760px) {
-    .topbar-in { flex-wrap: wrap; gap: 0 12px; padding: 8px 12px 0; }
-    .brand { min-height: 44px; }
-    .top-actions { margin-left:auto; }
-    .nav { order: 3; flex-basis: 100%; margin: 0 -12px; padding: 0 8px 6px; }
-    main { padding: 20px 14px 56px; }
+
+  /* Kepala halaman + tombol tambah yang membuka formulir */
+  .page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap; margin: 0 0 20px; }
+  .page-head h1 { margin:0; }
+  .page-head p { margin: 4px 0 0; color: var(--mut); }
+  details.add > summary { list-style:none; display:inline-flex; }
+  details.add > summary::-webkit-details-marker { display:none; }
+  details.add[open] > summary { display:none; }
+  details.add .card { margin-top: 0; }
+
+  /* Panduan langkah awal */
+  .steps { list-style:none; margin:0; padding:0; counter-reset: st; }
+  .steps li { display:flex; align-items:center; gap:14px; padding: 14px 0; border-top: 1px solid var(--line); }
+  .steps li:first-child { border-top: none; }
+  .steps .dot { width:30px; height:30px; flex:0 0 auto; border-radius:50%; border: 2px solid var(--line); display:grid; place-items:center; font-weight:800; font-size:13px; color: var(--mut); }
+  .steps li.done .dot { background: var(--ok); border-color: var(--ok); color:#fff; }
+  .steps li.next .dot { border-color: var(--ink); color: var(--fg); box-shadow: 0 0 0 4px color-mix(in srgb, var(--pencil) 45%, transparent); }
+  .steps .txt { flex:1; min-width:0; }
+  .steps .txt b { display:block; }
+  .steps .txt span { color: var(--mut); font-size: 13px; }
+  .steps li.done .txt b { color: var(--mut); text-decoration: line-through; text-decoration-color: var(--line); }
+  .progress { height: 8px; border-radius: 99px; background: var(--paper); border: 1px solid var(--line); overflow:hidden; margin-top: 8px; }
+  .progress i { display:block; height:100%; background: var(--ok); }
+  .live-row { display:flex; align-items:center; gap:12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .live-row:first-of-type { border-top: none; }
+  .live-row .txt { flex:1; min-width: 0; }
+  .live-dot { width:10px; height:10px; border-radius:50%; background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 20%, transparent); flex:0 0 auto; }
+  .empty { text-align:center; padding: 28px 12px; color: var(--mut); }
+  .two { display:grid; grid-template-columns: 1.15fr 1fr; gap: 16px; align-items:start; }
+
+  @media (max-width: 900px) {
+    body.app { padding-left: 0; }
+    .mbar { display:flex; align-items:center; gap:8px; position: sticky; top:0; z-index: 40; background: var(--ink); padding: 6px 10px; min-height: 56px; }
+    .mbar .ghost { color:#fff; background:transparent; border:none; min-width:44px; min-height:44px; padding:0; }
+    .side { transform: translateX(-100%); transition: transform .2s; box-shadow: 0 0 40px rgba(0,0,0,.3); }
+    body.nav-open .side { transform: none; }
+    main { padding: 20px 16px 56px; }
     body.public main { padding-top: 32px; }
+    .two { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body class="${opts.nav === false ? "public" : "app"}">
-${opts.nav === false ? "" : topbar()}
+${opts.nav === false ? "" : sidebar(opts.role ?? "")}
 <main>
 ${body}
 <footer>cbtgas · CBT sekolah</footer>
@@ -140,8 +188,12 @@ ${body}
       if (p === h || (h !== '/app' && p.startsWith(h))) { if (!best || h.length > best.getAttribute('href').length) best = a; }
     });
     if (best) best.setAttribute('aria-current', 'page');
-    const tools = document.querySelector('.tools');
-    document.addEventListener('click', (e) => { if (tools && !tools.contains(e.target)) tools.open = false; });
+    // Menu laci di HP.
+    const openBtn = document.getElementById('navOpen'), scrim = document.getElementById('scrim');
+    const setNav = (on) => { document.body.classList.toggle('nav-open', on); if (scrim) scrim.hidden = !on; openBtn?.setAttribute('aria-expanded', String(on)); };
+    openBtn?.addEventListener('click', () => setNav(true));
+    scrim?.addEventListener('click', () => setNav(false));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setNav(false); });
   })();
   // Tema: sistem terang gelap sistem. Bahasa: id ↔ en.
   document.getElementById('toggleTheme')?.addEventListener('click', () => {
@@ -282,6 +334,98 @@ pages.get("/register", (c) => {
 pages.get("/app", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const [school, n, live, recent] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const sc = await tx`select name, code, level from schools where id = ${sess.sid}`;
+    const cnt = await tx`select
+        (select count(*) from classes)::int as classes,
+        (select count(*) from students where active)::int as students,
+        (select count(*) from questions)::int as questions,
+        (select count(*) from exams)::int as exams,
+        (select count(*) from exams e where exists (select 1 from exam_classes ec where ec.exam_id = e.id)
+           and e.status in ('open','scheduled','closed'))::int as published,
+        (select count(*) from exam_sessions where status = 'active' and last_seen_at > now() - interval '2 minutes')::int as online,
+        (select count(*) from exam_sessions where status = 'submitted' and started_at > now() - interval '7 days')::int as week_submits,
+        (select coalesce(round(avg(final_score)::numeric, 1), 0) from scores) as avg_score`;
+    const lv = await tx`select e.id, e.title, e.ends_at,
+        (select count(*) from exam_sessions s where s.exam_id = e.id and s.status = 'active')::int as working,
+        (select count(*) from exam_sessions s where s.exam_id = e.id and s.status in ('submitted','expired'))::int as done
+      from exams e where e.status = 'open' order by e.ends_at nulls last, e.title limit 6`;
+    const rc = await tx`select id, title, status, starts_at from exams
+      where status in ('draft','scheduled') order by coalesce(starts_at, created_at) limit 4`;
+    return [sc[0] as { name: string; code: string; level: string } | undefined, cnt[0], lv, rc] as const;
+  });
+  const k = n as { classes: number; students: number; questions: number; exams: number; published: number;
+    online: number; week_submits: number; avg_score: string };
+  const steps: Array<[boolean, string, string, string, string]> = [
+    [k.classes > 0, "Buat kelas", "Misalnya X-IPA-1. Siswa dan ujian dikelompokkan per kelas.", "/app/students", "Buat kelas"],
+    [k.students > 0, "Masukkan siswa", "Satu per satu atau sekaligus lewat file CSV. Siswa masuk pakai username + PIN.", "/app/students", "Tambah siswa"],
+    [k.questions > 0, "Tulis soal", "Pilihan ganda, isian, uraian, menjodohkan, dan lainnya.", "/app/questions", "Buka bank soal"],
+    [k.published > 0, "Buat & jadwalkan ujian", "Pilih soal, kelas peserta, durasi, lalu buka ujiannya.", "/app/exams", "Buat ujian"],
+  ];
+  const doneCount = steps.filter((x) => x[0]).length;
+  const nextIdx = steps.findIndex((x) => !x[0]);
+  const stepList = steps.map(([ok, title, desc, href, cta], i) => `
+    <li class="${ok ? "done" : i === nextIdx ? "next" : ""}">
+      <span class="dot">${ok ? "✓" : i + 1}</span>
+      <span class="txt"><b>${title}</b><span>${desc}</span></span>
+      ${ok ? "" : `<a class="btn ${i === nextIdx ? "primary" : ""}" href="${href}">${cta}</a>`}
+    </li>`).join("");
+
+  type L = { id: string; title: string; ends_at: string | null; working: number; done: number };
+  const liveRows = (live as unknown as L[]).map((e) => `
+    <div class="live-row">
+      <span class="live-dot" aria-hidden="true"></span>
+      <span class="txt"><b>${esc(e.title)}</b><br><span class="muted">${e.working} sedang mengerjakan · ${e.done} selesai${e.ends_at ? ` · tutup ${new Date(e.ends_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" })}` : ""}</span></span>
+      <a class="btn" href="/app/exams/${esc(e.id)}/live">Pantau</a>
+    </div>`).join("") || `<div class="empty">Belum ada ujian yang sedang dibuka.<br><a class="btn" style="margin-top:12px" href="/app/exams">Lihat semua ujian</a></div>`;
+
+  type R = { id: string; title: string; status: string; starts_at: string | null };
+  const upcoming = (recent as unknown as R[]).map((e) => `
+    <div class="live-row"><span class="txt"><b>${esc(e.title)}</b><br><span class="muted">${e.status === "draft" ? "Draf, belum dijadwalkan" : `Dibuka ${e.starts_at ? new Date(e.starts_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }) : ""}`}</span></span>
+    <a class="btn" href="/app/exams/${esc(e.id)}">Atur</a></div>`).join("");
+
+  return c.html(base("Beranda", `
+    <div class="page-head">
+      <div><h1>${esc(school?.name ?? "Sekolah")}</h1>
+      <p>Kode sekolah untuk siswa: <code>${esc(school?.code ?? "")}</code></p></div>
+      <a class="btn primary" href="/app/exams">+ Buat ujian</a>
+    </div>
+
+    ${doneCount < steps.length ? `
+    <div class="card">
+      <h2 style="margin-bottom:2px">Mulai di sini</h2>
+      <p class="muted" style="margin:0">${doneCount} dari ${steps.length} langkah selesai. Ikuti urutannya; setiap langkah tercentang otomatis.</p>
+      <div class="progress"><i style="width:${(doneCount / steps.length) * 100}%"></i></div>
+      <ol class="steps" style="margin-top:8px">${stepList}</ol>
+    </div>` : ""}
+
+    <div class="card stats">
+      <div class="stat live"><b>${k.online}</b><span>Sedang mengerjakan</span></div>
+      <div class="stat"><b>${(live as unknown as L[]).length}</b><span>Ujian dibuka</span></div>
+      <div class="stat"><b>${k.week_submits}</b><span>Dikumpulkan 7 hari</span></div>
+      <div class="stat"><b>${k.avg_score}</b><span>Rata-rata nilai</span></div>
+      <div class="stat"><b>${k.students}</b><span>Siswa aktif</span></div>
+    </div>
+
+    <div class="two">
+      <div class="card"><h2>Sedang berjalan</h2>${liveRows}</div>
+      <div class="card">
+        <h2>Akan datang</h2>
+        ${upcoming || `<p class="muted" style="margin:0">Tidak ada draf atau ujian terjadwal.</p>`}
+        <h2 style="margin-top:22px">Unduh</h2>
+        <div class="row" style="margin-top:0">
+          <a class="btn" href="/api/reports/scores.csv">Rekap nilai (CSV)</a>
+          ${sess.role === "admin" ? `<a class="btn" href="/api/reports/backup.json">Backup data</a>` : ""}
+        </div>
+      </div>
+    </div>
+  `, { role: sess.role }));
+});
+
+pages.get("/app/students", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  if (!sess) return c.redirect("/");
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [school, classes, students, overview] = await withTenant(
@@ -333,31 +477,29 @@ pages.get("/app", async (c) => {
     </tr>`).join("") || `<tr><td colspan="6" class="muted">Belum ada siswa.</td></tr>`;
 
   const ov = overview as { students: string; open_exams: string; online: string; week_submits: string; avg_score: string };
-  return c.html(base("Beranda", `
-    <header style="margin: 4px 0 20px">
-      <h1>${esc(school?.name ?? "Sekolah")}</h1>
-      <p class="sub" style="margin:0">${esc(school?.level ?? "")} · kode sekolah <code>${esc(school?.code ?? "")}</code> · masuk sebagai ${esc(sess.email)}</p>
-    </header>
-
-    <div class="card stats">
-      <div class="stat live"><b>${ov.online}</b><span>Sedang mengerjakan</span></div>
-      <div class="stat"><b>${ov.open_exams}</b><span>Ujian dibuka</span></div>
-      <div class="stat"><b>${ov.week_submits}</b><span>Dikumpulkan 7 hari</span></div>
-      <div class="stat"><b>${ov.avg_score}</b><span>Rata-rata nilai</span></div>
-      <div class="stat"><b>${ov.students}</b><span>Siswa aktif</span></div>
+  return c.html(base("Siswa & kelas", `
+    <div class="page-head">
+      <div><h1>Siswa & kelas</h1><p>${studentList.length} siswa di ${classList.length} kelas. Buat kelas dulu, lalu masukkan siswanya.</p></div>
+      <div class="row" style="margin:0">
+        <button type="button" id="btnImport">Import CSV</button>
+        <input type="file" id="fileCsv" accept=".csv,text/csv" hidden>
+      </div>
     </div>
 
     <div class="card">
-      <h2>Kelas</h2>
-      <form id="fcls" class="inline">
-        <div class="grid">
-          <div><label>Nama kelas</label><input name="name" required placeholder="X-IPA-1"></div>
-          <div><label>Tingkat</label><input name="grade" type="number" min="1" max="12" placeholder="10"></div>
-          <div><label>Tahun ajar</label><input name="year" required placeholder="2025/2026"></div>
-        </div>
-        <div class="row"><button class="primary" type="submit">Tambah kelas</button></div>
-        <p class="err" id="errcls" hidden></p>
-      </form>
+      <div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">Kelas</h2></div>
+      <details class="add" ${classList.length ? "" : "open"}>
+        <summary class="btn primary">+ Tambah kelas</summary>
+        <form id="fcls" class="inline">
+          <div class="grid">
+            <div><label>Nama kelas</label><input name="name" required placeholder="X-IPA-1"></div>
+            <div><label>Tingkat</label><input name="grade" type="number" min="1" max="12" placeholder="10"></div>
+            <div><label>Tahun ajar</label><input name="year" required placeholder="2025/2026"></div>
+          </div>
+          <div class="row"><button class="primary" type="submit">Simpan kelas</button></div>
+          <p class="err" id="errcls" hidden></p>
+        </form>
+      </details>
       <table>
         <thead><tr><th>Nama</th><th>Tingkat</th><th>Tahun</th><th></th></tr></thead>
         <tbody id="tbcls">${classRows}</tbody>
@@ -365,37 +507,32 @@ pages.get("/app", async (c) => {
     </div>
 
     <div class="card">
-      <h2>Siswa</h2>
-      <form id="fstu" class="inline">
-        <div class="grid">
-          <div><label>Nama lengkap</label><input name="name" required placeholder="Andi Saputra"></div>
-          <div><label>Username</label><input name="username" required placeholder="andi.saputra"></div>
-          <div>
-            <label>Kelas</label>
-            <select name="class_id"><option value="">— tidak dipilih —</option>${classOpts}</select>
+      <div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">Siswa</h2></div>
+      <details class="add" ${studentList.length || !classList.length ? "" : "open"}>
+        <summary class="btn primary">+ Tambah siswa</summary>
+        <form id="fstu" class="inline">
+          <div class="grid">
+            <div><label>Nama lengkap</label><input name="name" required placeholder="Andi Saputra"></div>
+            <div><label>Username <span class="muted">(dipakai siswa untuk masuk)</span></label><input name="username" required placeholder="andi.saputra"></div>
+            <div>
+              <label>Kelas</label>
+              <select name="class_id"><option value="">— tidak dipilih —</option>${classOpts}</select>
+            </div>
+            <div>
+              <label>Gender</label>
+              <select name="gender"><option value="">—</option><option value="L">Laki-laki</option><option value="P">Perempuan</option></select>
+            </div>
+            <div><label>NISN</label><input name="nisn" placeholder="opsional"></div>
+            <div><label>PIN awal <span class="muted">(4–8 angka)</span></label><input name="pin" required pattern="\\d{4,8}" inputmode="numeric" placeholder="123456"></div>
           </div>
-          <div>
-            <label>Gender</label>
-            <select name="gender"><option value="">—</option><option value="L">Laki-laki</option><option value="P">Perempuan</option></select>
-          </div>
-          <div><label>NISN</label><input name="nisn" placeholder="opsional"></div>
-          <div><label>PIN awal <span class="muted">(4–8 digit)</span></label><input name="pin" required pattern="\\d{4,8}" placeholder="123456"></div>
-        </div>
-        <div class="row">
-          <button class="primary" type="submit">Tambah siswa</button>
-          <button type="button" id="btnImport">Import CSV</button>
-          <input type="file" id="fileCsv" accept=".csv,text/csv" hidden>
-          <a class="btn" href="/app/exams" data-i18n-src="Kelola ujian">Kelola ujian</a>
-          <a class="btn" href="/app/exam-groups">Grup ujian</a>
-          <a class="btn" href="/api/reports/scores.csv">Rekap skor sekolah (CSV)</a>
-          ${sess.role === "admin" ? `<a class="btn" href="/api/reports/backup.json">Backup JSON</a><a class="btn" href="/app/restore">Restore</a>` : ""}
-        </div>
-        <p class="muted" style="margin-top:8px">
-          Format CSV: header <code>name,username,class,gender,nisn,pin</code> — kolom
-          <code>class</code>/<code>gender</code>/<code>nisn</code> opsional. <code>pin</code> 4–8 digit.
-        </p>
-        <p class="err" id="errstu" hidden></p>
-      </form>
+          <div class="row"><button class="primary" type="submit">Simpan siswa</button></div>
+          <p class="muted" style="margin-top:8px">
+            Banyak siswa sekaligus? Pakai <b>Import CSV</b> di kanan atas dengan kolom
+            <code>name,username,class,gender,nisn,pin</code>.
+          </p>
+          <p class="err" id="errstu" hidden></p>
+        </form>
+      </details>
       <table>
         <thead><tr><th>Nama</th><th>Username</th><th>Kelas</th><th>G</th><th>NISN</th><th></th></tr></thead>
         <tbody id="tbstu">${studentRows}</tbody>
@@ -528,7 +665,7 @@ pages.get("/app", async (c) => {
         } catch (x) { erredit.textContent = x.message; erredit.hidden = false; }
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 // ===== Pengelolaan ujian =====
@@ -594,7 +731,7 @@ pages.get("/app/exam-groups", async (c) => {
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 pages.get("/app/exams", async (c) => {
@@ -735,7 +872,7 @@ pages.get("/app/exams", async (c) => {
         err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false;
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 pages.get("/app/exams/:id", async (c) => {
@@ -911,7 +1048,7 @@ pages.get("/app/exams/:id", async (c) => {
         if (r.ok) alert('Tersimpan: ' + ids.length + ' kelas'); else alert('Gagal: ' + r.status);
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 // Antrian permintaan reset PIN dari siswa.
@@ -968,7 +1105,7 @@ pages.get("/app/pin-resets", async (c) => {
         location.reload();
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 // Printable: semua soal ujian + opsional kunci (?key=1). Cetak atau simpan
@@ -1391,13 +1528,13 @@ pages.get("/app/students/:id/analytics", async (c) => {
       <p class="muted">Persen jawaban benar dari seluruh ujian yang diselesaikan.</p>
       ${catBars}
     </div>
-  `));
+  `, { role: sess.role }));
 });
 
 pages.get("/app/restore", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.html(base("Restore", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
+  if (sess.role !== "admin") return c.html(base("Restore", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`, { role: sess.role }));
   return c.html(base("Restore backup", `
     <div class="card">
       <h1>Restore backup JSON</h1>
@@ -1436,7 +1573,7 @@ pages.get("/app/restore", async (c) => {
 pages.get("/app/bulk", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.html(base("Bulk", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
+  if (sess.role !== "admin") return c.html(base("Bulk", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`, { role: sess.role }));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [classes, exams] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
     const cl = await tx`select id, name from classes order by name`;
@@ -1505,13 +1642,13 @@ pages.get("/app/bulk", async (c) => {
         if (r.ok) alert(j.archived + ' ujian di-archive.'); else alert(j.error || r.status);
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 pages.get("/app/audit", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.html(base("Audit", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
+  if (sess.role !== "admin") return c.html(base("Audit", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`, { role: sess.role }));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
     tx`select id, actor_email, actor_role, action, entity, entity_id, details, created_at
@@ -1538,13 +1675,13 @@ pages.get("/app/audit", async (c) => {
         <tbody>${list}</tbody>
       </table>
     </div>
-  `));
+  `, { role: sess.role }));
 });
 
 pages.get("/app/users", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.html(base("Staf", `<div class="card"><p class="err">Hanya admin yang boleh melihat halaman ini.</p><a class="btn" href="/app">Dashboard</a></div>`));
+  if (sess.role !== "admin") return c.html(base("Staf", `<div class="card"><p class="err">Hanya admin yang boleh melihat halaman ini.</p><a class="btn" href="/app">Dashboard</a></div>`, { role: sess.role }));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const users = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
     tx`select id, email, name, role, active, google_sub is not null as linked
@@ -1631,7 +1768,7 @@ pages.get("/app/users", async (c) => {
         if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || r.status); location.reload(); }
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 // Bacaan untuk reading comprehension — satu bacaan dapat dirujuk banyak soal.
@@ -1640,7 +1777,7 @@ pages.get("/app/users", async (c) => {
 pages.get("/app/shared-banks", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.html(base("Bank publik", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
+  if (sess.role !== "admin") return c.html(base("Bank publik", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`, { role: sess.role }));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [banks, categories] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
     const b = await tx`select id, slug, title, description, download_count,
@@ -1701,7 +1838,7 @@ pages.get("/app/shared-banks", async (c) => {
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 pages.get("/app/passages", async (c) => {
@@ -1753,7 +1890,7 @@ pages.get("/app/passages", async (c) => {
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 // Lab komputer mode: guru pilih siswa yang hadir, klik mulai sesi
@@ -1828,7 +1965,7 @@ pages.get("/app/exams/:id/lab", async (c) => {
         else { err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 // Analytics guru per ujian: distractor + top kata di chat.
@@ -1908,7 +2045,7 @@ pages.get("/app/exams/:id/insights", async (c) => {
       <div style="margin:10px 0; line-height: 2.5">${wordsHtml}</div>
       ${recentMsgs ? `<h3 style="font-size:14px;margin:16px 0 6px">10 pesan terbaru</h3><ol style="margin:0 0 0 20px; font-size:13px">${recentMsgs}</ol>` : ""}
     </div>
-  `));
+  `, { role: sess.role }));
 });
 
 // Statistik butir soal (item analysis) per ujian.
@@ -1954,7 +2091,7 @@ pages.get("/app/exams/:id/items", async (c) => {
         <tbody>${rows}</tbody>
       </table>
     </div>
-  `));
+  `, { role: sess.role }));
 });
 
 // Live monitoring untuk guru/admin: refresh otomatis tiap 3 detik.
@@ -2116,7 +2253,7 @@ pages.get("/app/exams/:id/live", async (c) => {
         if (r.ok) tick(); else alert(j.error || r.status);
       };
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 pages.get("/app/categories", async (c) => {
@@ -2165,7 +2302,7 @@ pages.get("/app/categories", async (c) => {
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 // Penilaian manual untuk soal uraian dalam satu sesi.
@@ -2238,7 +2375,7 @@ pages.get("/app/sessions/:sid/grade", async (c) => {
         else { err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 pages.get("/app/questions", async (c) => {
@@ -2553,7 +2690,7 @@ pages.get("/app/questions", async (c) => {
         else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
     </script>
-  `));
+  `, { role: sess.role }));
 });
 
 pages.get("/demo", async (c) => {
