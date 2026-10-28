@@ -2332,6 +2332,7 @@ pages.get("/app/questions", async (c) => {
           <option value="pgk_centang">Pilihan Ganda Kompleks (centang beberapa)</option>
           <option value="menjodohkan">Menjodohkan</option>
           <option value="simulasi">Simulasi interaktif (HTML+JS)</option>
+          <option value="dinamis_hitung">Hitungan dinamis (nilai acak per siswa)</option>
         </select>
         <label>Teks soal <span class="muted">(dukung **tebal**, *miring*, \`kode\`, dan matematika $x^2$ atau $$\\int_0^1 x\\,dx$$)</span></label>
         <textarea name="text" required rows="3" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
@@ -2364,6 +2365,18 @@ pages.get("/app/questions", async (c) => {
           <div class="optrow"><input type="checkbox" name="pgkc_correct" value="3"><input name="pgkc_opt" placeholder="Pilihan D"></div>
           <div class="optrow"><input type="checkbox" name="pgkc_correct" value="4"><input name="pgkc_opt" placeholder="Pilihan E (opsional)"></div>
         </div>
+        <div id="box_dinamis" hidden>
+          <label>Operator</label>
+          <select name="dyn_op"><option value="+">+ Penjumlahan</option><option value="-">− Pengurangan</option><option value="*">× Perkalian</option><option value="/">÷ Pembagian</option></select>
+          <div class="grid">
+            <div><label>a min</label><input name="dyn_a_min" type="number" value="1"></div>
+            <div><label>a max</label><input name="dyn_a_max" type="number" value="20"></div>
+            <div><label>b min</label><input name="dyn_b_min" type="number" value="1"></div>
+            <div><label>b max</label><input name="dyn_b_max" type="number" value="20"></div>
+          </div>
+          <label>Template <span class="muted">(opsional; <code>{a}</code>, <code>{b}</code>, <code>{op}</code>)</span></label>
+          <input name="dyn_tpl" placeholder="{a} {op} {b} = ?">
+        </div>
         <div id="box_sim" hidden>
           <label>HTML + JS simulasi <span class="muted">(dijalankan di iframe sandbox; panggil <code>window.sendAnswer(nilai)</code> untuk simpan jawaban)</span></label>
           <textarea name="sim_html" rows="6" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font: 12px monospace" placeholder="&lt;button onclick=&quot;sendAnswer('hasil')&quot;&gt;Jalankan&lt;/button&gt;"></textarea>
@@ -2389,6 +2402,9 @@ pages.get("/app/questions", async (c) => {
 
         <label>Branching <span class="muted">(opsional; untuk pg/benar_salah. Format JSON: <code>{"0":"&lt;question_id&gt;"}</code> — jika siswa pilih opsi 0, lompat ke soal itu)</span></label>
         <input name="branches_json" placeholder='{"0":"qid-tujuan","1":"qid-lain"}'>
+
+        <label>Hint <span class="muted">(opsional; siswa yang pakai hint kehilangan 50% poin soal ini)</span></label>
+        <input name="hint" placeholder="Petunjuk singkat">
 
         <label>Poin</label>
         <input name="points" type="number" step="0.5" min="0.5" value="1" required>
@@ -2420,9 +2436,9 @@ pages.get("/app/questions", async (c) => {
       const $$ = (q) => document.querySelector(q);
       function showBox() {
         const t = $$('#qtype').value;
-        const map = { benar_salah: 'bs', pgk_centang: 'pgkc', menjodohkan: 'mjd', simulasi: 'sim' };
+        const map = { benar_salah: 'bs', pgk_centang: 'pgkc', menjodohkan: 'mjd', simulasi: 'sim', dinamis_hitung: 'dinamis' };
         const show = map[t] || t;
-        for (const name of ['pg','bs','isian','uraian','pgkc','mjd','sim']) $$('#box_'+name).hidden = (name !== show);
+        for (const name of ['pg','bs','isian','uraian','pgkc','mjd','sim','dinamis']) $$('#box_'+name).hidden = (name !== show);
       }
       $$('#qtype').addEventListener('change', showBox); showBox();
       // Live preview teks soal.
@@ -2493,6 +2509,8 @@ pages.get("/app/questions", async (c) => {
         const payload = { type, text, points, category_id, passage_id };
         if (imageData) payload.image = imageData;
         if (audioData) payload.audio = audioData;
+        const hint = e.target.hint.value.trim();
+        if (hint) payload.hint = hint;
         // Branching JSON (opsional).
         const bRaw = e.target.branches_json ? e.target.branches_json.value.trim() : '';
         if (bRaw) {
@@ -2527,6 +2545,12 @@ pages.get("/app/questions", async (c) => {
           if (!html.trim()) { err.textContent = 'HTML simulasi kosong.'; err.hidden = false; return; }
           payload.html = html;
           payload.rubric = e.target.sim_rubric.value.trim() || null;
+        } else if (type === 'dinamis_hitung') {
+          payload.op = e.target.dyn_op.value;
+          payload.a = { min: +e.target.dyn_a_min.value, max: +e.target.dyn_a_max.value };
+          payload.b = { min: +e.target.dyn_b_min.value, max: +e.target.dyn_b_max.value };
+          const tpl = e.target.dyn_tpl.value.trim();
+          if (tpl) payload.tpl = tpl;
         } else if (type === 'menjodohkan') {
           const lefts = [...e.target.querySelectorAll('input[name=mjd_left]')].map((x) => x.value.trim());
           const rights = [...e.target.querySelectorAll('input[name=mjd_right]')].map((x) => x.value.trim());

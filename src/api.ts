@@ -470,6 +470,22 @@ api.post("/api/questions", async (c) => {
     }
     content = { text, options };
     answer_key = { correct: Array.from(new Set(correctIdx)).sort((a, b) => a - b) };
+  } else if (type === "dinamis_hitung") {
+    // Soal angka yang berbeda tiap siswa. Server generate nilai a & b di dalam
+    // rentang [min, max], operator di antara + - × ÷. Siswa jawab bilangan
+    // bulat atau pecahan. Pertanyaan: "<tpl>" dengan {a}, {b} di-replace.
+    const a = body.a as { min: number; max: number } | undefined;
+    const bRange = body.b as { min: number; max: number } | undefined;
+    const op = String(body.op ?? "+");
+    if (!a || !bRange || !["+","-","*","/"].includes(op) ||
+        !Number.isInteger(a.min) || !Number.isInteger(a.max) ||
+        !Number.isInteger(bRange.min) || !Number.isInteger(bRange.max) ||
+        a.min > a.max || bRange.min > bRange.max) {
+      return c.json({ error: "dinamis_hitung: a {min,max} + b {min,max} + op (+-*/) wajib" }, 400);
+    }
+    const tpl = String(body.tpl ?? "{a} " + op + " {b} = ?");
+    content = { text, tpl, a, b: bRange, op };
+    answer_key = { formula: op };  // Formula sebenarnya di-compute di submit pakai nilai yang ter-generate.
   } else if (type === "simulasi") {
     // Simulasi: guru menulis HTML+JS yang dirender di iframe sandbox,
     // siswa menyimpan jawaban via postMessage. Scoring manual (uraian-like).
@@ -494,6 +510,9 @@ api.post("/api/questions", async (c) => {
   }
   if (image) content.image = image;
   if (audio) content.audio = audio;
+  // Hint opsional (string). Siswa yang pakai hint kehilangan 50% poin soal
+  // ini (dihandle di scoring submit).
+  if (body.hint && typeof body.hint === "string") content.hint = String(body.hint).slice(0, 500);
   // Branching opsional: content.branches[option_index] = next_question_id.
   // Hanya untuk tipe dengan pilihan (pg, benar_salah). Klien merender dan
   // menerapkan logika navigasi — server tidak mengubah scoring.

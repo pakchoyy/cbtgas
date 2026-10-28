@@ -3,11 +3,12 @@
 
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
-import { verifyPin } from "./hash";
+import { verifyPin, hashPin } from "./hash";
 import {
   cookieHeader, clearCookie, readCookie, sign, verify, Session,
 } from "./session";
 import { sendEmail, pinNotifyEmail } from "./email";
+import { checkOrLimit } from "./ratelimit";
 
 type Bindings = {
   HYPERDRIVE: Hyperdrive;
@@ -130,6 +131,7 @@ student.get("/s", async (c) => {
       <p class="sub">Kelas: ${esc(me?.class_name ?? "- (belum terdaftar di kelas)")}</p>
       <div class="row">
         <form method="post" action="/s/logout" style="margin:0"><button type="submit">Keluar</button></form>
+        <a class="btn" href="/s/me">🔒 Ganti PIN</a>
       </div>
     </div>
     <div class="card">
@@ -381,6 +383,8 @@ student.get("/s/login", (c) => c.html(page("Masuk siswa", `
 `)));
 
 student.post("/s/login", async (c) => {
+  const rl = await checkOrLimit(c.env, c.req.raw.headers, "s_login", 10);
+  if (rl) return rl;
   const body = await c.req.json().catch(() => null) as null | { code: string; username: string; pin: string };
   if (!body?.code || !body?.username || !body?.pin) return c.json({ error: "data kurang" }, 400);
 
@@ -432,6 +436,8 @@ student.post("/s/login", async (c) => {
 // pin_resets. Guru/admin menyetujui lewat dashboard → PIN 6-digit baru
 // ditampilkan sekali untuk disampaikan ke siswa.
 student.post("/s/forgot", async (c) => {
+  const rl = await checkOrLimit(c.env, c.req.raw.headers, "s_forgot", 5);
+  if (rl) return rl;
   const body = await c.req.json().catch(() => null) as null | { code: string; username: string };
   if (!body?.code || !body?.username) return c.json({ error: "data kurang" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -493,6 +499,62 @@ student.get("/s/forgot", (c) => c.html(page("Lupa PIN", `
     });
   </script>
 `)));
+
+// Siswa ganti PIN sendiri setelah login. Butuh PIN lama + PIN baru.
+student.post("/s/me/pin", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.json({ error: "unauthorized" }, 401);
+  const body = await c.req.json().catch(() => null) as null | { old_pin: string; new_pin: string };
+  if (!body?.old_pin || !body?.new_pin) return c.json({ error: "data kurang" }, 400);
+  if (!/^\d{4,8}$/.test(body.new_pin)) return c.json({ error: "pin baru harus 4–8 digit" }, 400);
+  if (body.old_pin === body.new_pin) return c.json({ error: "pin baru sama dengan lama" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const result = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
+    const r = await tx`select pin_hash from students where id = ${stu.uid}`;
+    if (r.length === 0) throw new Error("siswa tidak ditemukan");
+    const ok = await verifyPin(body.old_pin, (r[0] as { pin_hash: string }).pin_hash);
+    if (!ok) throw new Error("pin lama salah");
+    const newHash = await hashPin(body.new_pin);
+    await tx`update students set pin_hash = ${newHash}, pin_failed_count = 0, locked_until = null
+             where id = ${stu.uid}`;
+    return { ok: true };
+  }).catch((e) => ({ error: (e as Error).message }));
+  if ("error" in result) return c.json(result, 400);
+  return c.json(result);
+});
+
+student.get("/s/me", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.redirect("/s/login");
+  return c.html(page("Akun saya", `
+    <div class="card">
+      <h1>Akun saya</h1>
+      <p class="sub"><a href="/s">← Portal</a></p>
+      <h2>Ganti PIN</h2>
+      <form id="f">
+        <label>PIN lama</label><input name="old_pin" type="password" required pattern="\\d{4,8}">
+        <label>PIN baru</label><input name="new_pin" type="password" required pattern="\\d{4,8}">
+        <label>Ulangi PIN baru</label><input name="confirm" type="password" required pattern="\\d{4,8}">
+        <div class="row"><button class="primary" type="submit">Simpan</button></div>
+        <p id="msg" style="margin-top:12px"></p>
+      </form>
+    </div>
+    <script>
+      document.getElementById('f').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById('msg'); msg.className = ''; msg.textContent = '';
+        const d = Object.fromEntries(new FormData(e.target));
+        if (d.new_pin !== d.confirm) { msg.className = 'err'; msg.textContent = 'Ulangi PIN tidak cocok.'; return; }
+        delete d.confirm;
+        const r = await fetch('/s/me/pin', { method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type':'application/json' }, body: JSON.stringify(d) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) { msg.className = 'muted'; msg.textContent = 'PIN berhasil diganti.'; e.target.reset(); }
+        else { msg.className = 'err'; msg.textContent = j.error || ('HTTP '+r.status); }
+      });
+    </script>
+  `));
+});
 
 student.post("/s/logout", (c) => {
   const h = new Headers({ Location: `${c.env.APP_ORIGIN}/s/login` });
@@ -582,7 +644,18 @@ student.post("/s/exams/:id/start", async (c) => {
       values (${stu.sid}, ${examId}, ${stu.uid}, ${deadline},
               ${questionOrderPayload as unknown as string})
       returning id`;
-    return (ins[0] as { id: string }).id;
+    const sessionId = (ins[0] as { id: string }).id;
+    // Untuk soal dinamis_hitung: generate nilai a & b per sesi, simpan di
+    // answers.answer agar klien bisa menampilkan dan server bisa menilai.
+    const dynQs = await tx`select id, content from questions where id in ${tx(order)} and type = 'dinamis_hitung'`;
+    for (const q of dynQs as unknown as Array<{ id: string; content: { a: { min: number; max: number }; b: { min: number; max: number } } }>) {
+      const a = q.content.a.min + Math.floor(Math.random() * (q.content.a.max - q.content.a.min + 1));
+      const b = q.content.b.min + Math.floor(Math.random() * (q.content.b.max - q.content.b.min + 1));
+      await tx`insert into answers (session_id, question_id, school_id, answer, updated_at)
+        values (${sessionId}, ${q.id}, ${stu.sid}, ${{ vars: { a, b } } as unknown as string}, now())
+        on conflict (session_id, question_id) do nothing`;
+    }
+    return sessionId;
   }).catch((e) => ({ error: (e as Error).message }));
   if (typeof sessionId === "object") return c.json(sessionId, 400);
   return c.redirect(`/s/take/${sessionId}`);
@@ -825,6 +898,19 @@ student.get("/s/take/:sid", async (c) => {
             clearTimeout(t); t = setTimeout(() => save(q.id, { text: inp.value }), 400);
           });
           el.appendChild(inp);
+        } else if (q.type === 'dinamis_hitung') {
+          // Nilai {a,b} sudah pre-populated di answer saat start. Render
+          // template dengan substitusi, input numerik untuk jawaban.
+          const vars = (A[q.id] && A[q.id].vars) || { a: '?', b: '?' };
+          const tpl = (q.content.tpl || '{a} {op} {b} = ?').replace('{a}', vars.a).replace('{b}', vars.b).replace('{op}', q.content.op || '+');
+          el.innerHTML = head + '<p><b>Soal ' + (i+1) + ' / ' + Q.length + '</b></p><p style="font-size:16px;background:var(--bg);padding:10px;border-radius:6px"><b>' + mdRender(q.content.text) + '</b><br>' + escapeHtml(tpl) + '</p>';
+          const inp = document.createElement('input');
+          inp.type = 'number'; inp.step = 'any';
+          inp.placeholder = 'Jawaban (angka)'; inp.value = (A[q.id] && A[q.id].text) || '';
+          let t2; inp.addEventListener('input', () => {
+            clearTimeout(t2); t2 = setTimeout(() => save(q.id, { text: inp.value }), 400);
+          });
+          el.appendChild(inp);
         } else if (q.type === 'simulasi') {
           // Render HTML simulasi di iframe sandbox. Siswa simpan jawaban via
           // postMessage({type:'answer', text}) ke parent window.
@@ -897,6 +983,21 @@ student.get("/s/take/:sid", async (c) => {
             grid.appendChild(lab); grid.appendChild(arrow); grid.appendChild(sel);
           });
           el.appendChild(grid);
+        }
+        // Tombol hint umum (semua tipe). Pakai hint kurangi 50% poin soal ini.
+        if (q.content.hint) {
+          const hintUsed = A[q.id] && A[q.id].hint_used;
+          const hintBtn = document.createElement('button');
+          hintBtn.type = 'button';
+          hintBtn.textContent = hintUsed ? '💡 Hint sudah digunakan' : '💡 Lihat hint (−50% poin soal ini)';
+          hintBtn.disabled = !!hintUsed;
+          hintBtn.style.cssText = 'margin-top:10px';
+          hintBtn.onclick = () => {
+            if (!confirm('Menggunakan hint mengurangi 50% poin soal ini. Lanjut?')) return;
+            alert('Hint: ' + q.content.hint);
+            save(q.id, { hint_used: true });
+          };
+          el.appendChild(hintBtn);
         }
         qbox.appendChild(el);
         katex(el);
@@ -1120,13 +1221,16 @@ student.post("/s/take/:sid/answer", async (c) => {
   const body = await c.req.json().catch(() => null) as null | {
     question_id: string; index?: number; text?: string;
     selected?: number[]; pairs?: [number, number][];
+    hint_used?: boolean; note?: string;
   };
   if (!body?.question_id) return c.json({ error: "bad body" }, 400);
   const ans: Record<string, unknown> = {};
   if (typeof body.index === "number") ans.index = body.index;
   if (typeof body.text === "string") ans.text = body.text;
+  if (typeof body.note === "string") ans.note = body.note;
   if (Array.isArray(body.selected)) ans.selected = body.selected.filter((n) => Number.isInteger(n));
   if (Array.isArray(body.pairs)) ans.pairs = body.pairs.filter((p) => Array.isArray(p) && p.length === 2);
+  if (body.hint_used === true) ans.hint_used = true;
   if (Object.keys(ans).length === 0) return c.json({ error: "jawaban kosong" }, 400);
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -1274,7 +1378,7 @@ student.post("/s/take/:sid/submit", async (c) => {
         left join answers a on a.session_id = ${sessionId} and a.question_id = q.id
       )
       select coalesce(sum(
-        case it.type
+        (case it.type
           when 'pg'          then case when it.binary_benar then it.points * it.weight
                                        when it.answer is not null then -it.points * it.weight * it.wrong_penalty else 0 end
           when 'benar_salah' then case when it.binary_benar then it.points * it.weight
@@ -1288,7 +1392,18 @@ student.post("/s/take/:sid/submit", async (c) => {
                where ax::int not in (select x::int from jsonb_array_elements_text(it.answer_key->'correct') x))
           )::numeric / nullif(jsonb_array_length(it.answer_key->'correct'), 0) * it.points * it.weight)
           when 'menjodohkan' then case when it.binary_benar then it.points * it.weight else 0 end
-          else 0 end), 0) as got_auto,
+          when 'dinamis_hitung' then
+            case when (
+              case it.answer_key->>'formula'
+                when '+' then ((it.answer->'vars'->>'a')::numeric + (it.answer->'vars'->>'b')::numeric)
+                when '-' then ((it.answer->'vars'->>'a')::numeric - (it.answer->'vars'->>'b')::numeric)
+                when '*' then ((it.answer->'vars'->>'a')::numeric * (it.answer->'vars'->>'b')::numeric)
+                when '/' then ((it.answer->'vars'->>'a')::numeric / nullif((it.answer->'vars'->>'b')::numeric, 0))
+              end
+            ) = (nullif(it.answer->>'text', ''))::numeric then it.points * it.weight else 0 end
+          else 0 end)
+        * case when it.answer->>'hint_used' = 'true' then 0.5 else 1 end
+      ), 0) as got_auto,
       coalesce(sum(it.points * it.weight), 0) as total,
       coalesce(sum(case when it.type in ('uraian','simulasi') then it.points * it.weight else 0 end), 0) as manual_pending
       from items it`;
