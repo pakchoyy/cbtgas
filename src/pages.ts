@@ -231,7 +231,8 @@ pages.get("/app", async (c) => {
       const s = await tx`select name, code, level from schools where id = ${sess.sid}`;
       const cl = await tx`select id, name, grade, year from classes order by year desc, grade nulls last, name`;
       const st = await tx`
-        select s.id, s.name, s.username, s.gender, s.nisn, s.class_id, c.name as class_name
+        select s.id, s.name, s.username, s.gender, s.nisn, s.class_id, s.guardian_email,
+               c.name as class_name
         from students s left join classes c on c.id = s.class_id
         order by s.name limit 500`;
       const ov = await tx`select
@@ -245,7 +246,7 @@ pages.get("/app", async (c) => {
   );
 
   type Cls = { id: string; name: string; grade: number | null; year: string };
-  type Stu = { id: string; name: string; username: string; gender: "L"|"P"|null; nisn: string|null; class_id: string|null; class_name: string|null };
+  type Stu = { id: string; name: string; username: string; gender: "L"|"P"|null; nisn: string|null; class_id: string|null; guardian_email: string|null; class_name: string|null };
   const classList = classes as unknown as Cls[];
   const studentList = students as unknown as Stu[];
 
@@ -280,7 +281,7 @@ pages.get("/app", async (c) => {
         <form method="post" action="/auth/logout" style="margin:0">
           <button type="submit" data-i18n-src="Keluar">Keluar</button>
         </form>
-        ${sess.role === "admin" ? `<a class="btn" href="/app/users" data-i18n-src="Kelola staf">Kelola staf</a><a class="btn" href="/app/audit" data-i18n-src="Audit log">Audit log</a><a class="btn" href="/app/bulk">Bulk operasi</a>` : ""}
+        ${sess.role === "admin" ? `<a class="btn" href="/app/users" data-i18n-src="Kelola staf">Kelola staf</a><a class="btn" href="/app/audit" data-i18n-src="Audit log">Audit log</a><a class="btn" href="/app/bulk">Bulk operasi</a><a class="btn" href="/app/shared-banks">Bank publik</a>` : ""}
         <a class="btn" href="/app/pin-resets" data-i18n-src="Reset PIN siswa">Reset PIN siswa</a>
         <button type="button" id="toggleTheme" title="Ganti tema terang/gelap" data-i18n-src="🌓 Tema">🌓 Tema</button>
         <button type="button" id="toggleLang" title="Switch language">🌐 ID / EN</button>
@@ -363,10 +364,13 @@ pages.get("/app", async (c) => {
         <label>Gender</label>
         <select name="gender"><option value="">—</option><option value="L">Laki-laki</option><option value="P">Perempuan</option></select>
         <label>NISN</label><input name="nisn">
+        <label>Email wali <span class="muted">(untuk rapor otomatis)</span></label>
+        <input name="guardian_email" type="email">
         <label>PIN baru <span class="muted">(kosongkan jika tidak diganti)</span></label>
         <input name="pin" pattern="\\d{4,8}">
         <div class="row">
           <button class="primary" value="save">Simpan</button>
+          <button type="button" id="sendReport">Kirim rapor ke wali</button>
           <button value="cancel">Batal</button>
         </div>
         <p class="err" id="erredit" hidden></p>
@@ -443,6 +447,7 @@ pages.get("/app", async (c) => {
           fedit.id.value = s.id; fedit.name.value = s.name;
           fedit.class_id.value = s.class_id || ''; fedit.gender.value = s.gender || '';
           fedit.nisn.value = s.nisn || ''; fedit.pin.value = '';
+          fedit.guardian_email.value = s.guardian_email || '';
           dlg.showModal();
         }
       });
@@ -473,8 +478,20 @@ pages.get("/app", async (c) => {
         const id = d.id; delete d.id;
         for (const k of ['class_id','gender','nisn']) if (d[k] === '') d[k] = null;
         if (!d.pin) delete d.pin;
-        try { await send('/api/students/' + id, 'PATCH', d); dlg.close(); location.reload(); }
-        catch (x) { erredit.textContent = x.message; erredit.hidden = false; }
+        const guardian = d.guardian_email || null;
+        delete d.guardian_email;
+        try {
+          await send('/api/students/' + id, 'PATCH', d);
+          await send('/api/students/' + id + '/guardian', 'PATCH', { email: guardian });
+          dlg.close(); location.reload();
+        } catch (x) { erredit.textContent = x.message; erredit.hidden = false; }
+      });
+      document.getElementById('sendReport').addEventListener('click', async () => {
+        const id = fedit.id.value;
+        try {
+          const r = await send('/api/students/' + id + '/send-report', 'POST');
+          alert(r.skipped ? 'Email ter-skip (RESEND_API_KEY belum di-set)' : 'Rapor dikirim ke ' + r.to);
+        } catch (x) { erredit.textContent = x.message; erredit.hidden = false; }
       });
     </script>
   `));
@@ -1584,6 +1601,75 @@ pages.get("/app/users", async (c) => {
 });
 
 // Bacaan untuk reading comprehension — satu bacaan dapat dirujuk banyak soal.
+// Bank soal publik: pilih kategori → publish → siapa saja bisa unduh JSON-nya
+// via URL unik /public/banks/<slug>.
+pages.get("/app/shared-banks", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  if (sess.role !== "admin") return c.html(base("Bank publik", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">← Dashboard</a></div>`));
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const [banks, categories] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const b = await tx`select id, slug, title, description, download_count,
+                              jsonb_array_length(payload->'questions') as question_count,
+                              created_at from shared_banks order by created_at desc`;
+    const c = await tx`select id, name from categories order by name`;
+    return [b, c] as const;
+  });
+  type B = { id: string; slug: string; title: string; description: string | null;
+    download_count: number; question_count: number; created_at: string };
+  type C = { id: string; name: string };
+  const list = (banks as unknown as B[]).map((b) => `<tr>
+    <td><a href="/public/banks/${esc(b.slug)}" target="_blank"><b>${esc(b.title)}</b></a><br>
+        <code style="font-size:12px">${esc(b.slug)}</code>
+        ${b.description ? `<br><span class="muted">${esc(b.description)}</span>` : ""}</td>
+    <td>${b.question_count}</td>
+    <td>${b.download_count}</td>
+    <td style="text-align:right"><button class="danger" data-del="${esc(b.id)}">Hapus</button></td>
+  </tr>`).join("") || `<tr><td colspan="4" class="muted">Belum ada bank yang dipublikasikan.</td></tr>`;
+  const catOpts = (categories as unknown as C[]).map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
+  return c.html(base("Bank publik", `
+    <div class="card">
+      <h1>Bank soal publik</h1>
+      <p class="sub"><a href="/app">← Dashboard</a> · siapa saja bisa unduh via URL slug tanpa login.</p>
+      <form id="fsb">
+        <div class="grid">
+          <div><label>Judul</label><input name="title" required placeholder="Bank Matematika SMA kelas X"></div>
+          <div><label>Slug (URL)</label><input name="slug" required pattern="[a-z0-9\\-]{3,64}" placeholder="matematika-sma-x"></div>
+          <div><label>Kategori <span class="muted">(opsional; semua jika kosong)</span></label>
+            <select name="category_id"><option value="">— semua soal —</option>${catOpts}</select>
+          </div>
+        </div>
+        <label>Deskripsi</label><input name="description">
+        <div class="row"><button class="primary" type="submit">Publikasikan</button></div>
+        <p class="err" id="err" hidden></p>
+      </form>
+    </div>
+    <div class="card">
+      <table><thead><tr><th>Bank</th><th>Soal</th><th>Unduhan</th><th></th></tr></thead>
+        <tbody id="tb">${list}</tbody>
+      </table>
+    </div>
+    <script>
+      document.getElementById('fsb').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = document.getElementById('err'); err.hidden = true;
+        const d = Object.fromEntries(new FormData(e.target));
+        d.category_id = d.category_id || null;
+        const r = await fetch('/api/shared-banks', { method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type':'application/json' }, body: JSON.stringify(d) });
+        if (r.ok) location.reload();
+        else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP '+r.status; err.hidden = false; }
+      });
+      document.getElementById('tb').addEventListener('click', async (e) => {
+        const id = e.target.dataset.del; if (!id) return;
+        if (!confirm('Hapus bank publik ini?')) return;
+        const r = await fetch('/api/shared-banks/' + id, { method:'DELETE', credentials:'same-origin' });
+        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+      });
+    </script>
+  `));
+});
+
 pages.get("/app/passages", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
@@ -1963,7 +2049,7 @@ pages.get("/app/exams/:id/live", async (c) => {
               + '<td>' + vio + '</td>'
               + '<td>' + dot(r.last_seen_at) + ' ' + timeAgo(r.last_seen_at) + '</td>'
               + '<td><button onclick="openChat(\\'' + r.session_id + '\\', \\'' + escapeHtml(r.student_name).replace(/\\'/g,"") + '\\')" style="padding:4px 8px">💬</button>'
-              + (r.status === "active" ? ' <button onclick="extend(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="+5 menit">⏱+5</button> <button onclick="forceSubmit(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Paksa submit">⏹</button>' : "")
+              + (r.status === "active" ? ' <button onclick="extend(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="+5 menit">⏱+5</button> <button onclick="pauseResume(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Pause/resume">⏸</button> <button onclick="forceSubmit(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Paksa submit">⏹</button>' : "")
               + '</td></tr>';
           }).join('');
         } catch (e) { t.textContent = 'Gagal memuat: ' + e; }
@@ -2029,6 +2115,12 @@ pages.get("/app/exams/:id/live", async (c) => {
         });
         const j = await r.json().catch(() => ({}));
         if (r.ok) tick(); else alert(j.error || r.status);
+      };
+      window.pauseResume = async (sid) => {
+        // Coba pause dulu; kalau 404 (sudah pause), resume.
+        let r = await fetch('/api/sessions/' + sid + '/pause', { method:'POST', credentials:'same-origin' });
+        if (r.status === 404) r = await fetch('/api/sessions/' + sid + '/resume', { method:'POST', credentials:'same-origin' });
+        if (r.ok) tick(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
       };
       window.forceSubmit = async (sid) => {
         if (!confirm('Paksa submit sesi ini sekarang?')) return;
@@ -2291,6 +2383,10 @@ pages.get("/app/questions", async (c) => {
         <input type="file" id="imgFile" accept="image/*">
         <div id="imgPrev" style="margin:8px 0"></div>
 
+        <label>Audio <span class="muted">(opsional, max 600 KB; MP3/OGG/WAV)</span></label>
+        <input type="file" id="audFile" accept="audio/*">
+        <div id="audPrev" style="margin:8px 0"></div>
+
         <label>Branching <span class="muted">(opsional; untuk pg/benar_salah. Format JSON: <code>{"0":"&lt;question_id&gt;"}</code> — jika siswa pilih opsi 0, lompat ke soal itu)</span></label>
         <input name="branches_json" placeholder='{"0":"qid-tujuan","1":"qid-lain"}'>
 
@@ -2349,8 +2445,8 @@ pages.get("/app/questions", async (c) => {
         const r = await fetch('/api/questions/' + id, { method: 'DELETE', credentials: 'same-origin' });
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
       });
-      // Image: convert ke data URI, preview, simpan di state.
-      let imageData = null;
+      // Image & Audio: convert ke data URI, preview, simpan di state.
+      let imageData = null, audioData = null;
       $$('#imgFile').addEventListener('change', async (e) => {
         const f = e.target.files[0]; if (!f) { imageData = null; $$('#imgPrev').innerHTML = ''; return; }
         if (f.size > 400_000) { alert('Gambar > 400 KB; kompres dulu.'); e.target.value = ''; return; }
@@ -2358,6 +2454,14 @@ pages.get("/app/questions", async (c) => {
         const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
         imageData = 'data:' + f.type + ';base64,' + b64;
         $$('#imgPrev').innerHTML = '<img src="' + imageData + '" style="max-width:200px;max-height:200px;border-radius:8px;border:1px solid var(--bd)">';
+      });
+      $$('#audFile').addEventListener('change', async (e) => {
+        const f = e.target.files[0]; if (!f) { audioData = null; $$('#audPrev').innerHTML = ''; return; }
+        if (f.size > 600_000) { alert('Audio > 600 KB; kompres atau potong dulu.'); e.target.value = ''; return; }
+        const buf = await f.arrayBuffer();
+        const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        audioData = 'data:' + f.type + ';base64,' + b64;
+        $$('#audPrev').innerHTML = '<audio controls src="' + audioData + '" style="width:100%"></audio>';
       });
       // Filter kategori → navigasi
       $$('#filterCat').addEventListener('change', (e) => {
@@ -2388,6 +2492,7 @@ pages.get("/app/questions", async (c) => {
         const passage_id = e.target.passage_id.value || null;
         const payload = { type, text, points, category_id, passage_id };
         if (imageData) payload.image = imageData;
+        if (audioData) payload.audio = audioData;
         // Branching JSON (opsional).
         const bRaw = e.target.branches_json ? e.target.branches_json.value.trim() : '';
         if (bRaw) {

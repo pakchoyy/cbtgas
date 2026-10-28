@@ -596,7 +596,8 @@ student.get("/s/take/:sid", async (c) => {
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const s = await tx`
       select es.id, es.status, es.deadline_at, es.question_order,
-             es.violation_count, e.title, e.anticheat_level, e.lock_after_violations
+             es.violation_count, es.paused_at,
+             e.title, e.anticheat_level, e.lock_after_violations
       from exam_sessions es join exams e on e.id = es.exam_id
       where es.id = ${sessionId} and es.student_id = ${stu.uid}`;
     if (s.length === 0) return null;
@@ -656,6 +657,7 @@ student.get("/s/take/:sid", async (c) => {
       title: sess.title, deadline: sess.deadline_at, questions, answers,
       anticheat: sess.anticheat_level, limit: sess.lock_after_violations,
       violations: sess.violation_count,
+      paused_at: (sess as unknown as { paused_at: string | null }).paused_at,
     };
   });
   if (!data) return c.notFound();
@@ -681,8 +683,14 @@ student.get("/s/take/:sid", async (c) => {
     sessionId, deadline: data.deadline,
     questions: data.questions, answers: data.answers,
     anticheat: data.anticheat, limit: data.limit, violations: data.violations,
+    paused_at: data.paused_at,
   });
   return c.html(page(data.title!, `
+    <div id="pauseOverlay" hidden style="position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; display:flex; align-items:center; justify-content:center; color:#fff; text-align:center; font-size:20px; flex-direction:column">
+      <div style="font-size:60px">⏸</div>
+      <p style="margin:16px 0 0">Sesi dijeda oleh pengawas.</p>
+      <p class="muted" style="color:#aaa; margin:6px 0 0; font-size:14px">Tunggu guru untuk melanjutkan.</p>
+    </div>
     <div class="card">
       <div class="row" style="justify-content:space-between">
         <div><h1 style="margin:0">${esc(data.title!)}</h1></div>
@@ -794,6 +802,12 @@ student.get("/s/take/:sid", async (c) => {
           img.src = q.content.image;
           img.style.cssText = 'max-width:100%; max-height:300px; border-radius:8px; border:1px solid var(--bd); margin:8px 0';
           el.appendChild(img);
+        }
+        if (q.content.audio) {
+          const au = document.createElement('audio');
+          au.src = q.content.audio; au.controls = true;
+          au.style.cssText = 'width:100%; margin:8px 0';
+          el.appendChild(au);
         }
         if (q.type === 'pg' || q.type === 'benar_salah') {
           q.content.options.forEach((o, k) => {
@@ -957,9 +971,10 @@ student.get("/s/take/:sid", async (c) => {
         if (r.ok) location.href = '/s'; else alert('Gagal: ' + r.status);
       };
       // Timer
-      const dl = new Date(D.deadline).getTime();
+      let dl = new Date(D.deadline).getTime();
       const t = document.getElementById('t');
       function tick() {
+        if (isPaused) { t.textContent = '⏸ PAUSED'; setTimeout(tick, 1000); return; }
         const left = Math.max(0, Math.floor((dl - Date.now()) / 1000));
         const m = String(Math.floor(left/60)).padStart(2,'0'); const s = String(left%60).padStart(2,'0');
         t.textContent = m + ':' + s;
@@ -1069,9 +1084,19 @@ student.get("/s/take/:sid", async (c) => {
       }
       setInterval(pollChat, 5000); pollChat();
 
-      // Heartbeat 15 dtk untuk live monitoring guru.
+      // Heartbeat 15 dtk + cek status pause.
+      let isPaused = !!D.paused_at;
+      function applyPause() {
+        document.getElementById('pauseOverlay').hidden = !isPaused;
+      }
+      applyPause();
       async function heartbeat() {
-        try { await fetch('/s/take/' + D.sessionId + '/ping', { method:'POST', credentials:'same-origin' }); } catch(_) {}
+        try {
+          const r = await fetch('/s/take/' + D.sessionId + '/ping', { method:'POST', credentials:'same-origin' });
+          if (r.ok) { const j = await r.json().catch(() => ({}));
+            if (typeof j.paused === 'boolean' && j.paused !== isPaused) { isPaused = j.paused; applyPause(); if (!isPaused && j.deadline) { D.deadline = j.deadline; dl = new Date(D.deadline).getTime(); } }
+          }
+        } catch(_) {}
         setTimeout(heartbeat, 15000);
       }
       heartbeat();
@@ -1111,7 +1136,7 @@ student.post("/s/take/:sid/answer", async (c) => {
               ${ans as unknown as string}, now()
        where exists (select 1 from exam_sessions
                      where id = ${sessionId} and student_id = ${stu.uid} and status = 'active'
-                       and deadline_at > now())
+                       and deadline_at > now() and paused_at is null)
        on conflict (session_id, question_id)
        do update set answer = coalesce(answers.answer, '{}'::jsonb) || ${ans as unknown as string},
                      updated_at = now()`,
@@ -1158,11 +1183,14 @@ student.post("/s/take/:sid/ping", async (c) => {
   if (!stu) return c.json({ error: "unauthorized" }, 401);
   const sessionId = c.req.param("sid");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
+  const r = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
     tx`update exam_sessions set last_seen_at = now()
-       where id = ${sessionId} and student_id = ${stu.uid}`,
+       where id = ${sessionId} and student_id = ${stu.uid}
+       returning paused_at, deadline_at`,
   );
-  return c.json({ ok: true });
+  if (r.length === 0) return c.json({ ok: true });
+  const row = r[0] as { paused_at: string | null; deadline_at: string };
+  return c.json({ ok: true, paused: !!row.paused_at, deadline: row.deadline_at });
 });
 
 // Anti-cheat: catat pelanggaran, naikkan counter, lock sesi bila mencapai

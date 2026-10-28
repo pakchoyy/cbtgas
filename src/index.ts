@@ -10,6 +10,34 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 app.get("/health", (c) => c.json({ ok: true, env: c.env.APP_ENV }));
 
+// Shared bank soal publik: SIAPA SAJA bisa unduh via /public/banks/:slug.
+// Pakai SECURITY DEFINER function public_bank() yang mem-bypass RLS tenant
+// (tanpa membocorkan data sekolah lain — hanya payload yang guru upload).
+app.get("/public/banks/:slug", async (c) => {
+  const slug = c.req.param("slug");
+  if (!/^[a-z0-9-]{3,64}$/.test(slug)) return c.json({ error: "slug tidak valid" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  // Set konteks owner agar function call diizinkan grant-nya ke cbt_app.
+  const rows = await withTenant(sql, { schoolId: "", role: "owner" }, async (tx) => {
+    const r = await tx`select * from public_bank(${slug})`;
+    if (r.length) await tx`select increment_bank_download(${slug})`;
+    return r;
+  });
+  if (rows.length === 0) return c.json({ error: "bank tidak ditemukan" }, 404);
+  const row = rows[0] as { slug: string; title: string; description: string | null; payload: unknown; download_count: number };
+  // Download sebagai attachment supaya langsung simpan file.
+  return new Response(JSON.stringify({
+    slug: row.slug, title: row.title, description: row.description,
+    download_count: row.download_count, payload: row.payload,
+  }, null, 2), {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="bank-${slug}.json"`,
+      "Cache-Control": "public, max-age=60",
+    },
+  });
+});
+
 // Trigger manual untuk cron handler (sinkron dengan scheduled()).
 // Dev-only — di production endpoint ini kembali 404. Berguna untuk
 // menjalankan transisi status tanpa menunggu cron.

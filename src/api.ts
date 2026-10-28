@@ -5,6 +5,7 @@ import { connect, withTenant } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
 import { hashPin } from "./hash";
 import { sendEmail, inviteEmail, pinNotifyEmail } from "./email";
+function esc2(s: string): string { return s.replace(/[&<>"']/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[ch]!)); }
 import { audit, actorFromSession } from "./audit";
 
 export const api = new Hono<{ Bindings: AuthBindings & { APP_ENV: string; RESEND_API_KEY?: string; EMAIL_FROM?: string } }>();
@@ -425,13 +426,18 @@ api.post("/api/questions", async (c) => {
   const points = typeof body.points === "number" ? body.points : 1;
   const categoryId = body.category_id ? String(body.category_id) : null;
   const passageId = body.passage_id ? String(body.passage_id) : null;
-  // Gambar opsional, disimpan sebagai data URI di content.image. Cap 400KB
-  // supaya payload DB tetap wajar (jsonb) dan push ke Hyperdrive tidak molor.
+  // Gambar opsional, data URI, cap 400KB.
   const image = body.image ? String(body.image) : null;
-  if (!text && !image) return c.json({ error: "teks soal kosong" }, 400);
+  // Audio opsional (MP3/OGG/WAV/WebM), data URI, cap 600KB.
+  const audio = body.audio ? String(body.audio) : null;
+  if (!text && !image && !audio) return c.json({ error: "teks soal kosong" }, 400);
   if (image) {
     if (!image.startsWith("data:image/")) return c.json({ error: "image harus data URI gambar" }, 400);
     if (image.length > 400_000) return c.json({ error: "ukuran gambar > 400KB" }, 413);
+  }
+  if (audio) {
+    if (!audio.startsWith("data:audio/")) return c.json({ error: "audio harus data URI audio" }, 400);
+    if (audio.length > 600_000) return c.json({ error: "ukuran audio > 600KB" }, 413);
   }
 
   let content: Record<string, unknown>; let answer_key: unknown; let rubric: string | null = null;
@@ -487,6 +493,7 @@ api.post("/api/questions", async (c) => {
     return c.json({ error: `tipe '${type}' belum didukung` }, 400);
   }
   if (image) content.image = image;
+  if (audio) content.audio = audio;
   // Branching opsional: content.branches[option_index] = next_question_id.
   // Hanya untuk tipe dengan pilihan (pg, benar_salah). Klien merender dan
   // menerapkan logika navigasi — server tidak mengubah scoring.
@@ -578,6 +585,42 @@ api.post("/api/exams/:id/lab-start", async (c) => {
   }).catch((e) => ({ error: (e as Error).message }));
   if ("error" in result) return c.json(result, 400);
   return c.json(result);
+});
+
+// Pause sesi (siswa izin keluar sebentar). Timer berhenti; saat resume,
+// deadline bergeser sebesar durasi pause.
+api.post("/api/sessions/:sid/pause", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sid = c.req.param("sid");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const u = await tx`update exam_sessions set paused_at = now()
+      where id = ${sid} and status = 'active' and paused_at is null
+      returning id, paused_at`;
+    if (u.length) await audit(tx, actorFromSession(s), "session.pause", "session", sid);
+    return u;
+  });
+  if (r.length === 0) return c.json({ error: "sesi tidak ditemukan / sudah pause" }, 404);
+  return c.json({ ok: true, ...(r[0] as object) });
+});
+
+api.post("/api/sessions/:sid/resume", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sid = c.req.param("sid");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const u = await tx`update exam_sessions
+      set deadline_at = deadline_at + (now() - paused_at),
+          paused_at = null
+      where id = ${sid} and paused_at is not null
+      returning id, deadline_at`;
+    if (u.length) await audit(tx, actorFromSession(s), "session.resume", "session", sid);
+    return u;
+  });
+  if (r.length === 0) return c.json({ error: "sesi tidak dalam pause" }, 404);
+  return c.json({ ok: true, ...(r[0] as object) });
 });
 
 // Perpanjang / potong deadline sesi individual (guru override timer).
@@ -740,6 +783,65 @@ api.post("/api/pin-resets/:id/reject", async (c) => {
 
 // ===== Bulk operations =====
 
+// Set / ubah email wali siswa.
+api.patch("/api/students/:id/guardian", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as null | { email: string | null };
+  if (!body) return c.json({ error: "bad body" }, 400);
+  const email = body.email ? String(body.email).trim().toLowerCase() : null;
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return c.json({ error: "format email salah" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`update students set guardian_email = ${email} where id = ${id} returning id, guardian_email`,
+  );
+  if (r.length === 0) return c.json({ error: "siswa tidak ditemukan" }, 404);
+  return c.json(r[0]);
+});
+
+// Kirim rapor siswa ke email wali sekarang (best-effort via Resend).
+api.post("/api/students/:id/send-report", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const id = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const info = await tx`select s.name, s.guardian_email, sch.name as school_name
+                           from students s join schools sch on sch.id = s.school_id
+                           where s.id = ${id}`;
+    if (info.length === 0) return null;
+    const scores = await tx`select e.title, sc.final_score, es.finished_at
+                             from exam_sessions es
+                             join exams e on e.id = es.exam_id
+                             left join scores sc on sc.session_id = es.id
+                             where es.student_id = ${id} and es.status = 'submitted'
+                             order by es.finished_at desc limit 20`;
+    return { info: info[0], scores };
+  });
+  if (!data) return c.json({ error: "siswa tidak ditemukan" }, 404);
+  const info = data.info as { name: string; guardian_email: string | null; school_name: string };
+  if (!info.guardian_email) return c.json({ error: "email wali belum di-set" }, 400);
+  type S = { title: string; final_score: string | null; finished_at: string };
+  const scores = data.scores as unknown as S[];
+  const rows = scores.map((r) => `<tr>
+    <td style="padding:6px 10px; border-bottom:1px solid #eee">${esc2(r.title)}</td>
+    <td style="padding:6px 10px; border-bottom:1px solid #eee; text-align:right"><b>${r.final_score ?? "-"}</b></td>
+    <td style="padding:6px 10px; border-bottom:1px solid #eee; color:#666">${new Date(r.finished_at).toLocaleDateString("id-ID")}</td>
+  </tr>`).join("");
+  const html = `
+    <div style="font-family:system-ui,sans-serif;max-width:600px;margin:auto;padding:20px">
+      <h2>Rapor ${esc2(info.name)}</h2>
+      <p>Berikut hasil ujian terbaru di <b>${esc2(info.school_name)}</b>:</p>
+      <table style="width:100%; border-collapse:collapse; margin-top:12px">
+        <thead><tr style="background:#f3f4f6"><th style="padding:6px 10px; text-align:left">Ujian</th><th style="padding:6px 10px; text-align:right">Nilai</th><th style="padding:6px 10px; text-align:left">Tanggal</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan=3 style="padding:6px 10px; color:#999">Belum ada ujian.</td></tr>`}</tbody>
+      </table>
+    </div>`;
+  const sent = await sendEmail(c.env, info.guardian_email, `Rapor ${info.name}`, html);
+  return c.json({ ok: sent.ok, skipped: "skipped" in sent, to: info.guardian_email });
+});
+
 // Reset PIN semua siswa aktif di satu kelas. Admin menerima daftar
 // {username, pin} satu kali untuk dibagikan.
 api.post("/api/classes/:id/reset-pins", async (c) => {
@@ -881,6 +983,61 @@ api.post("/api/sessions/:sid/manual-score", async (c) => {
     return { ok: true, final: final_score };
   });
   return c.json(out);
+});
+
+// Publikasikan bank soal: pilih kategori (atau semua), buat shared_banks
+// dengan slug URL-safe. Siapa saja bisa unduh via /public/banks/:slug.
+api.post("/api/shared-banks", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
+  const body = await c.req.json().catch(() => null) as null | {
+    slug: string; title: string; description?: string; category_id?: string | null;
+  };
+  if (!body?.slug || !body?.title) return c.json({ error: "slug dan title wajib" }, 400);
+  if (!/^[a-z0-9-]{3,64}$/.test(body.slug)) return c.json({ error: "slug: huruf kecil/digit/strip 3-64" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const qs = body.category_id
+      ? await tx`select q.type, q.content, q.points, k.answer_key, k.rubric
+                  from questions q left join question_keys k on k.question_id = q.id
+                  where q.category_id = ${body.category_id}`
+      : await tx`select q.type, q.content, q.points, k.answer_key, k.rubric
+                  from questions q left join question_keys k on k.question_id = q.id`;
+    const payload = { version: 1, exported_at: new Date().toISOString(),
+      questions: qs };
+    const ins = await tx`insert into shared_banks (school_id, slug, title, description, payload, created_by)
+      values (${s.sid}, ${body.slug}, ${body.title}, ${body.description ?? null},
+              ${payload as unknown as string}, ${s.uid})
+      returning id, slug, title`;
+    await audit(tx, actorFromSession(s), "bank.publish", "shared_bank",
+      (ins[0] as { id: string }).id, { slug: body.slug, count: (qs as unknown as unknown[]).length });
+    return { ...(ins[0] as object), count: (qs as unknown as unknown[]).length };
+  }).catch((e) => ({ error: (e as Error).message }));
+  if ("error" in result) return c.json(result, 400);
+  return c.json(result, 201);
+});
+
+api.get("/api/shared-banks", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select id, slug, title, description, download_count, created_at,
+              jsonb_array_length(payload->'questions') as question_count
+       from shared_banks order by created_at desc`,
+  );
+  return c.json(rows);
+});
+
+api.delete("/api/shared-banks/:id", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`delete from shared_banks where id = ${c.req.param("id")} returning id`,
+  );
+  if (r.length === 0) return c.json({ error: "not found" }, 404);
+  return c.json({ ok: true });
 });
 
 // Export bank soal ke CSV (round-trip dengan /api/questions/import).
