@@ -258,6 +258,7 @@ pages.get("/app", async (c) => {
           <button type="button" id="btnImport">Import CSV</button>
           <input type="file" id="fileCsv" accept=".csv,text/csv" hidden>
           <a class="btn" href="/app/exams">Kelola ujian</a>
+          <a class="btn" href="/api/reports/scores.csv">Rekap skor sekolah (CSV)</a>
         </div>
         <p class="muted" style="margin-top:8px">
           Format CSV: header <code>name,username,class,gender,nisn,pin</code> — kolom
@@ -429,6 +430,7 @@ pages.get("/app/exams", async (c) => {
           </div>
           <div><label>Kunci setelah N pelanggaran</label><input name="lock_after_violations" type="number" min="1" value="3"></div>
           <div><label><input type="checkbox" name="shuffle_questions"> Acak urutan soal</label></div>
+          <div><label><input type="checkbox" name="shuffle_options"> Acak urutan pilihan</label></div>
         </div>
         <div class="row"><button class="primary" type="submit">Buat ujian</button></div>
         <p class="err" id="errex" hidden></p>
@@ -450,6 +452,7 @@ pages.get("/app/exams", async (c) => {
         d.duration_minutes = +d.duration_minutes;
         d.lock_after_violations = d.lock_after_violations ? +d.lock_after_violations : null;
         d.shuffle_questions = fd.has('shuffle_questions');
+        d.shuffle_options = fd.has('shuffle_options');
         for (const k of ['starts_at','ends_at']) if (!d[k]) d[k] = null; else d[k] = new Date(d[k]).toISOString();
         const r = await fetch('/api/exams', { method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
@@ -530,10 +533,12 @@ pages.get("/app/exams/:id", async (c) => {
     const manualBtn = needsManual && r.status === "submitted"
       ? ` · <a href="/app/sessions/${esc(r.session_id)}/grade">nilai uraian</a>`
       : "";
+    const unlockBtn = r.status === "locked"
+      ? ` · <a href="#" data-unlock="${esc(r.session_id)}">buka kembali</a>` : "";
     return `<tr>
       <td>${esc(r.student_name)}</td>
       <td>${esc(r.class_name ?? "-")}</td>
-      <td><span class="pill ${esc(r.status)}">${esc(r.status)}</span>${r.violation_count ? ` · ${r.violation_count} pelanggaran` : ""}</td>
+      <td><span class="pill ${esc(r.status)}">${esc(r.status)}</span>${r.violation_count ? ` · ${r.violation_count} pelanggaran` : ""}${unlockBtn}</td>
       <td>${r.auto_score ?? "-"}</td>
       <td>${r.manual_score ?? "-"}</td>
       <td><b>${r.final_score ?? "-"}</b>${manualBtn}</td>
@@ -595,6 +600,14 @@ pages.get("/app/exams/:id", async (c) => {
 
     <script>
       const EID = ${JSON.stringify(examId)};
+      document.body.addEventListener('click', async (e) => {
+        const sid = e.target && e.target.getAttribute && e.target.getAttribute('data-unlock');
+        if (!sid) return;
+        e.preventDefault();
+        if (!confirm('Buka kembali sesi ini? Siswa dapat lanjut mengerjakan 15 menit.')) return;
+        const r = await fetch('/api/sessions/' + sid + '/unlock', { method: 'POST', credentials: 'same-origin' });
+        if (r.ok) location.reload(); else { const j = await r.json().catch(() => ({})); alert(j.error || 'HTTP ' + r.status); }
+      });
       document.querySelectorAll('[data-status]').forEach((b) => b.addEventListener('click', async () => {
         const status = b.dataset.status;
         const r = await fetch('/api/exams/' + EID, { method: 'PATCH', credentials: 'same-origin',

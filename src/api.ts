@@ -105,7 +105,9 @@ api.patch("/api/students/:id", async (c) => {
          class_id = case when ${body.class_id !== undefined} then ${body.class_id ?? null} else class_id end,
          gender   = case when ${body.gender !== undefined} then ${body.gender ?? null} else gender end,
          nisn     = case when ${body.nisn !== undefined}  then ${body.nisn ?? null}  else nisn end,
-         pin_hash = coalesce(${pin_hash}, pin_hash)
+         pin_hash = coalesce(${pin_hash}, pin_hash),
+         pin_failed_count = case when ${pin_hash !== null} then 0 else pin_failed_count end,
+         locked_until     = case when ${pin_hash !== null} then null else locked_until end
        where id = ${id}
        returning id, name, username`,
   );
@@ -249,6 +251,40 @@ api.post("/api/questions", async (c) => {
     return { id: qid, type };
   });
   return c.json(r, 201);
+});
+
+// Buka kembali sesi yang di-locked oleh anti-cheat. Reset violation_count
+// supaya siswa tidak langsung terkunci lagi di event berikutnya.
+api.post("/api/sessions/:sid/unlock", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sessionId = c.req.param("sid");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`update exam_sessions set status = 'active', violation_count = 0,
+       deadline_at = greatest(deadline_at, now() + interval '15 minutes')
+       where id = ${sessionId} and status = 'locked' returning id, deadline_at`,
+  );
+  if (r.length === 0) return c.json({ error: "sesi tidak ditemukan atau tidak terkunci" }, 404);
+  return c.json({ ok: true, ...(r[0] as object) });
+});
+
+// Reset PIN siswa (admin/guru). Body: { pin: "4-8 digit" }
+api.post("/api/students/:id/reset-pin", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as null | { pin: string };
+  if (!body?.pin || !/^\d{4,8}$/.test(body.pin)) return c.json({ error: "pin harus 4-8 digit" }, 400);
+  const pin_hash = await hashPin(body.pin);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`update students set pin_hash = ${pin_hash},
+         pin_failed_count = 0, locked_until = null
+       where id = ${id} returning id`,
+  );
+  if (r.length === 0) return c.json({ error: "siswa tidak ditemukan" }, 404);
+  return c.json({ ok: true });
 });
 
 // Nilai manual untuk soal uraian: input per sesi × soal.
@@ -419,6 +455,50 @@ api.get("/api/exams/:id/scores.csv", async (c) => {
   });
 });
 
+// Export CSV skor seluruh sekolah (semua ujian × siswa). Berguna untuk
+// rekap akhir semester. Query dibungkus withTenant → RLS tetap aktif.
+api.get("/api/reports/scores.csv", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select e.title, e.kind, c.name as class_name,
+              st.name as student_name, st.username,
+              es.status, es.violation_count,
+              es.started_at, es.finished_at,
+              sc.auto_score, sc.manual_score, sc.final_score
+       from exam_sessions es
+       join exams    e  on e.id  = es.exam_id
+       join students st on st.id = es.student_id
+       left join classes c on c.id = st.class_id
+       left join scores  sc on sc.session_id = es.id
+       order by e.created_at desc, c.name, st.name`,
+  );
+  const header = ["ujian","jenis","kelas","nama","username","status","pelanggaran",
+    "mulai","selesai","auto","manual","final"];
+  const esc = (v: unknown) => {
+    if (v == null) return "";
+    const s = v instanceof Date ? v.toISOString() : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  type R = { title: string; kind: string; class_name: string|null;
+    student_name: string; username: string; status: string; violation_count: number;
+    started_at: string|null; finished_at: string|null;
+    auto_score: string|null; manual_score: string|null; final_score: string|null };
+  const lines = [header.join(",")];
+  for (const r of rows as unknown as R[]) {
+    lines.push([r.title, r.kind, r.class_name, r.student_name, r.username,
+      r.status, r.violation_count, r.started_at, r.finished_at,
+      r.auto_score, r.manual_score, r.final_score].map(esc).join(","));
+  }
+  return new Response(lines.join("\n") + "\n", {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="rekap-skor-sekolah.csv"`,
+    },
+  });
+});
+
 // Ringkasan rata-rata per kelas untuk sebuah ujian.
 api.get("/api/exams/:id/summary", async (c) => {
   const s = getSess(c);
@@ -479,8 +559,9 @@ api.get("/api/exams/:id/scores", async (c) => {
   const id = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`select st.name as student_name, st.username, es.status, es.started_at, es.finished_at,
-              sc.auto_score, sc.final_score
+    tx`select es.id as session_id, st.name as student_name, st.username,
+              es.status, es.violation_count, es.started_at, es.finished_at,
+              sc.auto_score, sc.manual_score, sc.final_score
        from exam_sessions es
        join students st on st.id = es.student_id
        left join scores sc on sc.session_id = es.id

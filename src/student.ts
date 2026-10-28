@@ -233,24 +233,40 @@ student.post("/s/exams/:id/start", async (c) => {
       if (row.status === "submitted") throw new Error("sudah dikumpulkan");
       return row.id;
     }
-    // Urutan soal; jika exam.shuffle_questions=true, acak per siswa.
+    // Urutan soal + (opsional) permutasi opsi, disimpan di question_order:
+    //   { order: [qid, …], perms: { qid: [i₀, i₁, …] } }
+    // perm memetakan posisi tampilan → indeks asli (shuffle_options).
     const qs = await tx`select question_id from exam_questions where exam_id = ${examId} order by position`;
     let order = (qs as unknown as Array<{ question_id: string }>).map((x) => x.question_id);
-    const sh = await tx`select shuffle_questions from exams where id = ${examId}`;
-    if ((sh[0] as { shuffle_questions: boolean })?.shuffle_questions) {
-      // Fisher-Yates sederhana (seed waktu — cukup untuk anti-contek baris).
-      for (let i = order.length - 1; i > 0; i--) {
+    const ex = await tx`select shuffle_questions, shuffle_options from exams where id = ${examId}`;
+    const exRow = ex[0] as { shuffle_questions: boolean; shuffle_options: boolean };
+    const fy = <T>(arr: T[]): T[] => {
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [order[i], order[j]] = [order[j], order[i]];
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+    if (exRow?.shuffle_questions) order = fy(order);
+    const perms: Record<string, number[]> = {};
+    if (exRow?.shuffle_options) {
+      const qrows = await tx`select id, type, content from questions where id in ${tx(order)}`;
+      for (const q of qrows as unknown as Array<{ id: string; type: string; content: { options?: string[] } }>) {
+        if (q.type === "pg" && Array.isArray(q.content.options) && q.content.options.length > 1) {
+          perms[q.id] = fy(q.content.options.map((_, k) => k));
+        }
       }
     }
+    const questionOrderPayload = { order, perms };
     // Deadline = min(now + duration, exam.ends_at jika ada).
     const durMs = Date.now() + dur * 60_000;
     const examEnd = endsAt ? new Date(endsAt).getTime() : Number.POSITIVE_INFINITY;
     const deadline = new Date(Math.min(durMs, examEnd)).toISOString();
     const ins = await tx`insert into exam_sessions
       (school_id, exam_id, student_id, deadline_at, question_order)
-      values (${stu.sid}, ${examId}, ${stu.uid}, ${deadline}, ${order as unknown as string})
+      values (${stu.sid}, ${examId}, ${stu.uid}, ${deadline},
+              ${questionOrderPayload as unknown as string})
       returning id`;
     return (ins[0] as { id: string }).id;
   }).catch((e) => ({ error: (e as Error).message }));
@@ -277,19 +293,42 @@ student.get("/s/take/:sid", async (c) => {
     };
     if (sess.status === "submitted") return { done: true, title: sess.title };
     if (sess.status === "locked") return { locked: true, title: sess.title };
-    const order = sess.question_order as unknown as string[];
+    // Backward compat: question_order dulu array string, sekarang object.
+    const qoRaw = sess.question_order as unknown;
+    const qo: { order: string[]; perms?: Record<string, number[]> } =
+      Array.isArray(qoRaw) ? { order: qoRaw as string[], perms: {} }
+      : (qoRaw as { order: string[]; perms?: Record<string, number[]> });
+    const order = qo.order; const perms = qo.perms ?? {};
     // Load pertanyaan sesuai urutan (tanpa answer_key).
-    const qs = await tx`select id, type, content from questions where id = any(${order})`;
+    const qs = await tx`select id, type, content from questions where id in ${tx(order)}`;
     const map = new Map<string, { type: string; content: { text: string; options?: string[] } }>();
     for (const q of qs as unknown as Array<{ id: string; type: string; content: { text: string; options?: string[] } }>) {
       map.set(q.id, { type: q.type, content: q.content });
     }
-    const questions = order.map((qid, i) => ({ id: qid, pos: i + 1, ...map.get(qid)! }));
-    // Jawaban sebelumnya.
+    // Terapkan permutasi opsi (jika ada) di sisi server supaya klien tidak
+    // perlu tahu urutan asli — indeks yang dikirim balik ketika save sudah
+    // di-remap oleh klien jadi indeks asli (lihat script).
+    const questions = order.map((qid, i) => {
+      const q = map.get(qid)!;
+      const perm = perms[qid];
+      let content = q.content;
+      if (perm && q.content.options) {
+        content = { ...q.content, options: perm.map((k) => q.content.options![k]) };
+      }
+      return { id: qid, pos: i + 1, type: q.type, content, perm: perm ?? null };
+    });
+    // Jawaban sebelumnya. Jika soal pakai perm, remap index asli → index tampilan.
     const prev = await tx`select question_id, answer from answers where session_id = ${sessionId}`;
     const answers: Record<string, { index?: number; text?: string }> = {};
     for (const a of prev as unknown as Array<{ question_id: string; answer: { index?: number; text?: string } | null }>) {
-      if (a.answer) answers[a.question_id] = a.answer;
+      if (!a.answer) continue;
+      const ans = { ...a.answer };
+      const perm = perms[a.question_id];
+      if (perm && typeof ans.index === "number") {
+        const displayIdx = perm.indexOf(ans.index);
+        if (displayIdx >= 0) ans.index = displayIdx;
+      }
+      answers[a.question_id] = ans;
     }
     return {
       title: sess.title, deadline: sess.deadline_at, questions, answers,
@@ -395,10 +434,16 @@ student.get("/s/take/:sid", async (c) => {
       }
       async function save(qid, payload) {
         A[qid] = Object.assign({}, A[qid] || {}, payload); render();
+        // Jika soal pakai perm (shuffle_options), remap index tampilan → asli
+        // sebelum kirim. Simpan juga indeks tampilan di cache lokal supaya
+        // highlight tetap konsisten.
+        const q = Q.find((x) => x.id === qid);
+        let outPayload = Object.assign({}, payload);
+        if (q && q.perm && typeof payload.index === 'number') outPayload.index = q.perm[payload.index];
         await fetch('/s/take/' + D.sessionId + '/answer', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(Object.assign({ question_id: qid }, payload)),
+          body: JSON.stringify(Object.assign({ question_id: qid }, outPayload)),
         });
       }
       document.getElementById('prev').onclick = () => { if (i > 0) { i--; render(); } };
