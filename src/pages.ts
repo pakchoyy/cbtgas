@@ -4,17 +4,51 @@
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
+import { SHARED_CSS } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
-const base = (title: string, body: string) => `<!doctype html>
+// Navigasi utama staf. Item "Alat" khusus admin; halamannya menjaga
+// hak akses sendiri, jadi aman ditampilkan ke semua staf.
+const NAV = [
+  ["/app", "Beranda"], ["/app/exams", "Ujian"], ["/app/exam-groups", "Rangkaian"],
+  ["/app/questions", "Bank soal"], ["/app/passages", "Bacaan"], ["/app/categories", "Kategori"],
+  ["/app/pin-resets", "Reset PIN"],
+] as const;
+const TOOLS = [
+  ["/app/users", "Staf"], ["/app/shared-banks", "Bank publik"], ["/app/bulk", "Operasi massal"],
+  ["/app/audit", "Audit log"], ["/app/restore", "Pulihkan backup"],
+] as const;
+
+const topbar = () => `
+<header class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="/app" aria-label="cbtgas, beranda"><span class="brand-dot" aria-hidden="true">C</span>cbtgas</a>
+    <nav class="nav" aria-label="Utama">
+      ${NAV.map(([href, label]) => `<a href="${href}" data-i18n-src="${label}">${label}</a>`).join("")}
+      <details class="tools"><summary>Alat</summary>
+        <div class="tools-menu">${TOOLS.map(([href, label]) => `<a href="${href}">${label}</a>`).join("")}</div>
+      </details>
+    </nav>
+    <div class="top-actions">
+      <button type="button" class="ghost" id="toggleTheme" title="Ganti tema">Tema</button>
+      <button type="button" class="ghost" id="toggleLang" title="Ganti bahasa">ID/EN</button>
+      <form method="post" action="/auth/logout"><button type="submit" class="ghost" data-i18n-src="Keluar">Keluar</button></form>
+    </div>
+  </div>
+</header>`;
+
+const base = (title: string, body: string, opts: { nav?: boolean } = {}) => `<!doctype html>
 <html lang="id">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · cbtgas</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#14213D">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
@@ -29,7 +63,9 @@ const base = (title: string, body: string) => `<!doctype html>
   const I18N = {
     en: {
       'Keluar':'Logout', 'Kelola staf':'Manage staff', 'Audit log':'Audit log',
-      'Reset PIN siswa':'Reset student PIN', '🌓 Tema':'🌓 Theme',
+      'Reset PIN siswa':'Reset student PIN', 'Beranda':'Home', 'Ujian':'Exams',
+      'Rangkaian':'Series', 'Bank soal':'Question bank', 'Bacaan':'Passages',
+      'Kategori':'Categories', 'Reset PIN':'PIN resets',
       'Daftar siswa':'Student list', 'Tambah siswa':'Add student',
       'Tambah kelas':'Add class', 'Kelas':'Classes', 'Siswa':'Students',
       'Download CSV':'Download CSV', 'Live monitoring':'Live monitoring',
@@ -47,65 +83,81 @@ const base = (title: string, body: string) => `<!doctype html>
     });
   }
 </script>
-<style>
-  :root { color-scheme: light dark; --fg:#111; --mut:#555; --bg:#fafafa; --card:#fff; --bd:#e5e5e5; --accent:#2563eb; --danger:#b91c1c; }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) { --fg:#eee; --mut:#aaa; --bg:#0b0b0c; --card:#17181b; --bd:#2a2b30; }
+<style>${SHARED_CSS}
+  /* Staf app shell */
+  main { max-width: 1080px; margin: 0 auto; padding: 28px 20px 64px; }
+  body.public main { max-width: 560px; padding-top: 8vh; }
+  .topbar { position: sticky; top: 0; z-index: 40; background: var(--ink); color: #fff; }
+  .topbar-in { max-width: 1080px; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; gap: 20px; min-height: 56px; }
+  .brand { display:inline-flex; align-items:center; gap:10px; color:#fff; text-decoration:none; font-weight:800; letter-spacing:-.01em; font-size:17px; flex:0 0 auto; }
+  .brand-dot { width:26px; height:26px; border-radius:50%; background:var(--pencil); color:var(--ink); display:grid; place-items:center; font-size:13px; font-weight:800; }
+  .nav { display:flex; align-items:center; gap:2px; flex:1; min-width:0; overflow-x:auto; scrollbar-width:none; }
+  .nav::-webkit-scrollbar { display:none; }
+  .nav a, .tools summary { color: rgba(255,255,255,.72); text-decoration:none; padding: 8px 12px; border-radius: 8px; font-size:14px; font-weight:500; white-space:nowrap; cursor:pointer; min-height:40px; display:inline-flex; align-items:center; }
+  .nav a:hover, .tools summary:hover { color:#fff; background: rgba(255,255,255,.08); }
+  .nav a[aria-current="page"] { color:#fff; background: rgba(255,255,255,.12); box-shadow: inset 0 -2px 0 var(--pencil); }
+  .tools { position: relative; }
+  .tools summary { list-style:none; }
+  .tools summary::-webkit-details-marker { display:none; }
+  .tools summary::after { content:""; width:6px; height:6px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform: rotate(45deg) translate(-2px,-2px); margin-left:8px; }
+  .tools-menu { position: fixed; margin-top: 6px; background: var(--surface); color: var(--fg); border:1px solid var(--line); border-radius: 12px; padding: 6px; min-width: 200px; box-shadow: 0 16px 40px rgba(20,33,61,.18); }
+  .tools-menu a { display:flex; color: var(--fg); padding: 10px 12px; border-radius:8px; }
+  .tools-menu a:hover { background: var(--paper); color: var(--fg); }
+  .top-actions { display:flex; gap:4px; align-items:center; flex:0 0 auto; }
+  .top-actions form { margin:0; }
+  .top-actions .ghost { color: rgba(255,255,255,.8); border-color: transparent; background: transparent; padding: 8px 10px; font-size:13px; }
+  .top-actions .ghost:hover { background: rgba(255,255,255,.1); color:#fff; }
+  footer { color:var(--mut); font-size:12px; text-align:center; margin-top:40px; }
+  #installCard { position:fixed; bottom:16px; right:16px; max-width:300px; margin:0; box-shadow: 0 16px 40px rgba(20,33,61,.22); z-index: 50; }
+  @media (max-width: 760px) {
+    .topbar-in { flex-wrap: wrap; gap: 0 12px; padding: 8px 12px 0; }
+    .brand { min-height: 44px; }
+    .top-actions { margin-left:auto; }
+    .nav { order: 3; flex-basis: 100%; margin: 0 -12px; padding: 0 8px 6px; }
+    main { padding: 20px 14px 56px; }
+    body.public main { padding-top: 32px; }
   }
-  :root[data-theme="dark"] { --fg:#eee; --mut:#aaa; --bg:#0b0b0c; --card:#17181b; --bd:#2a2b30; color-scheme: dark; }
-  :root[data-theme="light"] { color-scheme: light; }
-  * { box-sizing: border-box; }
-  body { margin:0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:var(--fg); background:var(--bg); }
-  main { max-width: 560px; margin: 48px auto; padding: 0 20px; }
-  .card { background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:24px; margin-bottom:16px; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  h2 { font-size: 16px; margin: 0 0 12px; }
-  p.sub { color:var(--mut); margin: 0 0 16px; }
-  label { display:block; font-size:13px; color:var(--mut); margin-top:12px; margin-bottom:4px; }
-  input, select { width:100%; padding:10px 12px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font: inherit; }
-  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-  button, .btn { display:inline-flex; align-items:center; gap:10px; padding:10px 16px; border-radius:8px; border:1px solid var(--bd); background:var(--card); color:var(--fg); font: inherit; cursor:pointer; text-decoration:none; }
-  button.primary, .btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-  button:hover, .btn:hover { filter: brightness(0.97); }
-  .row { display:flex; gap:8px; flex-wrap: wrap; margin-top: 16px; }
-  .muted { color:var(--mut); font-size: 13px; }
-  table { width:100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align:left; padding:8px 10px; border-bottom: 1px solid var(--bd); font-size: 14px; }
-  th { color: var(--mut); font-weight: 500; }
-  .err { color: var(--danger); font-size: 13px; margin-top: 10px; }
-  .g { width:18px; height:18px; }
-  footer { color:var(--mut); font-size:12px; text-align:center; margin-top:24px; }
-  code { background: var(--bg); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--bd); font-size: 12px; }
-  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 12px; }
-  button.danger { color: var(--danger); border-color: var(--bd); background: transparent; }
-  button.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
-  dialog { max-width: 420px; width: 92%; border: 1px solid var(--bd); border-radius: 12px; background: var(--card); color: var(--fg); padding: 20px; }
-  dialog::backdrop { background: rgba(0,0,0,.5); }
-  main { max-width: 820px; }
-  .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; border:1px solid var(--bd); }
-  .pill.open { background: #16a34a1a; border-color:#16a34a; color:#16a34a; }
-  .pill.closed { background: #ef44441a; border-color:#ef4444; color:#ef4444; }
-  .pill.draft { background: var(--bg); }
-  .pill.scheduled { background: #eab3081a; border-color:#eab308; color:#854d0e; }
-  .pick { max-height: 320px; overflow:auto; border:1px solid var(--bd); border-radius:8px; padding:8px; margin:12px 0; }
-  .qpick { display:flex; gap:10px; padding:6px 4px; border-bottom: 1px solid var(--bd); align-items:flex-start; }
-  .qpick:last-child { border-bottom: none; }
-  .qpick input { margin-top: 3px; flex:0 0 auto; }
-  .optrow { display:flex; gap:8px; align-items:center; margin: 6px 0; }
-  .optrow input[type=text], .optrow input:not([type]) { flex:1; }
-  textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>
 </head>
-<body>
+<body class="${opts.nav === false ? "public" : "app"}">
+${opts.nav === false ? "" : topbar()}
 <main>
 ${body}
-<footer>cbtgas · demo multi-sekolah, Cloudflare + Neon</footer>
-<div id="installCard" class="card" hidden style="position:fixed; bottom:16px; right:16px; max-width:280px; margin:0; box-shadow:0 10px 30px rgba(0,0,0,.2)">
-  <p style="margin:0 0 8px"><b>Pasang cbtgas sebagai aplikasi?</b></p>
+<footer>cbtgas · CBT sekolah</footer>
+<div id="installCard" class="card" hidden>
+  <p style="margin:0 0 10px"><b>Pasang cbtgas di perangkat ini?</b></p>
   <div class="row" style="margin:0"><button class="primary" id="installBtn">Pasang</button><button id="installClose">Nanti</button></div>
 </div>
 </main>
 <script>
+  // Tandai menu aktif.
+  (function () {
+    const p = location.pathname;
+    let best = null;
+    document.querySelectorAll('.nav a').forEach((a) => {
+      const h = a.getAttribute('href');
+      if (p === h || (h !== '/app' && p.startsWith(h))) { if (!best || h.length > best.getAttribute('href').length) best = a; }
+    });
+    if (best) best.setAttribute('aria-current', 'page');
+    const tools = document.querySelector('.tools');
+    document.addEventListener('click', (e) => { if (tools && !tools.contains(e.target)) tools.open = false; });
+  })();
+  // Tema: sistem terang gelap sistem. Bahasa: id ↔ en.
+  document.getElementById('toggleTheme')?.addEventListener('click', () => {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'dark' ? null : (cur === 'light' ? 'dark' : 'light');
+    try {
+      if (next) { document.documentElement.setAttribute('data-theme', next); localStorage.setItem('theme', next); }
+      else { document.documentElement.removeAttribute('data-theme'); localStorage.removeItem('theme'); }
+    } catch (_) {}
+  });
+  document.getElementById('toggleLang')?.addEventListener('click', () => {
+    let cur = 'id'; try { cur = localStorage.getItem('lang') || 'id'; } catch (_) {}
+    const next = cur === 'id' ? 'en' : 'id';
+    try { localStorage.setItem('lang', next); } catch (_) {}
+    applyI18n(next);
+  });
+  try { applyI18n(localStorage.getItem('lang') || 'id'); } catch (_) {}
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   let deferred;
   window.addEventListener('beforeinstallprompt', (e) => {
@@ -129,39 +181,46 @@ const googleBtn = (mode: "login" | "register", label: string) => `
 <a class="btn primary" href="/auth/google/start?mode=${mode}">
   <svg class="g" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.6 32.9 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.1-11.3-7.5l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.6l6.2 5.2C41.1 36 44 30.5 44 24c0-1.3-.1-2.3-.4-3.5z"/></svg>
   ${label}
-</a>`;
+</a>`.replace('class="btn primary"', 'class="btn"');
 
 pages.get("/", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (sess) {
     return c.redirect("/app");
   }
-  return c.html(base("Masuk / Daftar", `
-    <div class="card">
-      <h1>Selamat datang di cbtgas</h1>
-      <p class="sub">Platform CBT multi-sekolah untuk SD, SMP, dan SMA.</p>
-      <div class="row">
-        ${googleBtn("login", "Masuk dengan Google")}
-        ${googleBtn("register", "Daftarkan sekolah baru")}
-      </div>
-      <p class="muted" style="margin-top:16px">
-        Masuk pakai email Google admin/guru yang sudah diundang di sekolah,
-        atau daftarkan sekolah baru — email login otomatis jadi admin pertama.
-      </p>
-    </div>
-    <div class="card">
-      <h2>Lihat data demo</h2>
-      <p class="muted">Sekolah <code>demo-sma</code> sudah di-seed dengan 3 siswa.</p>
-      <div class="row">
-        <a class="btn" href="/demo">Buka daftar siswa (read-only)</a>
-        <a class="btn" href="/s/login">Masuk sebagai siswa</a>
+  return c.html(base("Masuk", `
+    <style>
+      .hero { padding: 8px 0 28px; }
+      .hero .brand-lockup { display:flex; align-items:center; gap:10px; font-weight:800; font-size:18px; margin-bottom: 36px; }
+      .hero .brand-lockup span { width:30px; height:30px; border-radius:50%; background:var(--pencil); color:#14213D; display:grid; place-items:center; font-size:14px; }
+      .hero h1 { font-size: clamp(34px, 7vw, 48px); line-height: 1.04; letter-spacing: -.035em; margin-bottom: 14px; }
+      .hero p { font-size: 17px; color: var(--mut); margin: 0 0 26px; }
+      .bubbles { display:flex; gap:10px; margin: 0 0 30px; }
+      .bubbles i { width:34px; height:34px; border-radius:50%; border:2px solid var(--fg); display:grid; place-items:center; font-style:normal; font-weight:700; font-size:13px; }
+      .bubbles i.on { background: var(--pencil); border-color: var(--pencil); color:#14213D; }
+      .entry { display:grid; gap: 10px; }
+      .entry .btn { width:100%; min-height: 50px; font-size: 15px; }
+      .split { border-top: 1px solid var(--line); margin-top: 26px; padding-top: 18px; display:flex; flex-wrap:wrap; gap: 6px 18px; font-size: 14px; }
+    </style>
+    <section class="hero">
+      <div class="brand-lockup"><span>C</span>cbtgas</div>
+      <h1>Ujian sekolah, tanpa lembar kertas.</h1>
+      <p>Bank soal, jadwal ujian, pengawasan, dan nilai untuk SD, SMP, dan SMA dalam satu tempat.</p>
+      <div class="bubbles" aria-hidden="true"><i>A</i><i>B</i><i class="on">C</i><i>D</i></div>
+      <div class="entry">
+        <a class="btn primary" href="/s/login">Masuk sebagai siswa</a>
+        ${googleBtn("login", "Masuk sebagai guru dengan Google")}
         ${c.env.APP_ENV !== "production" ? `
           <form method="post" action="/auth/dev-login" style="margin:0">
-            <button class="primary" type="submit">Masuk sebagai admin demo</button>
+            <button type="submit" class="btn" style="width:100%">Coba sebagai admin demo</button>
           </form>` : ""}
       </div>
-    </div>
-  `));
+      <div class="split">
+        <a href="/auth/google/start?mode=register">Daftarkan sekolah baru</a>
+        <a href="/demo">Lihat data contoh</a>
+      </div>
+    </section>
+  `, { nav: false }));
 });
 
 pages.get("/register", (c) => {
@@ -216,7 +275,7 @@ pages.get("/register", (c) => {
         err.hidden = false;
       });
     </script>
-  `));
+  `, { nav: false }));
 });
 
 pages.get("/app", async (c) => {
@@ -273,29 +332,18 @@ pages.get("/app", async (c) => {
     </tr>`).join("") || `<tr><td colspan="6" class="muted">Belum ada siswa.</td></tr>`;
 
   const ov = overview as { students: string; open_exams: string; online: string; week_submits: string; avg_score: string };
-  return c.html(base("Dashboard", `
-    <div class="card">
-      <h1>${esc(school?.name ?? "Sekolah")} <span class="muted" style="font-weight:normal">· ${esc(school?.level ?? "")}</span></h1>
-      <p class="sub">Masuk sebagai <b>${esc(sess.email)}</b> (${esc(sess.role)}) · kode <code>${esc(school?.code ?? "")}</code></p>
-      <div class="row">
-        <form method="post" action="/auth/logout" style="margin:0">
-          <button type="submit" data-i18n-src="Keluar">Keluar</button>
-        </form>
-        ${sess.role === "admin" ? `<a class="btn" href="/app/users" data-i18n-src="Kelola staf">Kelola staf</a><a class="btn" href="/app/audit" data-i18n-src="Audit log">Audit log</a><a class="btn" href="/app/bulk">Bulk operasi</a><a class="btn" href="/app/shared-banks">Bank publik</a>` : ""}
-        <a class="btn" href="/app/pin-resets" data-i18n-src="Reset PIN siswa">Reset PIN siswa</a>
-        <button type="button" id="toggleTheme" title="Ganti tema terang/gelap" data-i18n-src="🌓 Tema">🌓 Tema</button>
-        <button type="button" id="toggleLang" title="Switch language">🌐 ID / EN</button>
-      </div>
-    </div>
+  return c.html(base("Beranda", `
+    <header style="margin: 4px 0 20px">
+      <h1>${esc(school?.name ?? "Sekolah")}</h1>
+      <p class="sub" style="margin:0">${esc(school?.level ?? "")} · kode sekolah <code>${esc(school?.code ?? "")}</code> · masuk sebagai ${esc(sess.email)}</p>
+    </header>
 
-    <div class="card">
-      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr))">
-        <div style="text-align:center"><div style="font-size:24px; font-weight:600; color:var(--accent)">${ov.students}</div><div class="muted" style="font-size:12px">Siswa aktif</div></div>
-        <div style="text-align:center"><div style="font-size:24px; font-weight:600; color:#16a34a">${ov.open_exams}</div><div class="muted" style="font-size:12px">Ujian terbuka</div></div>
-        <div style="text-align:center"><div style="font-size:24px; font-weight:600; color:#eab308">${ov.online}</div><div class="muted" style="font-size:12px">Online kini</div></div>
-        <div style="text-align:center"><div style="font-size:24px; font-weight:600">${ov.week_submits}</div><div class="muted" style="font-size:12px">Submit 7 hari</div></div>
-        <div style="text-align:center"><div style="font-size:24px; font-weight:600">${ov.avg_score}</div><div class="muted" style="font-size:12px">Rata-rata nilai</div></div>
-      </div>
+    <div class="card stats">
+      <div class="stat live"><b>${ov.online}</b><span>Sedang mengerjakan</span></div>
+      <div class="stat"><b>${ov.open_exams}</b><span>Ujian dibuka</span></div>
+      <div class="stat"><b>${ov.week_submits}</b><span>Dikumpulkan 7 hari</span></div>
+      <div class="stat"><b>${ov.avg_score}</b><span>Rata-rata nilai</span></div>
+      <div class="stat"><b>${ov.students}</b><span>Siswa aktif</span></div>
     </div>
 
     <div class="card">
@@ -380,21 +428,6 @@ pages.get("/app", async (c) => {
     <script>
       const $ = (q, r=document) => r.querySelector(q);
       const dlg = $('#dlg'), fedit = $('#fedit'), erredit = $('#erredit');
-      // Dark mode toggle (3 state cycle: system → light → dark → system).
-      $('#toggleTheme')?.addEventListener('click', () => {
-        const cur = document.documentElement.getAttribute('data-theme');
-        const next = cur === 'dark' ? null : (cur === 'light' ? 'dark' : 'light');
-        if (next) { document.documentElement.setAttribute('data-theme', next); localStorage.setItem('theme', next); }
-        else { document.documentElement.removeAttribute('data-theme'); localStorage.removeItem('theme'); }
-      });
-      $('#toggleLang')?.addEventListener('click', () => {
-        const cur = localStorage.getItem('lang') || 'id';
-        const next = cur === 'id' ? 'en' : 'id';
-        localStorage.setItem('lang', next);
-        applyI18n(next);
-      });
-      // Terapkan bahasa pada load.
-      applyI18n(localStorage.getItem('lang') || 'id');
 
       async function send(url, method, body) {
         const r = await fetch(url, {
@@ -532,7 +565,7 @@ pages.get("/app/exam-groups", async (c) => {
   return c.html(base("Grup ujian", `
     <div class="card">
       <h1>Grup / rangkaian ujian</h1>
-      <p class="sub"><a href="/app">← Dashboard</a></p>
+      <p class="sub"><a href="/app">Dashboard</a></p>
       <form id="fg">
         <div class="grid">
           <div><label>Judul grup</label><input name="title" required placeholder="Paket Persiapan UTBK"></div>
@@ -590,7 +623,7 @@ pages.get("/app/exams", async (c) => {
   return c.html(base("Ujian", `
     <div class="card">
       <h1>Ujian</h1>
-      <p class="sub"><a href="/app">← Dashboard</a> · <a href="/app/questions">Bank soal</a></p>
+      <p class="sub"><a href="/app">Dashboard</a> · <a href="/app/questions">Bank soal</a></p>
       <form id="fex">
         <div class="grid">
           <div><label>Judul</label><input name="title" required></div>
@@ -774,7 +807,7 @@ pages.get("/app/exams/:id", async (c) => {
       ? ` · <a href="/app/sessions/${esc(r.session_id)}/grade">nilai uraian</a>`
       : "";
     const certBtn = r.status === "submitted" && r.final_score != null
-      ? ` · <a href="/app/sessions/${esc(r.session_id)}/certificate">🏆 sertifikat</a>`
+      ? ` · <a href="/app/sessions/${esc(r.session_id)}/certificate">sertifikat</a>`
       : "";
     const unlockBtn = r.status === "locked"
       ? ` · <a href="#" data-unlock="${esc(r.session_id)}">buka kembali</a>` : "";
@@ -796,7 +829,7 @@ pages.get("/app/exams/:id", async (c) => {
   return c.html(base(ex.title, `
     <div class="card">
       <h1>${esc(ex.title)} <span class="muted" style="font-weight:normal">· ${esc(ex.kind)} · ${ex.duration_minutes} mnt</span></h1>
-      <p class="sub"><a href="/app/exams">← Daftar ujian</a></p>
+      <p class="sub"><a href="/app/exams">Daftar ujian</a></p>
       <div class="row">
         Status: <span class="pill ${esc(ex.status)}">${esc(ex.status)}</span>
         <button data-status="open" ${ex.status === "open" ? "disabled" : ""}>Buka</button>
@@ -838,7 +871,7 @@ pages.get("/app/exams/:id", async (c) => {
         <a class="btn" href="/app/exams/${esc(examId)}/lab">Mode lab komputer</a>
         <a class="btn" href="/app/exams/${esc(examId)}/items">Analisis butir soal</a>
         <a class="btn" href="/app/exams/${esc(examId)}/insights">Insights (distraktor + chat)</a>
-        <a class="btn" href="/app/exams/${esc(examId)}/print">🖨 Cetak soal</a>
+        <a class="btn" href="/app/exams/${esc(examId)}/print">Cetak soal</a>
       </div>
       <table>
         <thead><tr><th>Siswa</th><th>Kelas</th><th>Status</th><th>Auto</th><th>Manual</th><th>Final</th></tr></thead>
@@ -915,7 +948,7 @@ pages.get("/app/pin-resets", async (c) => {
   return c.html(base("Reset PIN siswa", `
     <div class="card">
       <h1>Permintaan reset PIN siswa</h1>
-      <p class="sub"><a href="/app">← Dashboard</a></p>
+      <p class="sub"><a href="/app">Dashboard</a></p>
       <p class="muted">Setujui akan menghasilkan PIN 6-digit baru. Tampilkan ke siswa, lalu klik "Sudah disampaikan" supaya PIN polos dihapus dari tampilan.</p>
     </div>
     <div class="card">
@@ -1009,9 +1042,9 @@ pages.get("/app/exams/:id/print", async (c) => {
   @media print { body { background: #fff; } main { max-width: none; margin: 0; padding: 0; } .no-print { display: none; } }
 </style></head><body><main>
   <div class="no-print">
-    <button onclick="window.print()">🖨 Cetak / Simpan sebagai PDF</button>
+    <button onclick="window.print()">Cetak atau simpan PDF</button>
     <a href="?key=${showKey ? "0" : "1"}" style="margin-left:12px">${showKey ? "Sembunyikan" : "Tampilkan"} kunci</a>
-    <a href="/app/exams/${esc(examId)}" style="margin-left:12px">← Detail ujian</a>
+    <a href="/app/exams/${esc(examId)}" style="margin-left:12px">Detail ujian</a>
   </div>
   <h1>${esc(ex.title)}</h1>
   <p class="meta">${esc(ex.kind)} · Durasi ${ex.duration_minutes} menit · ${(data.qs as unknown as Q[]).length} soal${showKey ? " · <b>Lembar Kunci</b>" : ""}</p>
@@ -1076,10 +1109,10 @@ pages.get("/app/sessions/:sid/certificate", async (c) => {
   @media print { body { background: #fff; } main { max-width: none; margin: 0; padding: 32px 40px; border-color: #c58f3a; } .no-print { display: none; } }
 </style></head><body><main>
   <div class="no-print">
-    <button onclick="window.print()">🖨 Cetak / Simpan sebagai PDF</button>
-    <a href="/app/exams" style="margin-left:8px; font-family: sans-serif">← Daftar ujian</a>
+    <button onclick="window.print()">Cetak atau simpan PDF</button>
+    <a href="/app/exams" style="margin-left:8px; font-family: sans-serif">Daftar ujian</a>
   </div>
-  <div class="seal">${passed ? "🏆" : "📜"}</div>
+  
   <h1>${passed ? "Sertifikat Pencapaian" : "Keterangan Ujian"}</h1>
   <h2>${esc(d.school_name)} · ${esc(d.level)}</h2>
   <p class="body-txt">Diberikan kepada:</p>
@@ -1106,7 +1139,7 @@ pages.get("/app/sessions/:sid/certificate", async (c) => {
 });
 
 // Rapor cetak per siswa: ringkasan nilai + tanda tangan + QR verifikasi.
-// Dibuka di browser → Ctrl/Cmd+P → Save as PDF (CSS @media print disiapkan).
+// Dibuka di browser Ctrl/Cmd+P Save as PDF (CSS @media print disiapkan).
 pages.get("/app/students/:id/report", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
@@ -1212,8 +1245,8 @@ pages.get("/app/students/:id/report", async (c) => {
   }
 </style></head><body><main>
   <div class="no-print">
-    <button onclick="window.print()">🖨 Cetak / Simpan sebagai PDF</button>
-    <a href="/app/students/${esc(studentId)}/analytics" style="margin-left:8px">← Analitik</a>
+    <button onclick="window.print()">Cetak atau simpan PDF</button>
+    <a href="/app/students/${esc(studentId)}/analytics" style="margin-left:8px">Analitik</a>
   </div>
   <div class="head">
     <div>
@@ -1346,7 +1379,7 @@ pages.get("/app/students/:id/analytics", async (c) => {
   return c.html(base(`Analitik — ${info.name}`, `
     <div class="card">
       <h1>${esc(info.name)}</h1>
-      <p class="sub"><code>${esc(info.username)}</code> · <a href="/app">← Dashboard</a> · <a href="/app/students/${esc(studentId)}/report">📄 Rapor cetak</a></p>
+      <p class="sub"><code>${esc(info.username)}</code> · <a href="/app">Dashboard</a> · <a href="/app/students/${esc(studentId)}/report">Rapor cetak</a></p>
     </div>
     <div class="card">
       <h2>Tren nilai akhir</h2>
@@ -1363,11 +1396,11 @@ pages.get("/app/students/:id/analytics", async (c) => {
 pages.get("/app/restore", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.html(base("Restore", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">← Dashboard</a></div>`));
+  if (sess.role !== "admin") return c.html(base("Restore", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
   return c.html(base("Restore backup", `
     <div class="card">
       <h1>Restore backup JSON</h1>
-      <p class="sub"><a href="/app">← Dashboard</a></p>
+      <p class="sub"><a href="/app">Dashboard</a></p>
       <p class="muted">Upload file <code>backup-*.json</code> hasil ekspor. Sekolah baru akan dibuat dengan kode yang Anda tentukan di bawah; ID lama di-remap. Data operasional (sesi/jawaban/skor) <b>tidak</b> ikut.</p>
       <form id="f">
         <label>Kode sekolah baru <span class="muted">(3–32 huruf kecil/digit/strip, belum terpakai)</span></label>
@@ -1402,7 +1435,7 @@ pages.get("/app/restore", async (c) => {
 pages.get("/app/bulk", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.html(base("Bulk", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">← Dashboard</a></div>`));
+  if (sess.role !== "admin") return c.html(base("Bulk", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [classes, exams] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
     const cl = await tx`select id, name from classes order by name`;
@@ -1418,7 +1451,7 @@ pages.get("/app/bulk", async (c) => {
   return c.html(base("Bulk operasi", `
     <div class="card">
       <h1>Operasi massal</h1>
-      <p class="sub"><a href="/app">← Dashboard</a></p>
+      <p class="sub"><a href="/app">Dashboard</a></p>
     </div>
     <div class="card">
       <h2>Reset PIN sekelas</h2>
@@ -1477,7 +1510,7 @@ pages.get("/app/bulk", async (c) => {
 pages.get("/app/audit", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.html(base("Audit", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">← Dashboard</a></div>`));
+  if (sess.role !== "admin") return c.html(base("Audit", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
     tx`select id, actor_email, actor_role, action, entity, entity_id, details, created_at
@@ -1496,7 +1529,7 @@ pages.get("/app/audit", async (c) => {
   return c.html(base("Audit log", `
     <div class="card">
       <h1>Audit log</h1>
-      <p class="sub"><a href="/app">← Dashboard</a> · 200 aktivitas terbaru.</p>
+      <p class="sub"><a href="/app">Dashboard</a> · 200 aktivitas terbaru.</p>
     </div>
     <div class="card">
       <table style="width:100%; border-collapse:collapse">
@@ -1510,7 +1543,7 @@ pages.get("/app/audit", async (c) => {
 pages.get("/app/users", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.html(base("Staf", `<div class="card"><p class="err">Hanya admin yang boleh melihat halaman ini.</p><a class="btn" href="/app">← Dashboard</a></div>`));
+  if (sess.role !== "admin") return c.html(base("Staf", `<div class="card"><p class="err">Hanya admin yang boleh melihat halaman ini.</p><a class="btn" href="/app">Dashboard</a></div>`));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const users = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
     tx`select id, email, name, role, active, google_sub is not null as linked
@@ -1538,7 +1571,7 @@ pages.get("/app/users", async (c) => {
   return c.html(base("Staf sekolah", `
     <div class="card">
       <h1>Staf sekolah</h1>
-      <p class="sub"><a href="/app">← Dashboard</a></p>
+      <p class="sub"><a href="/app">Dashboard</a></p>
       <form id="finv">
         <div class="grid">
           <div><label>Email staf</label><input name="email" type="email" required placeholder="guru@sekolah.id"></div>
@@ -1601,12 +1634,12 @@ pages.get("/app/users", async (c) => {
 });
 
 // Bacaan untuk reading comprehension — satu bacaan dapat dirujuk banyak soal.
-// Bank soal publik: pilih kategori → publish → siapa saja bisa unduh JSON-nya
+// Bank soal publik: pilih kategori publish siapa saja bisa unduh JSON-nya
 // via URL unik /public/banks/<slug>.
 pages.get("/app/shared-banks", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.html(base("Bank publik", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">← Dashboard</a></div>`));
+  if (sess.role !== "admin") return c.html(base("Bank publik", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [banks, categories] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
     const b = await tx`select id, slug, title, description, download_count,
@@ -1630,7 +1663,7 @@ pages.get("/app/shared-banks", async (c) => {
   return c.html(base("Bank publik", `
     <div class="card">
       <h1>Bank soal publik</h1>
-      <p class="sub"><a href="/app">← Dashboard</a> · siapa saja bisa unduh via URL slug tanpa login.</p>
+      <p class="sub"><a href="/app">Dashboard</a> · siapa saja bisa unduh via URL slug tanpa login.</p>
       <form id="fsb">
         <div class="grid">
           <div><label>Judul</label><input name="title" required placeholder="Bank Matematika SMA kelas X"></div>
@@ -1688,7 +1721,7 @@ pages.get("/app/passages", async (c) => {
   return c.html(base("Bacaan", `
     <div class="card">
       <h1>Bacaan (reading comprehension)</h1>
-      <p class="sub"><a href="/app/questions">← Bank soal</a></p>
+      <p class="sub"><a href="/app/questions">Bank soal</a></p>
       <form id="fp">
         <label>Judul (opsional)</label>
         <input name="title" placeholder="Kutipan sejarah proklamasi">
@@ -1722,7 +1755,7 @@ pages.get("/app/passages", async (c) => {
   `));
 });
 
-// Lab komputer mode: guru pilih siswa yang hadir, klik mulai → sesi
+// Lab komputer mode: guru pilih siswa yang hadir, klik mulai sesi
 // dibuat untuk mereka semua. Siswa cukup login + buka /s, sesi sudah
 // terdaftar jadi tinggal 'Lanjutkan'.
 pages.get("/app/exams/:id/lab", async (c) => {
@@ -1761,7 +1794,7 @@ pages.get("/app/exams/:id/lab", async (c) => {
   return c.html(base(`Lab — ${ex.title}`, `
     <div class="card">
       <h1>Lab komputer</h1>
-      <p class="sub">${esc(ex.title)} · <a href="/app/exams/${esc(examId)}">← Detail ujian</a></p>
+      <p class="sub">${esc(ex.title)} · <a href="/app/exams/${esc(examId)}">Detail ujian</a></p>
       ${ex.status !== "open" ? `<p class="err">Ujian masih <b>${esc(ex.status)}</b>. Buka ujian terlebih dahulu agar lab-start berfungsi.</p>` : ""}
       <p class="muted">Centang siswa yang hadir di depan komputer, lalu klik <b>Mulai sesi untuk yang dicentang</b>. Sesi mereka langsung dibuat (deadline = sekarang + durasi). Siswa cukup login dan klik 'Lanjutkan'.</p>
     </div>
@@ -1878,7 +1911,7 @@ pages.get("/app/exams/:id/insights", async (c) => {
   return c.html(base(`Insights — ${(ex as { title: string }).title}`, `
     <div class="card">
       <h1>Insights ujian</h1>
-      <p class="sub">${esc((ex as { title: string }).title)} · <a href="/app/exams/${esc(examId)}">← Detail ujian</a></p>
+      <p class="sub">${esc((ex as { title: string }).title)} · <a href="/app/exams/${esc(examId)}">Detail ujian</a></p>
     </div>
     <div class="card">
       <h2>Distractor analysis</h2>
@@ -1963,7 +1996,7 @@ pages.get("/app/exams/:id/items", async (c) => {
   return c.html(base(`Analisis butir — ${(ex as { title: string }).title}`, `
     <div class="card">
       <h1>Analisis butir soal</h1>
-      <p class="sub">${esc((ex as { title: string }).title)} · <a href="/app/exams/${esc(examId)}">← Detail ujian</a></p>
+      <p class="sub">${esc((ex as { title: string }).title)} · <a href="/app/exams/${esc(examId)}">Detail ujian</a></p>
       <p class="muted">
         <b>p-value</b> = proporsi siswa menjawab benar (ideal 0.3–0.7).<br>
         <b>Daya pembeda (D)</b> = benar kelompok atas 25% − benar kelompok bawah 25%
@@ -1993,7 +2026,7 @@ pages.get("/app/exams/:id/live", async (c) => {
   return c.html(base(`Live — ${title}`, `
     <div class="card">
       <h1>Live monitoring</h1>
-      <p class="sub">${esc(title)} · <a href="/app/exams/${esc(examId)}">← Detail ujian</a> · <span id="t" class="muted"></span></p>
+      <p class="sub">${esc(title)} · <a href="/app/exams/${esc(examId)}">Detail ujian</a> · <span id="t" class="muted"></span></p>
     </div>
     <div class="card">
       <table style="width:100%; border-collapse:collapse">
@@ -2048,8 +2081,8 @@ pages.get("/app/exams/:id/live", async (c) => {
               + '<td>' + r.answered + '/' + r.total + ' (' + pct + '%)' + bar + '</td>'
               + '<td>' + vio + '</td>'
               + '<td>' + dot(r.last_seen_at) + ' ' + timeAgo(r.last_seen_at) + '</td>'
-              + '<td><button onclick="openChat(\\'' + r.session_id + '\\', \\'' + escapeHtml(r.student_name).replace(/\\'/g,"") + '\\')" style="padding:4px 8px">💬</button>'
-              + (r.status === "active" ? ' <button onclick="extend(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="+5 menit">⏱+5</button> <button onclick="pauseResume(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Pause/resume">⏸</button> <button onclick="forceSubmit(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Paksa submit">⏹</button>' : "")
+              + '<td><button onclick="openChat(\\'' + r.session_id + '\\', \\'' + escapeHtml(r.student_name).replace(/\\'/g,"") + '\\')" style="padding:4px 8px">Chat</button>'
+              + (r.status === "active" ? ' <button onclick="extend(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Tambah 5 menit">+5 mnt</button> <button onclick="pauseResume(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Jeda atau lanjutkan">Jeda</button> <button onclick="forceSubmit(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Kumpulkan paksa">Kumpulkan</button>' : "")
               + '</td></tr>';
           }).join('');
         } catch (e) { t.textContent = 'Gagal memuat: ' + e; }
@@ -2099,7 +2132,7 @@ pages.get("/app/exams/:id/live", async (c) => {
           const el = document.getElementById('chats');
           if (d.length === 0) { el.innerHTML = '<p class="muted">Belum ada chat.</p>'; }
           else {
-            el.innerHTML = d.map((c) => '<div style="padding:8px; border-bottom:1px solid var(--bd); cursor:pointer" onclick="openChat(\\'' + c.session_id + '\\', \\'' + escapeHtml(c.student_name).replace(/\\'/g,"") + '\\')"><b>' + escapeHtml(c.student_name) + '</b> <span class="muted">· ' + c.msg_count + ' pesan · ' + (c.last_from === 'student' ? '🔔 ' : '') + 'terakhir ' + new Date(c.last_at).toLocaleTimeString('id-ID') + '</span><br><span class="muted" style="font-size:13px">' + escapeHtml((c.last_msg || '').slice(0, 80)) + '</span></div>').join('');
+            el.innerHTML = d.map((c) => '<div style="padding:8px; border-bottom:1px solid var(--bd); cursor:pointer" onclick="openChat(\\'' + c.session_id + '\\', \\'' + escapeHtml(c.student_name).replace(/\\'/g,"") + '\\')"><b>' + escapeHtml(c.student_name) + '</b> <span class="muted">· ' + c.msg_count + ' pesan · ' + (c.last_from === 'student' ? '' : '') + 'terakhir ' + new Date(c.last_at).toLocaleTimeString('id-ID') + '</span><br><span class="muted" style="font-size:13px">' + escapeHtml((c.last_msg || '').slice(0, 80)) + '</span></div>').join('');
           }
           if (activeSid) await loadChat();
         } catch(_){}
@@ -2149,7 +2182,7 @@ pages.get("/app/categories", async (c) => {
   return c.html(base("Kategori soal", `
     <div class="card">
       <h1>Kategori soal</h1>
-      <p class="sub"><a href="/app/questions">← Bank soal</a></p>
+      <p class="sub"><a href="/app/questions">Bank soal</a></p>
       <form id="fc">
         <label>Nama kategori</label>
         <input name="name" required placeholder="Matematika / Bahasa Indonesia / ...">
@@ -2222,7 +2255,7 @@ pages.get("/app/sessions/:sid/grade", async (c) => {
   return c.html(base("Nilai uraian", `
     <div class="card">
       <h1>Nilai uraian — ${esc(info.student_name)}</h1>
-      <p class="sub">Ujian: ${esc(info.title)} · Kelas: ${esc(info.class_name ?? "-")} · <a href="/app/exams/${esc(info.exam_id)}">← Kembali</a></p>
+      <p class="sub">Ujian: ${esc(info.title)} · Kelas: ${esc(info.class_name ?? "-")} · <a href="/app/exams/${esc(info.exam_id)}">Kembali</a></p>
     </div>
     ${items || `<div class="card"><p class="muted">Tidak ada soal uraian di ujian ini.</p></div>`}
     <div class="card">
@@ -2317,7 +2350,7 @@ pages.get("/app/questions", async (c) => {
   return c.html(base("Bank soal", `
     <div class="card">
       <h1>Bank soal</h1>
-      <p class="sub"><a href="/app/exams">← Ujian</a> · <a href="/app/categories">Kategori</a> · <a href="/app/passages">Bacaan</a></p>
+      <p class="sub"><a href="/app/exams">Ujian</a> · <a href="/app/categories">Kategori</a> · <a href="/app/passages">Bacaan</a></p>
       <form id="fq">
         <label>Kategori <span class="muted">(opsional, kelola di /app/categories)</span></label>
         <select name="category_id"><option value="">— tanpa kategori —</option>${catOptsForm}</select>
@@ -2479,7 +2512,7 @@ pages.get("/app/questions", async (c) => {
         audioData = 'data:' + f.type + ';base64,' + b64;
         $$('#audPrev').innerHTML = '<audio controls src="' + audioData + '" style="width:100%"></audio>';
       });
-      // Filter kategori → navigasi
+      // Filter kategori navigasi
       $$('#filterCat').addEventListener('change', (e) => {
         const v = e.target.value;
         location.href = '/app/questions' + (v ? '?category=' + v : '');
@@ -2592,7 +2625,7 @@ pages.get("/demo", async (c) => {
       </table>
       <div class="row"><a class="btn" href="/">Kembali</a></div>
     </div>
-  `));
+  `, { nav: false }));
 });
 
 function esc(s: string): string {

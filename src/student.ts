@@ -9,6 +9,7 @@ import {
 } from "./session";
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
+import { SHARED_CSS } from "./ui";
 
 type Bindings = {
   HYPERDRIVE: Hyperdrive;
@@ -47,39 +48,73 @@ const page = (title: string, body: string) => `<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · cbtgas siswa</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#14213D">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
 <script>(function(){try{var t=localStorage.getItem('theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
-<style>
-  :root { color-scheme: light dark; --fg:#111; --mut:#555; --bg:#fafafa; --card:#fff; --bd:#e5e5e5; --accent:#2563eb; --danger:#b91c1c; --ok:#16a34a; }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --fg:#eee; --mut:#aaa; --bg:#0b0b0c; --card:#17181b; --bd:#2a2b30; } }
-  :root[data-theme="dark"] { --fg:#eee; --mut:#aaa; --bg:#0b0b0c; --card:#17181b; --bd:#2a2b30; color-scheme: dark; }
-  :root[data-theme="light"] { color-scheme: light; }
-  * { box-sizing: border-box; } body { margin:0; font:15px/1.5 system-ui, sans-serif; color:var(--fg); background:var(--bg); }
-  main { max-width: 720px; margin: 32px auto; padding: 0 16px; }
-  .card { background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:20px; margin-bottom:14px; }
-  h1 { font-size: 22px; margin: 0 0 6px; } h2 { font-size: 16px; margin: 0 0 10px; }
-  p.sub { color:var(--mut); margin: 0 0 14px; }
-  label { display:block; font-size:13px; color:var(--mut); margin:12px 0 4px; }
-  input, select { width:100%; padding:10px 12px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font: inherit; }
-  button, .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 16px; border-radius:8px; border:1px solid var(--bd); background:var(--card); color:var(--fg); font:inherit; cursor:pointer; text-decoration:none; }
-  button.primary, .btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
-  .muted { color:var(--mut); font-size:13px; }
-  .err { color:var(--danger); font-size:13px; margin-top:8px; }
-  .q { padding: 14px; border:1px solid var(--bd); border-radius:10px; margin-bottom: 12px; background: var(--card); }
-  .q.active { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .opt { display:flex; gap:10px; align-items:flex-start; padding:8px; border-radius:6px; cursor:pointer; }
-  .opt:hover { background: var(--bg); }
-  .opt input { margin-top:4px; }
-  .nav { display:flex; gap:6px; flex-wrap:wrap; margin:10px 0; }
-  .nav button { padding:6px 10px; min-width: 36px; border-radius: 6px; }
-  .nav button.ans { background: var(--ok); color:#fff; border-color: var(--ok); }
-  .nav button.cur { outline: 2px solid var(--accent); outline-offset:1px; }
-  .timer { font-variant-numeric: tabular-nums; font-weight:600; color: var(--fg); background: var(--bg); border:1px solid var(--bd); border-radius: 6px; padding: 4px 10px; }
-  .timer.warn { color: var(--danger); border-color: var(--danger); }
+<style>${SHARED_CSS}
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 96px; }
+  .q { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px; margin-bottom: 14px; }
+  @media (max-width: 520px) { .q { padding: 16px; border-radius: 16px; } }
+  .q > p:first-of-type { margin-top: 0; }
+  .q p { font-size: 16.5px; line-height: 1.6; }
+
+  /* Opsi jawaban: bulatan LJK. Huruf dibuat dari counter, input asli tetap
+     ada (aksesibel, keyboard), hanya disembunyikan secara visual. */
+  .q { counter-reset: opt; }
+  .opt { position: relative; display:flex; gap: 14px; align-items:center; padding: 12px 14px; margin: 8px 0;
+         border: 1.5px solid var(--line); border-radius: 14px; cursor:pointer; font-weight: 500; font-size: 16px; min-height: 56px;
+         transition: border-color .15s, background .15s; }
+  .opt:hover { border-color: color-mix(in srgb, var(--fg) 35%, var(--line)); }
+  .opt > input { position:absolute; opacity:0; width:1px; height:1px; }
+  .opt::before { counter-increment: opt; content: counter(opt, upper-alpha); flex: 0 0 auto; width: 34px; height: 34px;
+         border-radius: 50%; border: 2px solid var(--fg); display:grid; place-items:center; font-weight: 800; font-size: 14px;
+         transition: background .12s, border-color .12s, color .12s; }
+  .opt:has(> input[type=checkbox])::before { border-radius: 9px; }
+  .opt:has(> input:checked) { border-color: var(--fg); background: color-mix(in srgb, var(--pencil) 10%, var(--surface)); }
+  .opt:has(> input:checked)::before { background: var(--pencil); border-color: var(--pencil); color: #14213D; }
+  .opt:has(> input:focus-visible) { outline: 3px solid var(--pencil); outline-offset: 2px; }
+  .opt .opt-letter { display:none; }
+
+  /* Navigasi nomor soal: deretan bulatan kecil seperti baris LJK. */
+  .nav { display:grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 8px; margin: 0 0 18px; }
+  .nav button { min-height: 42px; min-width: 0; padding: 0; border-radius: 50%; aspect-ratio: 1; font-size: 13px;
+                font-variant-numeric: tabular-nums; border: 1.5px solid var(--line); }
+  .nav button.ans { background: var(--fg); border-color: var(--fg); color: var(--surface); }
+  .nav button.cur { border: 2.5px solid var(--pencil); }
+  .nav button.ans.cur { box-shadow: 0 0 0 2.5px var(--pencil); }
+
+  .timer { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 18px; letter-spacing: .02em;
+           padding: 6px 14px; border-radius: 999px; background: var(--fg); color: var(--surface); }
+  .timer.warn { background: var(--danger); color: #fff; }
+  .exam-head { position: sticky; top: 0; z-index: 30; background: color-mix(in srgb, var(--paper) 92%, transparent);
+               backdrop-filter: blur(8px); margin: -24px -16px 18px; padding: 12px 16px; border-bottom: 1px solid var(--line);
+               display:flex; align-items:center; justify-content:space-between; gap: 10px; flex-wrap: wrap; }
+  .exam-head h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; }
+  .exam-head .tools-row { display:flex; gap:6px; align-items:center; flex-wrap: wrap; }
+  .exam-head button { min-height: 40px; padding: 6px 12px; font-size: 13px; }
+  .exam-foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: var(--surface); border-top: 1px solid var(--line);
+               padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
+  .exam-foot .in { max-width: 760px; margin: 0 auto; display:flex; gap: 8px; align-items:center; }
+  .exam-foot .in .spacer { flex: 1; }
+  .exam-foot button { min-height: 48px; }
+  @media (max-width: 520px) { .exam-foot button { padding: 0 12px; } }
+  .overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; text-align: center;
+             background: rgba(20,33,61,.9); color: #fff; }
+  .panel { position: fixed; right: 16px; bottom: 84px; z-index: 50; width: min(340px, calc(100vw - 32px)); max-height: 70vh;
+           display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line);
+           border-radius: 18px; padding: 14px; box-shadow: 0 24px 60px rgba(20,33,61,.28); }
+  .panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px; }
+  .panel-head button { min-height: 36px; padding: 4px 10px; font-size: 13px; }
+  .keys { display:grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .keys button { min-height: 48px; font-size: 17px; }
+  .chat-box { flex: 1; overflow-y: auto; min-height: 140px; max-height: 300px; padding: 6px; border: 1.5px solid var(--line);
+              border-radius: 12px; background: var(--paper); font-size: 14px; }
+  .badge { margin-left: 6px; background: var(--danger); color: #fff; padding: 1px 7px; border-radius: 999px; font-size: 11px; }
 </style></head><body><main>${body}</main>
 <script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});</script>
 </body></html>`;
@@ -131,7 +166,7 @@ student.get("/s", async (c) => {
       <p class="sub">Kelas: ${esc(me?.class_name ?? "- (belum terdaftar di kelas)")}</p>
       <div class="row">
         <form method="post" action="/s/logout" style="margin:0"><button type="submit">Keluar</button></form>
-        <a class="btn" href="/s/me">🔒 Ganti PIN</a>
+        <a class="btn" href="/s/me">Ganti PIN</a>
       </div>
     </div>
     <div class="card">
@@ -142,8 +177,8 @@ student.get("/s", async (c) => {
     </div>
     <div class="card">
       <h2>Riwayat & rekomendasi</h2>
-      <p class="muted"><a href="/s/history">Lihat semua ujian yang pernah saya kerjakan →</a></p>
-      <p class="muted"><a href="/s/rekomendasi">📚 Rekomendasi belajar untuk kategori lemah →</a></p>
+      <p class="muted"><a href="/s/history">Lihat semua ujian yang pernah saya kerjakan</a></p>
+      <p class="muted"><a href="/s/rekomendasi">Rekomendasi belajar untuk kategori lemah</a></p>
     </div>
   `));
 });
@@ -178,7 +213,7 @@ student.get("/s/history", async (c) => {
   return c.html(page("Riwayat ujian", `
     <div class="card">
       <h1>Riwayat ujian</h1>
-      <p class="sub"><a href="/s">← Portal</a></p>
+      <p class="sub"><a href="/s">Portal</a></p>
     </div>
     <div class="card">
       <table style="width:100%; border-collapse:collapse">
@@ -268,7 +303,7 @@ student.get("/s/rekomendasi", async (c) => {
   return c.html(page("Rekomendasi review", `
     <div class="card">
       <h1>Rekomendasi belajar</h1>
-      <p class="sub">Berdasar jawaban Anda di ujian-ujian sebelumnya. <a href="/s">← Portal</a></p>
+      <p class="sub">Berdasar jawaban Anda di ujian-ujian sebelumnya. <a href="/s">Portal</a></p>
       ${data.weak.length === 0
         ? `<p class="muted">Belum ada kategori lemah terdeteksi (atau belum cukup data).</p>`
         : `<p>Kategori yang perlu diperkuat:</p><ul style="margin:4px 0 0 20px">${weakList}</ul>`}
@@ -310,7 +345,7 @@ student.get("/s/history/:sid", async (c) => {
   if ("locked" in data) {
     return c.html(page(data.title!, `<div class="card"><h1>${esc(data.title!)}</h1>
       <p class="muted">Sesi belum selesai; review belum tersedia.</p>
-      <a class="btn" href="/s/history">← Riwayat</a></div>`));
+      <a class="btn" href="/s/history">Riwayat</a></div>`));
   }
   type Item = {
     id: string; type: string; points: string;
@@ -350,7 +385,7 @@ student.get("/s/history/:sid", async (c) => {
   return c.html(page("Review", `
     <div class="card">
       <h1>${esc(data.title!)}</h1>
-      <p class="sub">Nilai akhir: <b>${data.final ?? "-"}</b> · <a href="/s/history">← Riwayat</a></p>
+      <p class="sub">Nilai akhir: <b>${data.final ?? "-"}</b> · <a href="/s/history">Riwayat</a></p>
     </div>
     ${items}
   `));
@@ -389,7 +424,7 @@ student.post("/s/login", async (c) => {
   if (!body?.code || !body?.username || !body?.pin) return c.json({ error: "data kurang" }, 400);
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  // resolve_school adalah SECURITY DEFINER → tidak butuh konteks RLS.
+  // resolve_school adalah SECURITY DEFINER tidak butuh konteks RLS.
   const sch = await sql`select id from resolve_school(${body.code})`;
   if (sch.length === 0) return c.json({ error: "kode sekolah tidak dikenal" }, 404);
   const sid = (sch[0] as { id: string }).id;
@@ -433,7 +468,7 @@ student.post("/s/login", async (c) => {
 });
 
 // Lupa PIN: siswa isi kode sekolah + username, system masukkan ke antrian
-// pin_resets. Guru/admin menyetujui lewat dashboard → PIN 6-digit baru
+// pin_resets. Guru/admin menyetujui lewat dashboard PIN 6-digit baru
 // ditampilkan sekali untuk disampaikan ke siswa.
 student.post("/s/forgot", async (c) => {
   const rl = await checkOrLimit(c.env, c.req.raw.headers, "s_forgot", 5);
@@ -529,7 +564,7 @@ student.get("/s/me", async (c) => {
   return c.html(page("Akun saya", `
     <div class="card">
       <h1>Akun saya</h1>
-      <p class="sub"><a href="/s">← Portal</a></p>
+      <p class="sub"><a href="/s">Portal</a></p>
       <h2>Ganti PIN</h2>
       <form id="f">
         <label>PIN lama</label><input name="old_pin" type="password" required pattern="\\d{4,8}">
@@ -606,7 +641,7 @@ student.post("/s/exams/:id/start", async (c) => {
     }
     // Urutan soal + (opsional) permutasi opsi, disimpan di question_order:
     //   { order: [qid, …], perms: { qid: [i₀, i₁, …] } }
-    // perm memetakan posisi tampilan → indeks asli (shuffle_options).
+    // perm memetakan posisi tampilan indeks asli (shuffle_options).
     const qs = await tx`select question_id from exam_questions where exam_id = ${examId} order by position`;
     let order = (qs as unknown as Array<{ question_id: string }>).map((x) => x.question_id);
     const ex = await tx`select shuffle_questions, shuffle_options, questions_per_session from exams where id = ${examId}`;
@@ -713,7 +748,7 @@ student.get("/s/take/:sid", async (c) => {
       }
       return { id: qid, pos: i + 1, type: q.type, content, perm: perm ?? null, passage: q.passage ?? null };
     });
-    // Jawaban sebelumnya. Jika soal pakai perm, remap index asli → index tampilan.
+    // Jawaban sebelumnya. Jika soal pakai perm, remap index asli index tampilan.
     const prev = await tx`select question_id, answer from answers where session_id = ${sessionId}`;
     const answers: Record<string, { index?: number; text?: string }> = {};
     for (const a of prev as unknown as Array<{ question_id: string; answer: { index?: number; text?: string } | null }>) {
@@ -759,32 +794,28 @@ student.get("/s/take/:sid", async (c) => {
     paused_at: data.paused_at,
   });
   return c.html(page(data.title!, `
-    <div id="pauseOverlay" hidden style="position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:100; display:flex; align-items:center; justify-content:center; color:#fff; text-align:center; font-size:20px; flex-direction:column">
-      <div style="font-size:60px">⏸</div>
-      <p style="margin:16px 0 0">Sesi dijeda oleh pengawas.</p>
-      <p class="muted" style="color:#aaa; margin:6px 0 0; font-size:14px">Tunggu guru untuk melanjutkan.</p>
-    </div>
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <div><h1 style="margin:0">${esc(data.title!)}</h1></div>
-        <div>
-          <button type="button" id="chatBtn" title="Chat pengawas">💬<span id="chatBadge" style="display:none;background:var(--danger);color:#fff;padding:1px 6px;border-radius:999px;font-size:10px;margin-left:4px">!</span></button>
-          <button type="button" id="calcBtn" title="Kalkulator">🧮</button>
-          <span class="timer" id="t">--:--</span>
-          <span id="qbadge" class="muted" style="font-size:11px"></span>
-        </div>
+    <div id="pauseOverlay" class="overlay" hidden>
+      <div>
+        <h2 style="font-size:22px;margin:0 0 6px">Ujian dijeda pengawas</h2>
+        <p style="margin:0;opacity:.8">Waktu berhenti. Tunggu guru melanjutkan.</p>
       </div>
     </div>
-    <div id="calc" hidden style="position:fixed; bottom:20px; right:20px; width:240px; background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.25); z-index:50">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-        <b>Kalkulator</b>
-        <button type="button" id="calcClose" style="padding:2px 8px">×</button>
+    <header class="exam-head">
+      <h1>${esc(data.title!)}</h1>
+      <div class="tools-row">
+        <span id="qbadge" class="muted"></span>
+        <button type="button" id="chatBtn">Chat pengawas<span id="chatBadge" class="badge" hidden>baru</span></button>
+        <button type="button" id="calcBtn">Kalkulator</button>
+        <span class="timer" id="t" aria-live="off">--:--</span>
       </div>
-      <input id="calcDisp" readonly style="width:100%; padding:8px; border:1px solid var(--bd); border-radius:6px; background:var(--bg); color:var(--fg); font: 16px/1 ui-monospace, monospace; text-align:right; margin-bottom:6px">
-      <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:4px">
-        <button type="button" data-k="C" style="background:#ef44441a; color:var(--danger)">C</button>
+    </header>
+    <section id="calc" class="panel" hidden aria-label="Kalkulator">
+      <div class="panel-head"><b>Kalkulator</b><button type="button" id="calcClose" aria-label="Tutup kalkulator">Tutup</button></div>
+      <input id="calcDisp" readonly aria-label="Tampilan kalkulator" style="font: 600 20px/1 ui-monospace, monospace; text-align:right; margin-bottom:8px">
+      <div class="keys">
+        <button type="button" data-k="C" class="danger">C</button>
         <button type="button" data-k="(">(</button>
-        <button type="button" data-k=")")</button>
+        <button type="button" data-k=")">)</button>
         <button type="button" data-k="/">÷</button>
         <button type="button" data-k="7">7</button>
         <button type="button" data-k="8">8</button>
@@ -802,39 +833,33 @@ student.get("/s/take/:sid", async (c) => {
         <button type="button" data-k=".">.</button>
         <button type="button" data-k="=" class="primary">=</button>
       </div>
-      <p class="muted" style="font-size:11px; margin:6px 0 0">Mendukung + − × ÷ ( ) . dan angka. Hasil koma 4 digit.</p>
-    </div>
-    <div id="chat" hidden style="position:fixed; bottom:20px; right:20px; width:320px; max-height:70vh; background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.25); z-index:50; display:flex; flex-direction:column">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-        <b>Chat pengawas</b>
-        <button type="button" id="chatClose" style="padding:2px 8px">×</button>
-      </div>
-      <div id="chatBox" style="flex:1; overflow-y:auto; padding:4px; border:1px solid var(--bd); border-radius:6px; background:var(--bg); min-height:120px; max-height:300px; font-size:13px"></div>
-      <form id="chatForm" style="display:flex; gap:4px; margin-top:6px">
-        <input id="chatInput" placeholder="Ketik pesan…" maxlength="500" style="flex:1; padding:6px 10px; border:1px solid var(--bd); border-radius:6px; background:var(--bg); color:var(--fg); font:inherit">
+    </section>
+    <section id="chat" class="panel" hidden aria-label="Chat pengawas">
+      <div class="panel-head"><b>Chat pengawas</b><button type="button" id="chatClose" aria-label="Tutup chat">Tutup</button></div>
+      <div id="chatBox" class="chat-box"></div>
+      <form id="chatForm" style="display:flex; gap:6px; margin-top:8px">
+        <input id="chatInput" placeholder="Misalnya: izin ke toilet" maxlength="500" aria-label="Pesan untuk pengawas">
         <button class="primary" type="submit">Kirim</button>
       </form>
-      <p class="muted" style="font-size:11px; margin:4px 0 0">Mis. 'Izin ke toilet' atau 'Soal 3 tidak jelas'.</p>
-    </div>
-    <div class="card">
-      <div class="nav" id="nav"></div>
-      <div id="qbox"></div>
-      <div class="row">
-        <button id="prev">← Sebelumnya</button>
-        <button id="next">Berikutnya →</button>
-        <span style="flex:1"></span>
-        <button class="primary" id="submit">Kumpulkan</button>
-      </div>
-      <p class="muted" style="margin-top:12px">Jawaban tersimpan otomatis saat Anda memilih opsi.</p>
-    </div>
+    </section>
+    <div class="nav" id="nav" aria-label="Nomor soal"></div>
+    <div id="qbox"></div>
+    <p class="muted" style="margin-top:18px">Jawaban tersimpan otomatis setiap kali Anda memilih atau mengetik.</p>
+    <div class="exam-foot"><div class="in">
+      <button id="prev">Sebelumnya</button>
+      <button id="next">Berikutnya</button>
+      <span class="spacer"></span>
+      <button class="primary" id="submit">Kumpulkan</button>
+    </div></div>
     <script id="data" type="application/json">${payload.replace(/</g, "\\u003c")}</script>
     <script>
       const D = JSON.parse(document.getElementById('data').textContent);
+      let isPaused = !!D.paused_at;
       const Q = D.questions; const A = D.answers || {}; let i = 0;
       let violations = D.violations || 0; const limit = D.limit || 0; const level = D.anticheat || 'log';
       const nav = document.getElementById('nav'); const qbox = document.getElementById('qbox');
       function escapeHtml(s) { return (s||'').replace(/[&<>\"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]); }
-      // Markdown ringan: **bold**, *italic*, \`code\`, newline → <br>.
+      // Markdown ringan: **bold**, *italic*, \`code\`, newline <br>.
       // Math $...$ dan $$...$$ dilewati, lalu dirender ulang oleh KaTeX.
       function mdRender(s) {
         let t = escapeHtml(s);
@@ -844,7 +869,7 @@ student.get("/s/take/:sid", async (c) => {
         t = t.replace(/\\n/g, '<br>');
         return t;
       }
-      function katex(el) {
+      function renderMath(el) {
         if (window.renderMathInElement) renderMathInElement(el, {
           delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
           throwOnError: false,
@@ -886,7 +911,7 @@ student.get("/s/take/:sid", async (c) => {
           q.content.options.forEach((o, k) => {
             const checked = A[q.id] && A[q.id].index === k ? 'checked' : '';
             const row = document.createElement('label'); row.className = 'opt';
-            const label = q.type === 'benar_salah' ? o : String.fromCharCode(65+k) + '. ' + o;
+            const label = o;
             row.innerHTML = '<input type="radio" name="'+q.id+'" value="'+k+'" '+checked+'><span>' + escapeHtml(label) + '</span>';
             row.querySelector('input').addEventListener('change', () => save(q.id, { index: k }));
             el.appendChild(row);
@@ -949,7 +974,7 @@ student.get("/s/take/:sid", async (c) => {
           q.content.options.forEach((o, k) => {
             const row = document.createElement('label'); row.className = 'opt';
             const checked = sel.includes(k) ? 'checked' : '';
-            row.innerHTML = '<input type="checkbox" value="'+k+'" '+checked+'><span>' + String.fromCharCode(65+k) + '. ' + escapeHtml(o) + '</span>';
+            row.innerHTML = '<input type="checkbox" value="'+k+'" '+checked+'><span>' + escapeHtml(o) + '</span>';
             row.querySelector('input').addEventListener('change', (ev) => {
               const cur = (A[q.id] && A[q.id].selected) ? A[q.id].selected.slice() : [];
               if (ev.target.checked) { if (!cur.includes(k)) cur.push(k); }
@@ -989,7 +1014,7 @@ student.get("/s/take/:sid", async (c) => {
           const hintUsed = A[q.id] && A[q.id].hint_used;
           const hintBtn = document.createElement('button');
           hintBtn.type = 'button';
-          hintBtn.textContent = hintUsed ? '💡 Hint sudah digunakan' : '💡 Lihat hint (−50% poin soal ini)';
+          hintBtn.textContent = hintUsed ? 'Petunjuk sudah dipakai' : 'Lihat petunjuk (poin soal ini jadi setengah)';
           hintBtn.disabled = !!hintUsed;
           hintBtn.style.cssText = 'margin-top:10px';
           hintBtn.onclick = () => {
@@ -1000,7 +1025,7 @@ student.get("/s/take/:sid", async (c) => {
           el.appendChild(hintBtn);
         }
         qbox.appendChild(el);
-        katex(el);
+        renderMath(el);
         nav.innerHTML = '';
         Q.forEach((qq, k) => {
           const b = document.createElement('button'); b.textContent = k+1;
@@ -1035,7 +1060,7 @@ student.get("/s/take/:sid", async (c) => {
       function updateBadge() {
         const n = Object.keys(queueGet()).length;
         const b = document.getElementById('qbadge'); if (!b) return;
-        b.textContent = n ? ('📶 ' + n + ' jawaban menunggu kirim') : '';
+        b.textContent = n ? (n + ' jawaban belum terkirim') : '';
       }
       async function save(qid, payload) {
         A[qid] = Object.assign({}, A[qid] || {}, payload); render();
@@ -1075,7 +1100,7 @@ student.get("/s/take/:sid", async (c) => {
       let dl = new Date(D.deadline).getTime();
       const t = document.getElementById('t');
       function tick() {
-        if (isPaused) { t.textContent = '⏸ PAUSED'; setTimeout(tick, 1000); return; }
+        if (isPaused) { t.textContent = 'Dijeda'; setTimeout(tick, 1000); return; }
         const left = Math.max(0, Math.floor((dl - Date.now()) / 1000));
         const m = String(Math.floor(left/60)).padStart(2,'0'); const s = String(left%60).padStart(2,'0');
         t.textContent = m + ':' + s;
@@ -1108,7 +1133,7 @@ student.get("/s/take/:sid", async (c) => {
       document.getElementById('calcBtn').onclick = () => { calc.hidden = !calc.hidden; };
       document.getElementById('calcClose').onclick = () => { calc.hidden = true; };
       function compute(expr) {
-        // Shunting-yard infix → postfix lalu evaluasi.
+        // Shunting-yard infix postfix lalu evaluasi.
         const tokens = expr.match(/\\d+(?:\\.\\d+)?|[+\\-*/()]/g); if (!tokens) return '0';
         const prec = { '+':1,'-':1,'*':2,'/':2 };
         const out = []; const ops = [];
@@ -1150,7 +1175,7 @@ student.get("/s/take/:sid", async (c) => {
       document.getElementById('chatBtn').onclick = () => {
         const cp = document.getElementById('chat');
         cp.hidden = !cp.hidden;
-        if (!cp.hidden) { chatBadge.style.display = 'none'; lastSeenCount = chatBox.querySelectorAll('div').length; }
+        if (!cp.hidden) { chatBadge.hidden = true; lastSeenCount = chatBox.querySelectorAll('div').length; }
       };
       document.getElementById('chatClose').onclick = () => { document.getElementById('chat').hidden = true; };
       document.getElementById('chatForm').addEventListener('submit', async (e) => {
@@ -1179,14 +1204,13 @@ student.get("/s/take/:sid", async (c) => {
           const n = msgs.length;
           if (document.getElementById('chat').hidden) {
             const unseen = msgs.slice(lastSeenCount).some((m) => m.from_role === 'staff');
-            if (unseen) chatBadge.style.display = '';
+            if (unseen) chatBadge.hidden = false;
           }
         } catch(_) {}
       }
       setInterval(pollChat, 5000); pollChat();
 
       // Heartbeat 15 dtk + cek status pause.
-      let isPaused = !!D.paused_at;
       function applyPause() {
         document.getElementById('pauseOverlay').hidden = !isPaused;
       }
@@ -1212,8 +1236,8 @@ student.get("/s/take/:sid", async (c) => {
 });
 
 // Simpan jawaban. Payload:
-//   {question_id, index}        → pg / benar_salah
-//   {question_id, text}         → isian / uraian
+//   {question_id, index}        pg / benar_salah
+//   {question_id, text}         isian / uraian
 student.post("/s/take/:sid/answer", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.json({ error: "unauthorized" }, 401);
