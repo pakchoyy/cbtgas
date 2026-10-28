@@ -22,7 +22,30 @@ const base = (title: string, body: string) => `<!doctype html>
   // Terapkan tema sebelum render agar tidak flash.
   (function(){ try { var t = localStorage.getItem('theme');
     if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+    var l = localStorage.getItem('lang');
+    if (l) document.documentElement.lang = l;
   } catch(e){} })();
+  // Translation map untuk UI label dengan atribut data-i18n.
+  const I18N = {
+    en: {
+      'Keluar':'Logout', 'Kelola staf':'Manage staff', 'Audit log':'Audit log',
+      'Reset PIN siswa':'Reset student PIN', '🌓 Tema':'🌓 Theme',
+      'Daftar siswa':'Student list', 'Tambah siswa':'Add student',
+      'Tambah kelas':'Add class', 'Kelas':'Classes', 'Siswa':'Students',
+      'Download CSV':'Download CSV', 'Live monitoring':'Live monitoring',
+      'Mode lab komputer':'Lab mode', 'Analisis butir soal':'Item analysis',
+      'Rekap skor sekolah (CSV)':'School score recap (CSV)',
+      'Backup JSON':'Backup JSON', 'Restore':'Restore',
+      'Kelola ujian':'Manage exams', 'Import CSV':'Import CSV',
+    },
+  };
+  function applyI18n(lang) {
+    document.documentElement.lang = lang;
+    document.querySelectorAll('[data-i18n-src]').forEach((el) => {
+      const src = el.getAttribute('data-i18n-src');
+      el.textContent = (lang === 'en' && I18N.en[src]) || src;
+    });
+  }
 </script>
 <style>
   :root { color-scheme: light dark; --fg:#111; --mut:#555; --bg:#fafafa; --card:#fff; --bd:#e5e5e5; --accent:#2563eb; --danger:#b91c1c; }
@@ -248,11 +271,12 @@ pages.get("/app", async (c) => {
       <p class="sub">Masuk sebagai <b>${esc(sess.email)}</b> (${esc(sess.role)}) · kode <code>${esc(school?.code ?? "")}</code></p>
       <div class="row">
         <form method="post" action="/auth/logout" style="margin:0">
-          <button type="submit">Keluar</button>
+          <button type="submit" data-i18n-src="Keluar">Keluar</button>
         </form>
-        ${sess.role === "admin" ? `<a class="btn" href="/app/users">Kelola staf</a><a class="btn" href="/app/audit">Audit log</a>` : ""}
-        <a class="btn" href="/app/pin-resets">Reset PIN siswa</a>
-        <button type="button" id="toggleTheme" title="Ganti tema terang/gelap">🌓 Tema</button>
+        ${sess.role === "admin" ? `<a class="btn" href="/app/users" data-i18n-src="Kelola staf">Kelola staf</a><a class="btn" href="/app/audit" data-i18n-src="Audit log">Audit log</a>` : ""}
+        <a class="btn" href="/app/pin-resets" data-i18n-src="Reset PIN siswa">Reset PIN siswa</a>
+        <button type="button" id="toggleTheme" title="Ganti tema terang/gelap" data-i18n-src="🌓 Tema">🌓 Tema</button>
+        <button type="button" id="toggleLang" title="Switch language">🌐 ID / EN</button>
       </div>
     </div>
 
@@ -294,7 +318,8 @@ pages.get("/app", async (c) => {
           <button class="primary" type="submit">Tambah siswa</button>
           <button type="button" id="btnImport">Import CSV</button>
           <input type="file" id="fileCsv" accept=".csv,text/csv" hidden>
-          <a class="btn" href="/app/exams">Kelola ujian</a>
+          <a class="btn" href="/app/exams" data-i18n-src="Kelola ujian">Kelola ujian</a>
+          <a class="btn" href="/app/exam-groups">Grup ujian</a>
           <a class="btn" href="/api/reports/scores.csv">Rekap skor sekolah (CSV)</a>
           ${sess.role === "admin" ? `<a class="btn" href="/api/reports/backup.json">Backup JSON</a><a class="btn" href="/app/restore">Restore</a>` : ""}
         </div>
@@ -341,6 +366,14 @@ pages.get("/app", async (c) => {
         if (next) { document.documentElement.setAttribute('data-theme', next); localStorage.setItem('theme', next); }
         else { document.documentElement.removeAttribute('data-theme'); localStorage.removeItem('theme'); }
       });
+      $('#toggleLang')?.addEventListener('click', () => {
+        const cur = localStorage.getItem('lang') || 'id';
+        const next = cur === 'id' ? 'en' : 'id';
+        localStorage.setItem('lang', next);
+        applyI18n(next);
+      });
+      // Terapkan bahasa pada load.
+      applyI18n(localStorage.getItem('lang') || 'id');
 
       async function send(url, method, body) {
         const r = await fetch(url, {
@@ -432,16 +465,84 @@ pages.get("/app", async (c) => {
 
 // ===== Pengelolaan ujian =====
 
+// Grup / rangkaian ujian: paket beberapa ujian yang dikerjakan berurutan.
+pages.get("/app/exam-groups", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const [groups, exams] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const g = await tx`select g.id, g.title, g.strict_order,
+                              (select count(*) from exams e where e.group_id = g.id) as exam_count
+                       from exam_groups g order by g.created_at desc`;
+    const e = await tx`select id, title, group_id, group_position from exams
+                       where group_id is not null order by group_id, group_position`;
+    return [g, e] as const;
+  });
+  type G = { id: string; title: string; strict_order: boolean; exam_count: string };
+  type E = { id: string; title: string; group_id: string; group_position: number };
+  const groupsList = groups as unknown as G[];
+  const examsList = exams as unknown as E[];
+  const list = groupsList.map((g) => {
+    const members = examsList.filter((e) => e.group_id === g.id)
+      .sort((a, b) => a.group_position - b.group_position)
+      .map((e) => `<li>${e.group_position}. <a href="/app/exams/${esc(e.id)}">${esc(e.title)}</a></li>`).join("");
+    return `<div class="card">
+      <div class="row" style="justify-content:space-between;margin:0 0 6px">
+        <div><h2 style="margin:0">${esc(g.title)}</h2>
+          <p class="muted" style="margin:4px 0 0">${g.exam_count} ujian · urut ${g.strict_order ? "ketat" : "bebas"}</p></div>
+        <button class="danger" data-del="${esc(g.id)}">Hapus</button>
+      </div>
+      ${members ? `<ol style="margin:4px 0 0 20px">${members}</ol>` : `<p class="muted">Belum ada ujian. Tambahkan dari form buat ujian atau edit ujian existing.</p>`}
+    </div>`;
+  }).join("") || `<div class="card"><p class="muted">Belum ada grup.</p></div>`;
+  return c.html(base("Grup ujian", `
+    <div class="card">
+      <h1>Grup / rangkaian ujian</h1>
+      <p class="sub"><a href="/app">← Dashboard</a></p>
+      <form id="fg">
+        <div class="grid">
+          <div><label>Judul grup</label><input name="title" required placeholder="Paket Persiapan UTBK"></div>
+          <div><label>Deskripsi (opsional)</label><input name="description"></div>
+          <div><label><input type="checkbox" name="strict_order" checked> Urut ketat (siswa harus urut)</label></div>
+        </div>
+        <div class="row"><button class="primary" type="submit">Buat grup</button></div>
+      </form>
+    </div>
+    ${list}
+    <script>
+      document.getElementById('fg').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const d = Object.fromEntries(fd);
+        d.strict_order = fd.has('strict_order');
+        const r = await fetch('/api/exam-groups', { method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type':'application/json' }, body: JSON.stringify(d) });
+        if (r.ok) location.reload(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
+      });
+      document.body.addEventListener('click', async (e) => {
+        const id = e.target.dataset.del; if (!id) return;
+        if (!confirm('Hapus grup? Ujian anggotanya tetap ada (group_id = null).')) return;
+        const r = await fetch('/api/exam-groups/' + id, { method:'DELETE', credentials:'same-origin' });
+        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+      });
+    </script>
+  `));
+});
+
 pages.get("/app/exams", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const exams = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
-    tx`select e.id, e.title, e.kind, e.duration_minutes, e.status,
+  const [exams, groups] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const e = await tx`select e.id, e.title, e.kind, e.duration_minutes, e.status,
               (select count(*) from exam_questions where exam_id = e.id) as qc,
               (select count(*) from exam_classes where exam_id = e.id) as cc
-       from exams e order by e.created_at desc`,
-  );
+       from exams e order by e.created_at desc`;
+    const g = await tx`select id, title from exam_groups order by title`;
+    return [e, g] as const;
+  });
+  type Gg = { id: string; title: string };
+  const groupOpts = (groups as unknown as Gg[]).map((g) => `<option value="${esc(g.id)}">${esc(g.title)}</option>`).join("");
   type Ex = { id: string; title: string; kind: string; duration_minutes: number; status: string; qc: number; cc: number };
   const list = (exams as unknown as Ex[]).map((e) => `<tr>
     <td><a href="/app/exams/${esc(e.id)}">${esc(e.title)}</a></td>
@@ -478,6 +579,11 @@ pages.get("/app/exams", async (c) => {
           <div><label><input type="checkbox" name="shuffle_options"> Acak urutan pilihan</label></div>
           <div><label>Soal per siswa <span class="muted">(0 = pakai semua; mis. 25 dari 100 soal)</span></label>
             <input name="questions_per_session" type="number" min="0" value="0"></div>
+          <div><label>Penalti salah <span class="muted">(0 = tidak; 0.25 = kurangi 25% poin per salah)</span></label>
+            <input name="wrong_penalty" type="number" min="0" max="1" step="0.05" value="0"></div>
+          <div><label>Grup / rangkaian <span class="muted">(opsional, <a href="/app/exam-groups">kelola grup</a>)</span></label>
+            <select name="group_id"><option value="">— tanpa grup —</option>${groupOpts}</select></div>
+          <div><label>Posisi dalam grup</label><input name="group_position" type="number" min="1" placeholder="1"></div>
         </div>
         <div class="row"><button class="primary" type="submit">Buat ujian</button></div>
         <p class="err" id="errex" hidden></p>
@@ -501,6 +607,11 @@ pages.get("/app/exams", async (c) => {
         d.shuffle_questions = fd.has('shuffle_questions');
         d.shuffle_options = fd.has('shuffle_options');
         d.questions_per_session = +d.questions_per_session;
+        const penalty = parseFloat(d.wrong_penalty || '0');
+        delete d.wrong_penalty;
+        d.scoring_config = penalty > 0 ? { wrong_penalty: penalty } : {};
+        d.group_id = d.group_id || null;
+        d.group_position = d.group_position ? +d.group_position : null;
         for (const k of ['starts_at','ends_at']) if (!d[k]) d[k] = null; else d[k] = new Date(d[k]).toISOString();
         const r = await fetch('/api/exams', { method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
@@ -1391,10 +1502,24 @@ pages.get("/app/exams/:id/live", async (c) => {
     </div>
     <div class="card">
       <table style="width:100%; border-collapse:collapse">
-        <thead><tr><th>Siswa</th><th>Status</th><th>Kemajuan</th><th>Pelanggaran</th><th>Sinyal</th></tr></thead>
-        <tbody id="tb"><tr><td colspan="5" class="muted">Memuat…</td></tr></tbody>
+        <thead><tr><th>Siswa</th><th>Status</th><th>Kemajuan</th><th>Pelanggaran</th><th>Sinyal</th><th></th></tr></thead>
+        <tbody id="tb"><tr><td colspan="6" class="muted">Memuat…</td></tr></tbody>
       </table>
     </div>
+    <div class="card">
+      <h2>Chat masuk</h2>
+      <div id="chats"><p class="muted">Memuat…</p></div>
+    </div>
+    <!-- Panel chat per sesi -->
+    <dialog id="chatDlg" style="max-width:420px; width:92%;">
+      <h3 id="chatTitle" style="margin:0 0 8px"></h3>
+      <div id="chatBox2" style="max-height:300px; overflow-y:auto; padding:8px; border:1px solid var(--bd); border-radius:6px; background:var(--bg); margin-bottom:8px"></div>
+      <form id="chatForm2" style="display:flex; gap:6px">
+        <input id="chatInput2" placeholder="Balas…" maxlength="500" style="flex:1; padding:8px 12px; border:1px solid var(--bd); border-radius:6px; background:var(--bg); color:var(--fg); font:inherit">
+        <button class="primary">Kirim</button>
+        <button type="button" id="chatCloseDlg">Tutup</button>
+      </form>
+    </dialog>
     <script>
       const EID = ${JSON.stringify(examId)};
       const tb = document.getElementById('tb');
@@ -1427,12 +1552,63 @@ pages.get("/app/exams/:id/live", async (c) => {
               + '<td>' + escapeHtml(r.status) + '</td>'
               + '<td>' + r.answered + '/' + r.total + ' (' + pct + '%)' + bar + '</td>'
               + '<td>' + vio + '</td>'
-              + '<td>' + dot(r.last_seen_at) + ' ' + timeAgo(r.last_seen_at) + '</td></tr>';
+              + '<td>' + dot(r.last_seen_at) + ' ' + timeAgo(r.last_seen_at) + '</td>'
+              + '<td><button onclick="openChat(\\'' + r.session_id + '\\', \\'' + escapeHtml(r.student_name).replace(/\\'/g,"") + '\\')" style="padding:4px 8px">💬</button></td></tr>';
           }).join('');
         } catch (e) { t.textContent = 'Gagal memuat: ' + e; }
       }
       function escapeHtml(s){return (s||'').replace(/[&<>\"']/g,(ch)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]);}
       tick(); setInterval(tick, 3000);
+
+      // Chat panel
+      const chatDlg = document.getElementById('chatDlg');
+      const chatBox2 = document.getElementById('chatBox2');
+      const chatInput2 = document.getElementById('chatInput2');
+      const chatTitle = document.getElementById('chatTitle');
+      let activeSid = null;
+      document.getElementById('chatCloseDlg').onclick = () => chatDlg.close();
+      async function openChat(sid, name) {
+        activeSid = sid; chatTitle.textContent = 'Chat — ' + name;
+        await loadChat(); chatDlg.showModal();
+      }
+      async function loadChat() {
+        if (!activeSid) return;
+        const r = await fetch('/api/sessions/' + activeSid + '/messages', { credentials:'same-origin' });
+        if (!r.ok) return;
+        const msgs = await r.json();
+        chatBox2.innerHTML = msgs.map((m) => {
+          const align = m.from_role === 'staff' ? 'right' : 'left';
+          const bg = m.from_role === 'staff' ? '#2563eb' : 'var(--bd)';
+          const fg = m.from_role === 'staff' ? '#fff' : 'var(--fg)';
+          return '<div style="text-align:' + align + '; margin:4px 2px"><span style="display:inline-block;padding:4px 10px;border-radius:10px;background:' + bg + ';color:' + fg + ';max-width:260px;text-align:left;font-size:13px"><b style="font-size:11px">' + escapeHtml(m.from_name || m.from_role) + '</b><br>' + escapeHtml(m.content) + '</span></div>';
+        }).join('');
+        chatBox2.scrollTop = chatBox2.scrollHeight;
+      }
+      document.getElementById('chatForm2').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const content = chatInput2.value.trim(); if (!content || !activeSid) return;
+        chatInput2.value = '';
+        await fetch('/api/sessions/' + activeSid + '/messages', {
+          method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ content }),
+        });
+        await loadChat();
+      });
+      async function pollChats() {
+        try {
+          const r = await fetch('/api/exams/' + EID + '/chats', { credentials:'same-origin' });
+          if (!r.ok) return;
+          const d = await r.json();
+          const el = document.getElementById('chats');
+          if (d.length === 0) { el.innerHTML = '<p class="muted">Belum ada chat.</p>'; }
+          else {
+            el.innerHTML = d.map((c) => '<div style="padding:8px; border-bottom:1px solid var(--bd); cursor:pointer" onclick="openChat(\\'' + c.session_id + '\\', \\'' + escapeHtml(c.student_name).replace(/\\'/g,"") + '\\')"><b>' + escapeHtml(c.student_name) + '</b> <span class="muted">· ' + c.msg_count + ' pesan · ' + (c.last_from === 'student' ? '🔔 ' : '') + 'terakhir ' + new Date(c.last_at).toLocaleTimeString('id-ID') + '</span><br><span class="muted" style="font-size:13px">' + escapeHtml((c.last_msg || '').slice(0, 80)) + '</span></div>').join('');
+          }
+          if (activeSid) await loadChat();
+        } catch(_){}
+      }
+      window.openChat = openChat;
+      pollChats(); setInterval(pollChats, 5000);
     </script>
   `));
 });

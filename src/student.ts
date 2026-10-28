@@ -510,13 +510,29 @@ student.post("/s/exams/:id/start", async (c) => {
   const sessionId = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     // Pastikan ujian open, dalam jendela waktu, dan menargetkan kelas siswa.
     const ok = await tx`
-      select e.id, e.duration_minutes, e.starts_at, e.ends_at from exams e
+      select e.id, e.duration_minutes, e.starts_at, e.ends_at,
+             e.group_id, e.group_position
+      from exams e
       join exam_classes ec on ec.exam_id = e.id
       where e.id = ${examId} and e.status = 'open'
         and ec.class_id = (select class_id from students where id = ${stu.uid})
         and (e.starts_at is null or e.starts_at <= now())
         and (e.ends_at   is null or e.ends_at   >  now())`;
     if (ok.length === 0) throw new Error("ujian belum/sudah tidak tersedia");
+    // Enforce strict_order grup: siswa harus menyelesaikan ujian sebelumnya
+    // di grup yang sama (position lebih kecil) sebelum mulai yang ini.
+    const groupInfo = ok[0] as { group_id: string | null; group_position: number | null };
+    if (groupInfo.group_id && groupInfo.group_position != null) {
+      const g = await tx`select strict_order from exam_groups where id = ${groupInfo.group_id}`;
+      if (g.length && (g[0] as { strict_order: boolean }).strict_order) {
+        const pending = await tx`
+          select e.id from exams e
+          left join exam_sessions es on es.exam_id = e.id and es.student_id = ${stu.uid} and es.status = 'submitted'
+          where e.group_id = ${groupInfo.group_id} and e.group_position < ${groupInfo.group_position}
+            and es.id is null`;
+        if (pending.length > 0) throw new Error("Selesaikan ujian sebelumnya di rangkaian ini terlebih dahulu.");
+      }
+    }
     const dur = (ok[0] as { duration_minutes: number; ends_at: string | null }).duration_minutes;
     const endsAt = (ok[0] as { ends_at: string | null }).ends_at;
 
@@ -671,6 +687,7 @@ student.get("/s/take/:sid", async (c) => {
       <div class="row" style="justify-content:space-between">
         <div><h1 style="margin:0">${esc(data.title!)}</h1></div>
         <div>
+          <button type="button" id="chatBtn" title="Chat pengawas">💬<span id="chatBadge" style="display:none;background:var(--danger);color:#fff;padding:1px 6px;border-radius:999px;font-size:10px;margin-left:4px">!</span></button>
           <button type="button" id="calcBtn" title="Kalkulator">🧮</button>
           <span class="timer" id="t">--:--</span>
           <span id="qbadge" class="muted" style="font-size:11px"></span>
@@ -705,6 +722,18 @@ student.get("/s/take/:sid", async (c) => {
         <button type="button" data-k="=" class="primary">=</button>
       </div>
       <p class="muted" style="font-size:11px; margin:6px 0 0">Mendukung + − × ÷ ( ) . dan angka. Hasil koma 4 digit.</p>
+    </div>
+    <div id="chat" hidden style="position:fixed; bottom:20px; right:20px; width:320px; max-height:70vh; background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.25); z-index:50; display:flex; flex-direction:column">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+        <b>Chat pengawas</b>
+        <button type="button" id="chatClose" style="padding:2px 8px">×</button>
+      </div>
+      <div id="chatBox" style="flex:1; overflow-y:auto; padding:4px; border:1px solid var(--bd); border-radius:6px; background:var(--bg); min-height:120px; max-height:300px; font-size:13px"></div>
+      <form id="chatForm" style="display:flex; gap:4px; margin-top:6px">
+        <input id="chatInput" placeholder="Ketik pesan…" maxlength="500" style="flex:1; padding:6px 10px; border:1px solid var(--bd); border-radius:6px; background:var(--bg); color:var(--fg); font:inherit">
+        <button class="primary" type="submit">Kirim</button>
+      </form>
+      <p class="muted" style="font-size:11px; margin:4px 0 0">Mis. 'Izin ke toilet' atau 'Soal 3 tidak jelas'.</p>
     </div>
     <div class="card">
       <div class="nav" id="nav"></div>
@@ -963,6 +992,50 @@ student.get("/s/take/:sid", async (c) => {
         calcDisp.value += k;
       });
 
+      // Chat sederhana (polling 5 dtk).
+      const chatBox = document.getElementById('chatBox');
+      const chatInput = document.getElementById('chatInput');
+      const chatBtn = document.getElementById('chatBtn');
+      const chatBadge = document.getElementById('chatBadge');
+      let lastSeenCount = 0, lastSeenFrom = 'student';
+      document.getElementById('chatBtn').onclick = () => {
+        const cp = document.getElementById('chat');
+        cp.hidden = !cp.hidden;
+        if (!cp.hidden) { chatBadge.style.display = 'none'; lastSeenCount = chatBox.querySelectorAll('div').length; }
+      };
+      document.getElementById('chatClose').onclick = () => { document.getElementById('chat').hidden = true; };
+      document.getElementById('chatForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const content = chatInput.value.trim(); if (!content) return;
+        chatInput.value = '';
+        await fetch('/s/take/' + D.sessionId + '/message', {
+          method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ content }),
+        });
+        await pollChat();
+      });
+      async function pollChat() {
+        try {
+          const r = await fetch('/s/take/' + D.sessionId + '/messages', { credentials:'same-origin' });
+          if (!r.ok) return;
+          const msgs = await r.json();
+          chatBox.innerHTML = msgs.map((m) => {
+            const align = m.from_role === 'student' ? 'right' : 'left';
+            const bg = m.from_role === 'student' ? '#2563eb' : 'var(--bd)';
+            const fg = m.from_role === 'student' ? '#fff' : 'var(--fg)';
+            return '<div style="text-align:' + align + '; margin:4px 2px"><span style="display:inline-block;padding:4px 10px;border-radius:10px;background:' + bg + ';color:' + fg + ';max-width:220px;text-align:left"><b style="font-size:11px">' + escapeHtml(m.from_name || m.from_role) + '</b><br>' + escapeHtml(m.content) + '</span></div>';
+          }).join('');
+          chatBox.scrollTop = chatBox.scrollHeight;
+          // Badge: ada pesan staff baru yang belum dibuka?
+          const n = msgs.length;
+          if (document.getElementById('chat').hidden) {
+            const unseen = msgs.slice(lastSeenCount).some((m) => m.from_role === 'staff');
+            if (unseen) chatBadge.style.display = '';
+          }
+        } catch(_) {}
+      }
+      setInterval(pollChat, 5000); pollChat();
+
       // Heartbeat 15 dtk untuk live monitoring guru.
       async function heartbeat() {
         try { await fetch('/s/take/' + D.sessionId + '/ping', { method:'POST', credentials:'same-origin' }); } catch(_) {}
@@ -1011,6 +1084,38 @@ student.post("/s/take/:sid/answer", async (c) => {
                      updated_at = now()`,
   );
   return c.json({ ok: true });
+});
+
+// Chat: siswa kirim pesan ke pengawas (mis. minta izin ke toilet, lapor
+// soal rusak). Guru/admin membalas lewat /api/exam-messages (admin API).
+student.post("/s/take/:sid/message", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.json({ error: "unauthorized" }, 401);
+  const sessionId = c.req.param("sid");
+  const body = await c.req.json().catch(() => null) as null | { content: string };
+  if (!body?.content || body.content.length > 500) return c.json({ error: "pesan kosong / terlalu panjang" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
+    const owns = await tx`select 1 from exam_sessions where id = ${sessionId} and student_id = ${stu.uid}`;
+    if (owns.length === 0) throw new Error("sesi bukan milik Anda");
+    const name = await tx`select name from students where id = ${stu.uid}`;
+    const studentName = (name[0] as { name: string } | undefined)?.name ?? "Siswa";
+    await tx`insert into exam_messages (school_id, session_id, from_role, from_name, content)
+             values (${stu.sid}, ${sessionId}, 'student', ${studentName}, ${body.content})`;
+  });
+  return c.json({ ok: true });
+});
+
+student.get("/s/take/:sid/messages", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.json({ error: "unauthorized" }, 401);
+  const sessionId = c.req.param("sid");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
+    tx`select id, from_role, from_name, content, created_at from exam_messages
+       where session_id = ${sessionId} order by created_at asc limit 100`,
+  );
+  return c.json(rows);
 });
 
 // Heartbeat: klien ping tiap 15 detik, server update last_seen_at supaya
@@ -1080,37 +1185,52 @@ student.post("/s/take/:sid/submit", async (c) => {
     if (row.status === "submitted") return { ok: true, already: true };
     // Hitung auto-score hanya untuk soal yang masuk sesi ini (dukung pool
     // random). Uraian 0 dulu, menunggu nilai manual dari guru.
+    // Apply scoring_config: bobot kategori + penalty jawaban salah.
     const scored = await tx`
+      with items as (
+        select q.id, q.type, q.points, q.category_id, k.answer_key, a.answer,
+               coalesce((e.scoring_config->'category_weights'->>q.category_id::text)::numeric, 1) as weight,
+               coalesce((e.scoring_config->>'wrong_penalty')::numeric, 0) as wrong_penalty,
+               case q.type
+                 when 'pg'          then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
+                 when 'benar_salah' then ((k.answer_key->>'index')::int = (a.answer->>'index')::int)
+                 when 'isian'       then exists(
+                   select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                   where lower(trim(x.value)) = lower(trim(a.answer->>'text')))
+                 when 'menjodohkan' then a.answer->'pairs' = k.answer_key->'pairs'
+                 else null end as binary_benar
+        from jsonb_array_elements_text(coalesce(
+          (select case
+                    when jsonb_typeof(question_order) = 'object' then question_order->'order'
+                    when jsonb_typeof(question_order) = 'array'  then question_order
+                    else null end
+           from exam_sessions where id = ${sessionId}),
+          (select to_jsonb(array_agg(question_id)) from exam_questions where exam_id = ${row.exam_id})
+        )) as qid
+        join questions q on q.id = qid.value::uuid
+        join exams e on e.id = ${row.exam_id}
+        left join question_keys k on k.question_id = q.id
+        left join answers a on a.session_id = ${sessionId} and a.question_id = q.id
+      )
       select coalesce(sum(
-        case q.type
-          when 'pg'          then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
-          when 'benar_salah' then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
-          when 'isian'       then case when exists(
-                                    select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
-                                    where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
-                                  ) then q.points else 0 end
+        case it.type
+          when 'pg'          then case when it.binary_benar then it.points * it.weight
+                                       when it.answer is not null then -it.points * it.weight * it.wrong_penalty else 0 end
+          when 'benar_salah' then case when it.binary_benar then it.points * it.weight
+                                       when it.answer is not null then -it.points * it.weight * it.wrong_penalty else 0 end
+          when 'isian'       then case when it.binary_benar then it.points * it.weight else 0 end
           when 'pgk_centang' then greatest(0::numeric, (
-            (select count(*) from jsonb_array_elements_text(k.answer_key->'correct') kx
-               where kx::int in (select x::int from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) x))
+            (select count(*) from jsonb_array_elements_text(it.answer_key->'correct') kx
+               where kx::int in (select x::int from jsonb_array_elements_text(coalesce(it.answer->'selected','[]'::jsonb)) x))
             -
-            (select count(*) from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) ax
-               where ax::int not in (select x::int from jsonb_array_elements_text(k.answer_key->'correct') x))
-          )::numeric / nullif(jsonb_array_length(k.answer_key->'correct'), 0) * q.points)
-          when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
+            (select count(*) from jsonb_array_elements_text(coalesce(it.answer->'selected','[]'::jsonb)) ax
+               where ax::int not in (select x::int from jsonb_array_elements_text(it.answer_key->'correct') x))
+          )::numeric / nullif(jsonb_array_length(it.answer_key->'correct'), 0) * it.points * it.weight)
+          when 'menjodohkan' then case when it.binary_benar then it.points * it.weight else 0 end
           else 0 end), 0) as got_auto,
-             coalesce(sum(q.points), 0) as total,
-             coalesce(sum(case when q.type = 'uraian' then q.points else 0 end), 0) as manual_pending
-      from jsonb_array_elements_text(coalesce(
-        (select case
-                  when jsonb_typeof(question_order) = 'object' then question_order->'order'
-                  when jsonb_typeof(question_order) = 'array'  then question_order
-                  else null end
-         from exam_sessions where id = ${sessionId}),
-        (select to_jsonb(array_agg(question_id)) from exam_questions where exam_id = ${row.exam_id})
-      )) as qid
-      join questions q on q.id = qid.value::uuid
-      left join question_keys k on k.question_id = q.id
-      left join answers a on a.session_id = ${sessionId} and a.question_id = q.id`;
+      coalesce(sum(it.points * it.weight), 0) as total,
+      coalesce(sum(case when it.type = 'uraian' then it.points * it.weight else 0 end), 0) as manual_pending
+      from items it`;
     const sc = scored[0] as { got_auto: string; total: string; manual_pending: string };
     const total = parseFloat(sc.total); const gotAuto = parseFloat(sc.got_auto);
     const manualPending = parseFloat(sc.manual_pending);

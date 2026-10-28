@@ -836,6 +836,44 @@ api.delete("/api/questions/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+// ===== Grup ujian (rangkaian) =====
+
+api.get("/api/exam-groups", async (c) => {
+  const s = getSess(c);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select g.id, g.title, g.description, g.strict_order,
+              (select count(*) from exams e where e.group_id = g.id) as exam_count
+       from exam_groups g order by g.created_at desc`,
+  );
+  return c.json(rows);
+});
+
+api.post("/api/exam-groups", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null) as null | { title: string; description?: string; strict_order?: boolean };
+  if (!body?.title) return c.json({ error: "judul wajib" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`insert into exam_groups (school_id, title, description, strict_order)
+       values (${s.sid}, ${body.title}, ${body.description ?? null}, ${body.strict_order ?? true})
+       returning id, title, strict_order`,
+  );
+  return c.json(r[0], 201);
+});
+
+api.delete("/api/exam-groups/:id", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`delete from exam_groups where id = ${c.req.param("id")} returning id`,
+  );
+  if (r.length === 0) return c.json({ error: "not found" }, 404);
+  return c.json({ ok: true });
+});
+
 // ===== Ujian =====
 
 api.get("/api/exams", async (c) => {
@@ -859,18 +897,22 @@ api.post("/api/exams", async (c) => {
     shuffle_questions?: boolean; shuffle_options?: boolean;
     anticheat_level?: "log"|"warn"|"lock"; lock_after_violations?: number | null;
     questions_per_session?: number;
+    scoring_config?: { wrong_penalty?: number; category_weights?: Record<string, number> };
+    group_id?: string | null; group_position?: number | null;
   };
   if (!body?.title || !body.kind || !body.duration_minutes) return c.json({ error: "data ujian kurang" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`insert into exams (school_id, creator_id, title, kind, duration_minutes,
          starts_at, ends_at, shuffle_questions, shuffle_options, anticheat_level, lock_after_violations,
-         questions_per_session)
+         questions_per_session, scoring_config, group_id, group_position)
        values (${s.sid}, ${s.uid}, ${body.title}, ${body.kind}, ${body.duration_minutes},
          ${body.starts_at ?? null}, ${body.ends_at ?? null},
          ${body.shuffle_questions ?? false}, ${body.shuffle_options ?? false},
          ${body.anticheat_level ?? "log"}, ${body.lock_after_violations ?? null},
-         ${body.questions_per_session ?? 0})
+         ${body.questions_per_session ?? 0},
+         ${(body.scoring_config ?? {}) as unknown as string},
+         ${body.group_id ?? null}, ${body.group_position ?? null})
        returning id`,
   );
   return c.json(r[0], 201);
@@ -960,6 +1002,51 @@ api.get("/api/students/:id/analytics", async (c) => {
   });
   if (!data) return c.json({ error: "siswa tidak ditemukan" }, 404);
   return c.json(data);
+});
+
+// Chat ujian: list + post dari sisi staf.
+api.get("/api/sessions/:sid/messages", async (c) => {
+  const s = getSess(c);
+  const sessionId = c.req.param("sid");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select id, from_role, from_name, content, created_at from exam_messages
+       where session_id = ${sessionId} order by created_at asc limit 100`,
+  );
+  return c.json(rows);
+});
+
+api.post("/api/sessions/:sid/messages", async (c) => {
+  const s = getSess(c);
+  const sessionId = c.req.param("sid");
+  const body = await c.req.json().catch(() => null) as null | { content: string };
+  if (!body?.content || body.content.length > 500) return c.json({ error: "pesan kosong / terlalu panjang" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`insert into exam_messages (school_id, session_id, from_role, from_name, content)
+       values (${s.sid}, ${sessionId}, 'staff', ${s.email}, ${body.content})`,
+  );
+  return c.json({ ok: true });
+});
+
+// Daftar sesi yang punya pesan belum ditanggapi dari siswa.
+api.get("/api/exams/:id/chats", async (c) => {
+  const s = getSess(c);
+  const examId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select es.id as session_id, st.name as student_name,
+              (select content from exam_messages where session_id = es.id order by created_at desc limit 1) as last_msg,
+              (select from_role from exam_messages where session_id = es.id order by created_at desc limit 1) as last_from,
+              (select created_at from exam_messages where session_id = es.id order by created_at desc limit 1) as last_at,
+              (select count(*) from exam_messages where session_id = es.id) as msg_count
+       from exam_sessions es
+       join students st on st.id = es.student_id
+       where es.exam_id = ${examId}
+         and exists (select 1 from exam_messages where session_id = es.id)
+       order by (select max(created_at) from exam_messages where session_id = es.id) desc`,
+  );
+  return c.json(rows);
 });
 
 // Live monitoring: siapa yang sedang mengerjakan ujian.
