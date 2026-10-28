@@ -13,11 +13,21 @@ const base = (title: string, body: string) => `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · cbtgas</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2563eb">
+<script>
+  // Terapkan tema sebelum render agar tidak flash.
+  (function(){ try { var t = localStorage.getItem('theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch(e){} })();
+</script>
 <style>
   :root { color-scheme: light dark; --fg:#111; --mut:#555; --bg:#fafafa; --card:#fff; --bd:#e5e5e5; --accent:#2563eb; --danger:#b91c1c; }
   @media (prefers-color-scheme: dark) {
-    :root { --fg:#eee; --mut:#aaa; --bg:#0b0b0c; --card:#17181b; --bd:#2a2b30; }
+    :root:not([data-theme="light"]) { --fg:#eee; --mut:#aaa; --bg:#0b0b0c; --card:#17181b; --bd:#2a2b30; }
   }
+  :root[data-theme="dark"] { --fg:#eee; --mut:#aaa; --bg:#0b0b0c; --card:#17181b; --bd:#2a2b30; color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
   * { box-sizing: border-box; }
   body { margin:0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:var(--fg); background:var(--bg); }
   main { max-width: 560px; margin: 48px auto; padding: 0 20px; }
@@ -64,7 +74,28 @@ const base = (title: string, body: string) => `<!doctype html>
 <main>
 ${body}
 <footer>cbtgas · demo multi-sekolah, Cloudflare + Neon</footer>
+<div id="installCard" class="card" hidden style="position:fixed; bottom:16px; right:16px; max-width:280px; margin:0; box-shadow:0 10px 30px rgba(0,0,0,.2)">
+  <p style="margin:0 0 8px"><b>Pasang cbtgas sebagai aplikasi?</b></p>
+  <div class="row" style="margin:0"><button class="primary" id="installBtn">Pasang</button><button id="installClose">Nanti</button></div>
+</div>
 </main>
+<script>
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  let deferred;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault(); deferred = e;
+    try { if (localStorage.getItem('install_dismissed')) return; } catch(_) {}
+    const card = document.getElementById('installCard'); if (card) card.hidden = false;
+  });
+  document.getElementById('installBtn')?.addEventListener('click', async () => {
+    if (!deferred) return; deferred.prompt(); await deferred.userChoice;
+    document.getElementById('installCard').hidden = true; deferred = null;
+  });
+  document.getElementById('installClose')?.addEventListener('click', () => {
+    document.getElementById('installCard').hidden = true;
+    try { localStorage.setItem('install_dismissed', '1'); } catch(_){}
+  });
+</script>
 </body>
 </html>`;
 
@@ -216,6 +247,8 @@ pages.get("/app", async (c) => {
         <form method="post" action="/auth/logout" style="margin:0">
           <button type="submit">Keluar</button>
         </form>
+        ${sess.role === "admin" ? `<a class="btn" href="/app/users">Kelola staf</a>` : ""}
+        <button type="button" id="toggleTheme" title="Ganti tema terang/gelap">🌓 Tema</button>
       </div>
     </div>
 
@@ -296,6 +329,13 @@ pages.get("/app", async (c) => {
     <script>
       const $ = (q, r=document) => r.querySelector(q);
       const dlg = $('#dlg'), fedit = $('#fedit'), erredit = $('#erredit');
+      // Dark mode toggle (3 state cycle: system → light → dark → system).
+      $('#toggleTheme')?.addEventListener('click', () => {
+        const cur = document.documentElement.getAttribute('data-theme');
+        const next = cur === 'dark' ? null : (cur === 'light' ? 'dark' : 'light');
+        if (next) { document.documentElement.setAttribute('data-theme', next); localStorage.setItem('theme', next); }
+        else { document.documentElement.removeAttribute('data-theme'); localStorage.removeItem('theme'); }
+      });
 
       async function send(url, method, body) {
         const r = await fetch(url, {
@@ -627,6 +667,99 @@ pages.get("/app/exams/:id", async (c) => {
         const r = await fetch('/api/exams/' + EID + '/classes', { method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ class_ids: ids }) });
         if (r.ok) alert('Tersimpan: ' + ids.length + ' kelas'); else alert('Gagal: ' + r.status);
+      });
+    </script>
+  `));
+});
+
+pages.get("/app/users", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  if (sess.role !== "admin") return c.html(base("Staf", `<div class="card"><p class="err">Hanya admin yang boleh melihat halaman ini.</p><a class="btn" href="/app">← Dashboard</a></div>`));
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const users = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
+    tx`select id, email, name, role, active, google_sub is not null as linked
+       from users order by email`,
+  );
+  type U = { id: string; email: string; name: string | null; role: string; active: boolean; linked: boolean };
+  const list = (users as unknown as U[]).map((u) => {
+    const isSelf = u.id === sess.uid;
+    const linkBadge = u.linked ? `<span class="pill" style="background:#16a34a1a;border-color:#16a34a;color:#16a34a">Google</span>` : `<span class="pill muted">belum login</span>`;
+    const activeBadge = u.active ? "" : `<span class="pill" style="background:#ef44441a;border-color:#ef4444;color:#ef4444">nonaktif</span>`;
+    return `<tr data-uid="${esc(u.id)}">
+      <td>${esc(u.email)} ${linkBadge} ${activeBadge}${isSelf ? ` <span class="muted">(Anda)</span>` : ""}</td>
+      <td>
+        <select data-field="role" ${isSelf ? "disabled" : ""}>
+          ${["admin","teacher","proctor"].map((r) => `<option value="${r}" ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}
+        </select>
+      </td>
+      <td style="text-align:right; white-space:nowrap">
+        ${isSelf ? "" : `
+          <button data-action="toggle">${u.active ? "Nonaktifkan" : "Aktifkan"}</button>
+          <button class="danger" data-action="delete">Hapus</button>`}
+      </td>
+    </tr>`;
+  }).join("");
+  return c.html(base("Staf sekolah", `
+    <div class="card">
+      <h1>Staf sekolah</h1>
+      <p class="sub"><a href="/app">← Dashboard</a></p>
+      <form id="finv">
+        <div class="grid">
+          <div><label>Email staf</label><input name="email" type="email" required placeholder="guru@sekolah.id"></div>
+          <div><label>Nama (opsional)</label><input name="name" placeholder="Bu Rina"></div>
+          <div><label>Role</label>
+            <select name="role">
+              <option value="teacher">Guru</option>
+              <option value="admin">Admin</option>
+              <option value="proctor">Pengawas (hanya baca)</option>
+            </select>
+          </div>
+        </div>
+        <div class="row"><button class="primary" type="submit">Undang</button></div>
+        <p class="muted" style="margin-top:8px">Staf masuk lewat <a href="/">tombol "Masuk dengan Google"</a> memakai email yang Anda undang di sini.</p>
+        <p class="err" id="errinv" hidden></p>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Daftar staf</h2>
+      <table><thead><tr><th>Email</th><th>Role</th><th></th></tr></thead>
+        <tbody id="tb">${list || `<tr><td colspan="3" class="muted">Belum ada staf.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <script>
+      document.getElementById('finv').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = document.getElementById('errinv'); err.hidden = true;
+        const d = Object.fromEntries(new FormData(e.target));
+        const r = await fetch('/api/users', { method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+        if (r.ok) location.reload();
+        else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
+      });
+      document.getElementById('tb').addEventListener('click', async (e) => {
+        const tr = e.target.closest('tr'); if (!tr) return;
+        const uid = tr.dataset.uid;
+        const action = e.target.dataset.action;
+        if (action === 'delete') {
+          if (!confirm('Hapus staf ini?')) return;
+          const r = await fetch('/api/users/' + uid, { method:'DELETE', credentials:'same-origin' });
+          if (r.ok) location.reload(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
+          return;
+        }
+        if (action === 'toggle') {
+          const active = e.target.textContent === 'Aktifkan';
+          const r = await fetch('/api/users/' + uid, { method:'PATCH', credentials:'same-origin',
+            headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ active }) });
+          if (r.ok) location.reload(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
+        }
+      });
+      document.getElementById('tb').addEventListener('change', async (e) => {
+        const sel = e.target; if (sel.dataset.field !== 'role') return;
+        const tr = sel.closest('tr'); const uid = tr.dataset.uid;
+        const r = await fetch('/api/users/' + uid, { method:'PATCH', credentials:'same-origin',
+          headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ role: sel.value }) });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || r.status); location.reload(); }
       });
     </script>
   `));

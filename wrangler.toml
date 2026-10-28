@@ -9,6 +9,10 @@ compatibility_flags = ["nodejs_compat"]
 binding = "HYPERDRIVE"
 id = "71378b2863a647df8b716a1ca5eef9be"
 
+# Cron trigger: flip exam.status setiap menit berdasarkan starts_at/ends_at.
+[triggers]
+crons = ["* * * * *"]
+
 [vars]
 APP_ENV = "dev"
 APP_ORIGIN = "https://cbt-api.pulsachoy.workers.dev"

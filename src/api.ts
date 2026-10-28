@@ -188,6 +188,95 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
+// ===== Staf (users: admin/teacher/proctor) =====
+
+api.get("/api/users", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select id, email, name, role, active, google_sub is not null as linked
+       from users order by email`,
+  );
+  return c.json(rows);
+});
+
+// Undang staf baru: tulis baris di users (role boleh admin/teacher/proctor).
+// Google OAuth login kemudian memakai find_staff_by_email(email) untuk
+// menemukan undangan ini dan membuat sesi.
+api.post("/api/users", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "hanya admin yang boleh mengundang staf" }, 403);
+  const body = await c.req.json().catch(() => null) as null | {
+    email: string; name?: string; role: "admin"|"teacher"|"proctor";
+  };
+  if (!body?.email || !body?.role) return c.json({ error: "email dan role wajib" }, 400);
+  if (!["admin","teacher","proctor"].includes(body.role)) return c.json({ error: "role tidak valid" }, 400);
+  const email = body.email.toLowerCase().trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return c.json({ error: "format email salah" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  try {
+    const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+      tx`insert into users (school_id, email, name, role)
+         values (${s.sid}, ${email}, ${body.name ?? null}, ${body.role})
+         returning id, email, role, active`,
+    );
+    return c.json(r[0], 201);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 409);
+  }
+});
+
+api.patch("/api/users/:id", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as null | {
+    role?: "admin"|"teacher"|"proctor"; active?: boolean; name?: string;
+  };
+  if (!body) return c.json({ error: "bad body" }, 400);
+  if (body.role && !["admin","teacher","proctor"].includes(body.role)) {
+    return c.json({ error: "role tidak valid" }, 400);
+  }
+  // Cegah admin terakhir menonaktifkan dirinya sendiri atau kehilangan satu-satunya admin.
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    if ((body.role && body.role !== "admin") || body.active === false) {
+      const target = await tx`select role from users where id = ${id}`;
+      if (target.length && (target[0] as { role: string }).role === "admin") {
+        const admins = await tx`select count(*)::int as n from users where role = 'admin' and active`;
+        if ((admins[0] as { n: number }).n <= 1) throw new Error("tidak bisa menghapus satu-satunya admin aktif");
+      }
+    }
+    return tx`update users set
+      role   = coalesce(${body.role ?? null}, role),
+      active = case when ${body.active !== undefined} then ${body.active ?? null} else active end,
+      name   = coalesce(${body.name ?? null}, name)
+      where id = ${id} returning id, email, role, active`;
+  }).catch((e) => ({ error: (e as Error).message }));
+  if ("error" in result) return c.json(result, 400);
+  if (result.length === 0) return c.json({ error: "not found" }, 404);
+  return c.json(result[0]);
+});
+
+api.delete("/api/users/:id", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
+  if (c.req.param("id") === s.uid) return c.json({ error: "tidak boleh menghapus diri sendiri" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const target = await tx`select role from users where id = ${c.req.param("id")}`;
+    if (target.length && (target[0] as { role: string }).role === "admin") {
+      const admins = await tx`select count(*)::int as n from users where role = 'admin' and active`;
+      if ((admins[0] as { n: number }).n <= 1) throw new Error("tidak bisa menghapus satu-satunya admin aktif");
+    }
+    return tx`delete from users where id = ${c.req.param("id")} returning id`;
+  }).catch((e) => ({ error: (e as Error).message }));
+  if ("error" in result) return c.json(result, 400);
+  if (result.length === 0) return c.json({ error: "not found" }, 404);
+  return c.json({ ok: true });
+});
+
 // ===== Kategori soal =====
 
 api.get("/api/categories", async (c) => {

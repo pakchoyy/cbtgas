@@ -42,9 +42,14 @@ export const student = new Hono<{ Bindings: Bindings }>();
 const page = (title: string, body: string) => `<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · cbtgas siswa</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2563eb">
+<script>(function(){try{var t=localStorage.getItem('theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <style>
   :root { color-scheme: light dark; --fg:#111; --mut:#555; --bg:#fafafa; --card:#fff; --bd:#e5e5e5; --accent:#2563eb; --danger:#b91c1c; --ok:#16a34a; }
-  @media (prefers-color-scheme: dark) { :root { --fg:#eee; --mut:#aaa; --bg:#0b0b0c; --card:#17181b; --bd:#2a2b30; } }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --fg:#eee; --mut:#aaa; --bg:#0b0b0c; --card:#17181b; --bd:#2a2b30; } }
+  :root[data-theme="dark"] { --fg:#eee; --mut:#aaa; --bg:#0b0b0c; --card:#17181b; --bd:#2a2b30; color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
   * { box-sizing: border-box; } body { margin:0; font:15px/1.5 system-ui, sans-serif; color:var(--fg); background:var(--bg); }
   main { max-width: 720px; margin: 32px auto; padding: 0 16px; }
   .card { background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:20px; margin-bottom:14px; }
@@ -68,7 +73,9 @@ const page = (title: string, body: string) => `<!doctype html>
   .nav button.cur { outline: 2px solid var(--accent); outline-offset:1px; }
   .timer { font-variant-numeric: tabular-nums; font-weight:600; color: var(--fg); background: var(--bg); border:1px solid var(--bd); border-radius: 6px; padding: 4px 10px; }
   .timer.warn { color: var(--danger); border-color: var(--danger); }
-</style></head><body><main>${body}</main></body></html>`;
+</style></head><body><main>${body}</main>
+<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});</script>
+</body></html>`;
 
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[ch]!));
