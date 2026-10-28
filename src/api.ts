@@ -5,6 +5,7 @@ import { connect, withTenant } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
 import { hashPin } from "./hash";
 import { sendEmail, inviteEmail, pinNotifyEmail } from "./email";
+import { audit, actorFromSession } from "./audit";
 
 export const api = new Hono<{ Bindings: AuthBindings & { APP_ENV: string; RESEND_API_KEY?: string; EMAIL_FROM?: string } }>();
 
@@ -222,6 +223,8 @@ api.post("/api/users", async (c) => {
          values (${s.sid}, ${email}, ${body.name ?? null}, ${body.role})
          returning id, email, role, active`;
       const sch = await tx`select name from schools where id = ${s.sid}`;
+      await audit(tx, actorFromSession(s), "user.invite", "user",
+        (u[0] as { id: string }).id, { email, role: body.role });
       return { user: u[0], schoolName: (sch[0] as { name: string } | undefined)?.name ?? "" };
     });
     // Kirim email undangan (best-effort, tidak gagalkan request).
@@ -421,6 +424,26 @@ api.post("/api/questions", async (c) => {
   } else if (type === "uraian") {
     content = { text }; answer_key = { manual: true };
     rubric = body.rubric ? String(body.rubric) : null;
+  } else if (type === "pgk_centang") {
+    // Multiple-select. options = string[], correct_indexes = int[].
+    const options = Array.isArray(body.options) ? (body.options as string[]) : [];
+    const correctIdx = Array.isArray(body.correct_indexes)
+      ? (body.correct_indexes as number[]).filter((n) => Number.isInteger(n) && n >= 0 && n < options.length) : [];
+    if (options.length < 2 || correctIdx.length === 0) {
+      return c.json({ error: "pgk_centang: butuh ≥2 opsi dan minimal 1 jawaban benar" }, 400);
+    }
+    content = { text, options };
+    answer_key = { correct: Array.from(new Set(correctIdx)).sort((a, b) => a - b) };
+  } else if (type === "menjodohkan") {
+    // Matching. left & right: string[]. pairs: array of [leftIdx, rightIdx] canonical.
+    const left = Array.isArray(body.left) ? (body.left as string[]).filter(Boolean) : [];
+    const right = Array.isArray(body.right) ? (body.right as string[]).filter(Boolean) : [];
+    if (left.length < 2 || right.length < left.length) {
+      return c.json({ error: "menjodohkan: butuh minimal 2 pasangan dan right ≥ left" }, 400);
+    }
+    // Default canonical pairing: left[i] ↔ right[i]
+    content = { text, left, right };
+    answer_key = { pairs: left.map((_, i) => [i, i] as [number, number]) };
   } else {
     return c.json({ error: `tipe '${type}' belum didukung` }, 400);
   }
@@ -446,11 +469,13 @@ api.post("/api/sessions/:sid/unlock", async (c) => {
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const sessionId = c.req.param("sid");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`update exam_sessions set status = 'active', violation_count = 0,
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const u = await tx`update exam_sessions set status = 'active', violation_count = 0,
        deadline_at = greatest(deadline_at, now() + interval '15 minutes')
-       where id = ${sessionId} and status = 'locked' returning id, deadline_at`,
-  );
+       where id = ${sessionId} and status = 'locked' returning id, deadline_at`;
+    if (u.length) await audit(tx, actorFromSession(s), "session.unlock", "session", sessionId);
+    return u;
+  });
   if (r.length === 0) return c.json({ error: "sesi tidak ditemukan atau tidak terkunci" }, 404);
   return c.json({ ok: true, ...(r[0] as object) });
 });
@@ -491,6 +516,7 @@ api.post("/api/pin-resets/:id/approve", async (c) => {
              where id = ${stuId}`;
     await tx`update pin_resets set status = 'approved', approved_by = ${s.uid}, approved_at = now(),
              new_pin = ${newPin} where id = ${prId}`;
+    await audit(tx, actorFromSession(s), "pin_reset.approve", "student", stuId, { request_id: prId });
     return { student_id: stuId };
   }).catch((e) => ({ error: (e as Error).message }));
   if ("error" in r) return c.json(r, 400);
@@ -569,6 +595,12 @@ api.post("/api/sessions/:sid/manual-score", async (c) => {
                                     select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
                                     where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
                                   ) then q.points else 0 end
+          when 'pgk_centang' then case when (
+                                    select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
+                                 ) = (
+                                    select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
+                                 ) then q.points else 0 end
+          when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
           when 'uraian'      then coalesce((a.answer->>'manual_score')::numeric, 0)
           else 0 end), 0) as got,
              coalesce(sum(q.points), 0) as total
@@ -776,21 +808,25 @@ api.patch("/api/exams/:id", async (c) => {
   };
   if (!body) return c.json({ error: "bad body" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`update exams set
-         title = coalesce(${body.title ?? null}, title),
-         duration_minutes = coalesce(${body.duration_minutes ?? null}, duration_minutes),
-         status = coalesce(${body.status ?? null}, status),
-         starts_at = case when ${body.starts_at !== undefined} then ${body.starts_at ?? null} else starts_at end,
-         ends_at = case when ${body.ends_at !== undefined} then ${body.ends_at ?? null} else ends_at end,
-         shuffle_questions = coalesce(${body.shuffle_questions ?? null}, shuffle_questions),
-         shuffle_options = coalesce(${body.shuffle_options ?? null}, shuffle_options),
-         anticheat_level = coalesce(${body.anticheat_level ?? null}, anticheat_level),
-         lock_after_violations = case when ${body.lock_after_violations !== undefined}
-            then ${body.lock_after_violations ?? null} else lock_after_violations end,
-         questions_per_session = coalesce(${body.questions_per_session ?? null}, questions_per_session)
-       where id = ${id} returning id, status`,
-  );
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const u = await tx`update exams set
+       title = coalesce(${body.title ?? null}, title),
+       duration_minutes = coalesce(${body.duration_minutes ?? null}, duration_minutes),
+       status = coalesce(${body.status ?? null}, status),
+       starts_at = case when ${body.starts_at !== undefined} then ${body.starts_at ?? null} else starts_at end,
+       ends_at = case when ${body.ends_at !== undefined} then ${body.ends_at ?? null} else ends_at end,
+       shuffle_questions = coalesce(${body.shuffle_questions ?? null}, shuffle_questions),
+       shuffle_options = coalesce(${body.shuffle_options ?? null}, shuffle_options),
+       anticheat_level = coalesce(${body.anticheat_level ?? null}, anticheat_level),
+       lock_after_violations = case when ${body.lock_after_violations !== undefined}
+          then ${body.lock_after_violations ?? null} else lock_after_violations end,
+       questions_per_session = coalesce(${body.questions_per_session ?? null}, questions_per_session)
+     where id = ${id} returning id, status`;
+    if (u.length && body.status) {
+      await audit(tx, actorFromSession(s), `exam.${body.status}`, "exam", id, { title: body.title ?? null });
+    }
+    return u;
+  });
   if (r.length === 0) return c.json({ error: "not found" }, 404);
   return c.json(r[0]);
 });
@@ -820,6 +856,12 @@ api.get("/api/students/:id/analytics", async (c) => {
                when q.type = 'isian'       and exists(
                  select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
                  where lower(trim(x.value)) = lower(trim(a.answer->>'text'))) then 1
+               when q.type = 'pgk_centang' and (
+                 select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
+               ) = (
+                 select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
+               ) then 1
+               when q.type = 'menjodohkan' and a.answer->'pairs' = k.answer_key->'pairs' then 1
                when q.type = 'uraian' and (a.answer->>'manual_score')::numeric >= q.points * 0.5 then 1
                else 0 end)::int as benar
       from answers a
@@ -896,6 +938,44 @@ api.get("/api/exams/:id/scores.csv", async (c) => {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="skor-ujian-${id}.csv"`,
+    },
+  });
+});
+
+// Backup lengkap konfigurasi sekolah ke JSON (tanpa data operasional:
+// sesi, jawaban, pelanggaran, skor — hanya struktur bank soal + kelas +
+// siswa untuk pindah lingkungan atau arsip).
+api.get("/api/reports/backup.json", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const [school, users, classes, students, categories, passages, questions, keys, exams, examClasses, examQuestions] = await Promise.all([
+      tx`select id, code, name, level, npsn, logo_key, color, operator_name, operator_phone,
+                plan, student_quota, concurrent_quota, active from schools where id = ${s.sid}`,
+      tx`select id, email, name, role, google_sub, active from users`,
+      tx`select id, name, grade, year from classes`,
+      tx`select id, class_id, name, nisn, gender, username, pin_hash, active from students`,
+      tx`select id, name, parent_id from categories`,
+      tx`select id, title, body from passages`,
+      tx`select id, author_id, category_id, passage_id, type, content, points from questions`,
+      tx`select question_id, answer_key, rubric from question_keys`,
+      tx`select id, creator_id, title, kind, duration_minutes, shuffle_questions, shuffle_options,
+                anticheat_level, lock_after_violations, token_hash, starts_at, ends_at, status,
+                questions_per_session from exams`,
+      tx`select exam_id, class_id from exam_classes`,
+      tx`select exam_id, question_id, position, weight from exam_questions`,
+    ]);
+    return {
+      version: 1, exported_at: new Date().toISOString(),
+      school: school[0], users, classes, students, categories, passages, questions,
+      question_keys: keys, exams, exam_classes: examClasses, exam_questions: examQuestions,
+    };
+  });
+  return new Response(JSON.stringify(data, null, 2), {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="backup-${(data.school as { code: string }).code}-${new Date().toISOString().slice(0, 10)}.json"`,
     },
   });
 });

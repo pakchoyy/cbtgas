@@ -575,7 +575,7 @@ student.get("/s/take/:sid", async (c) => {
     <div class="card">
       <div class="row" style="justify-content:space-between">
         <div><h1 style="margin:0">${esc(data.title!)}</h1></div>
-        <div><span class="timer" id="t">--:--</span></div>
+        <div><span class="timer" id="t">--:--</span> <span id="qbadge" class="muted" style="font-size:11px"></span></div>
       </div>
     </div>
     <div class="card">
@@ -600,6 +600,8 @@ student.get("/s/take/:sid", async (c) => {
         const a = A[qid]; if (!a) return false;
         if (typeof a.index === 'number') return true;
         if (typeof a.text === 'string' && a.text.trim() !== '') return true;
+        if (Array.isArray(a.selected) && a.selected.length > 0) return true;
+        if (Array.isArray(a.pairs) && a.pairs.length > 0) return true;
         return false;
       }
       function render() {
@@ -644,6 +646,45 @@ student.get("/s/take/:sid", async (c) => {
             clearTimeout(t); t = setTimeout(() => save(q.id, { text: ta.value }), 500);
           });
           el.appendChild(ta);
+        } else if (q.type === 'pgk_centang') {
+          const sel = Array.isArray(A[q.id] && A[q.id].selected) ? A[q.id].selected.slice() : [];
+          q.content.options.forEach((o, k) => {
+            const row = document.createElement('label'); row.className = 'opt';
+            const checked = sel.includes(k) ? 'checked' : '';
+            row.innerHTML = '<input type="checkbox" value="'+k+'" '+checked+'><span>' + String.fromCharCode(65+k) + '. ' + escapeHtml(o) + '</span>';
+            row.querySelector('input').addEventListener('change', (ev) => {
+              const cur = (A[q.id] && A[q.id].selected) ? A[q.id].selected.slice() : [];
+              if (ev.target.checked) { if (!cur.includes(k)) cur.push(k); }
+              else { const i = cur.indexOf(k); if (i >= 0) cur.splice(i, 1); }
+              cur.sort((a, b) => a - b);
+              save(q.id, { selected: cur });
+            });
+            el.appendChild(row);
+          });
+        } else if (q.type === 'menjodohkan') {
+          // Dua kolom: label kiri + dropdown kanan.
+          const pairs = Array.isArray(A[q.id] && A[q.id].pairs) ? A[q.id].pairs : [];
+          const left = q.content.left || [], right = q.content.right || [];
+          const grid = document.createElement('div');
+          grid.style.cssText = 'display:grid; grid-template-columns: 1fr auto 1fr; gap:8px 12px; align-items:center';
+          left.forEach((lText, i) => {
+            const lab = document.createElement('div'); lab.innerHTML = '<b>' + (i+1) + '.</b> ' + escapeHtml(lText);
+            const arrow = document.createElement('div'); arrow.className = 'muted'; arrow.textContent = '→';
+            const sel = document.createElement('select');
+            sel.style.cssText = 'width:100%;padding:8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit';
+            sel.innerHTML = '<option value="">— pilih —</option>' + right.map((rText, k) =>
+              '<option value="'+k+'">' + String.fromCharCode(65+k) + '. ' + escapeHtml(rText) + '</option>').join('');
+            const existing = pairs.find((p) => p[0] === i);
+            if (existing) sel.value = String(existing[1]);
+            sel.addEventListener('change', () => {
+              const cur = (A[q.id] && A[q.id].pairs) ? A[q.id].pairs.filter((p) => p[0] !== i) : [];
+              if (sel.value !== '') cur.push([i, +sel.value]);
+              cur.sort((a, b) => a[0] - b[0]);
+              save(q.id, { pairs: cur });
+            });
+            grid.appendChild(lab); grid.appendChild(arrow); grid.appendChild(sel);
+          });
+          el.appendChild(grid);
         }
         qbox.appendChild(el);
         nav.innerHTML = '';
@@ -655,20 +696,51 @@ student.get("/s/take/:sid", async (c) => {
           nav.appendChild(b);
         });
       }
+      // Antrian jawaban offline di localStorage. Setiap jawaban paling baru
+      // menimpa yang lama untuk question_id yang sama (idempoten).
+      const QKEY = 'cbtgas_pending_' + D.sessionId;
+      function queueGet() {
+        try { return JSON.parse(localStorage.getItem(QKEY) || '{}'); } catch(_) { return {}; }
+      }
+      function queueSet(m) {
+        try { localStorage.setItem(QKEY, JSON.stringify(m)); } catch(_) {}
+      }
+      async function flushQueue() {
+        const m = queueGet();
+        for (const [qid, payload] of Object.entries(m)) {
+          try {
+            const r = await fetch('/s/take/' + D.sessionId + '/answer', {
+              method:'POST', credentials:'same-origin',
+              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+            });
+            if (r.ok) { const cur = queueGet(); delete cur[qid]; queueSet(cur); }
+          } catch (_) { return; } // berhenti saat gagal, coba lagi nanti
+        }
+        updateBadge();
+      }
+      function updateBadge() {
+        const n = Object.keys(queueGet()).length;
+        const b = document.getElementById('qbadge'); if (!b) return;
+        b.textContent = n ? ('📶 ' + n + ' jawaban menunggu kirim') : '';
+      }
       async function save(qid, payload) {
         A[qid] = Object.assign({}, A[qid] || {}, payload); render();
-        // Jika soal pakai perm (shuffle_options), remap index tampilan → asli
-        // sebelum kirim. Simpan juga indeks tampilan di cache lokal supaya
-        // highlight tetap konsisten.
         const q = Q.find((x) => x.id === qid);
-        let outPayload = Object.assign({}, payload);
+        let outPayload = Object.assign({ question_id: qid }, payload);
         if (q && q.perm && typeof payload.index === 'number') outPayload.index = q.perm[payload.index];
-        await fetch('/s/take/' + D.sessionId + '/answer', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(Object.assign({ question_id: qid }, outPayload)),
-        });
+        try {
+          const r = await fetch('/s/take/' + D.sessionId + '/answer', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(outPayload),
+          });
+          if (!r.ok) throw new Error('http ' + r.status);
+        } catch (_) {
+          // Simpan ke antrian untuk retry nanti.
+          const cur = queueGet(); cur[qid] = outPayload; queueSet(cur); updateBadge();
+        }
       }
+      window.addEventListener('online', flushQueue);
+      updateBadge(); if (navigator.onLine) flushQueue();
       document.getElementById('prev').onclick = () => { if (i > 0) { i--; render(); } };
       document.getElementById('next').onclick = () => { if (i < Q.length-1) { i++; render(); } };
       document.getElementById('submit').onclick = async () => {
@@ -731,11 +803,14 @@ student.post("/s/take/:sid/answer", async (c) => {
   const sessionId = c.req.param("sid");
   const body = await c.req.json().catch(() => null) as null | {
     question_id: string; index?: number; text?: string;
+    selected?: number[]; pairs?: [number, number][];
   };
   if (!body?.question_id) return c.json({ error: "bad body" }, 400);
   const ans: Record<string, unknown> = {};
   if (typeof body.index === "number") ans.index = body.index;
   if (typeof body.text === "string") ans.text = body.text;
+  if (Array.isArray(body.selected)) ans.selected = body.selected.filter((n) => Number.isInteger(n));
+  if (Array.isArray(body.pairs)) ans.pairs = body.pairs.filter((p) => Array.isArray(p) && p.length === 2);
   if (Object.keys(ans).length === 0) return c.json({ error: "jawaban kosong" }, 400);
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -829,6 +904,12 @@ student.post("/s/take/:sid/submit", async (c) => {
                                     select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
                                     where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
                                   ) then q.points else 0 end
+          when 'pgk_centang' then case when (
+                                    select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
+                                 ) = (
+                                    select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
+                                 ) then q.points else 0 end
+          when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
           else 0 end), 0) as got_auto,
              coalesce(sum(q.points), 0) as total,
              coalesce(sum(case when q.type = 'uraian' then q.points else 0 end), 0) as manual_pending

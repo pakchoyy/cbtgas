@@ -46,7 +46,7 @@ app.get("/icon-512.svg", (c) => new Response(ICON_SVG, { headers: { "Content-Typ
 // data (/api/*, /s/take/*) selalu network. Dibatasi runtime cache ringan
 // untuk GET /s/login & / supaya PWA bisa buka saat offline sampai login.
 app.get("/sw.js", (c) => {
-  const sw = `const CACHE = 'cbtgas-shell-v1';
+  const sw = `const CACHE = 'cbtgas-shell-v2';
 const SHELL = ['/', '/s/login', '/manifest.webmanifest', '/icon-192.svg'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -60,12 +60,15 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   // Jangan cache route data/sensitif. Lewat network murni.
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/') ||
-      url.pathname.startsWith('/s/take/') || url.pathname.startsWith('/s/history')) return;
-  // Shell: network-first dengan fallback cache.
+      url.pathname.startsWith('/s/history')) return;
+  // /s/take/:sid di-cache saat berhasil (network-first) agar bisa dibuka
+  // kembali offline sampai siswa klik tombol navigasi.
+  const isTake = url.pathname.startsWith('/s/take/');
+  const isShell = SHELL.includes(url.pathname);
   e.respondWith((async () => {
     try {
       const r = await fetch(req);
-      if (SHELL.includes(url.pathname)) {
+      if (isShell || isTake) {
         const cache = await caches.open(CACHE);
         cache.put(req, r.clone());
       }
@@ -140,6 +143,12 @@ async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed
                                         select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
                                         where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
                                       ) then q.points else 0 end
+              when 'pgk_centang' then case when (
+                                        select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
+                                     ) = (
+                                        select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
+                                     ) then q.points else 0 end
+              when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
               else 0 end), 0) as got, coalesce(sum(q.points), 0) as total
           from jsonb_array_elements_text(coalesce(
             (select case

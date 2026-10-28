@@ -247,7 +247,7 @@ pages.get("/app", async (c) => {
         <form method="post" action="/auth/logout" style="margin:0">
           <button type="submit">Keluar</button>
         </form>
-        ${sess.role === "admin" ? `<a class="btn" href="/app/users">Kelola staf</a>` : ""}
+        ${sess.role === "admin" ? `<a class="btn" href="/app/users">Kelola staf</a><a class="btn" href="/app/audit">Audit log</a>` : ""}
         <a class="btn" href="/app/pin-resets">Reset PIN siswa</a>
         <button type="button" id="toggleTheme" title="Ganti tema terang/gelap">🌓 Tema</button>
       </div>
@@ -293,6 +293,7 @@ pages.get("/app", async (c) => {
           <input type="file" id="fileCsv" accept=".csv,text/csv" hidden>
           <a class="btn" href="/app/exams">Kelola ujian</a>
           <a class="btn" href="/api/reports/scores.csv">Rekap skor sekolah (CSV)</a>
+          ${sess.role === "admin" ? `<a class="btn" href="/api/reports/backup.json">Backup JSON</a>` : ""}
         </div>
         <p class="muted" style="margin-top:8px">
           Format CSV: header <code>name,username,class,gender,nisn,pin</code> — kolom
@@ -765,6 +766,12 @@ pages.get("/app/students/:id/report", async (c) => {
                when q.type = 'isian'       and exists(
                  select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
                  where lower(trim(x.value)) = lower(trim(a.answer->>'text'))) then 1
+               when q.type = 'pgk_centang' and (
+                 select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
+               ) = (
+                 select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
+               ) then 1
+               when q.type = 'menjodohkan' and a.answer->'pairs' = k.answer_key->'pairs' then 1
                when q.type = 'uraian' and (a.answer->>'manual_score')::numeric >= q.points * 0.5 then 1
                else 0 end)::int as benar
       from answers a
@@ -906,6 +913,12 @@ pages.get("/app/students/:id/analytics", async (c) => {
                when q.type = 'isian'       and exists(
                  select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
                  where lower(trim(x.value)) = lower(trim(a.answer->>'text'))) then 1
+               when q.type = 'pgk_centang' and (
+                 select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(k.answer_key->'correct') x
+               ) = (
+                 select coalesce(array_agg(x::int order by x), '{}') from jsonb_array_elements_text(a.answer->'selected') x
+               ) then 1
+               when q.type = 'menjodohkan' and a.answer->'pairs' = k.answer_key->'pairs' then 1
                when q.type = 'uraian' and (a.answer->>'manual_score')::numeric >= q.points * 0.5 then 1
                else 0 end)::int as benar
       from answers a
@@ -973,6 +986,39 @@ pages.get("/app/students/:id/analytics", async (c) => {
       <h2>Kelemahan per kategori</h2>
       <p class="muted">Persen jawaban benar dari seluruh ujian yang diselesaikan.</p>
       ${catBars}
+    </div>
+  `));
+});
+
+pages.get("/app/audit", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  if (sess.role !== "admin") return c.html(base("Audit", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">← Dashboard</a></div>`));
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
+    tx`select id, actor_email, actor_role, action, entity, entity_id, details, created_at
+       from audit_log order by created_at desc limit 200`,
+  );
+  type R = { id: string; actor_email: string | null; actor_role: string | null;
+    action: string; entity: string | null; entity_id: string | null;
+    details: Record<string, unknown> | null; created_at: string };
+  const list = (rows as unknown as R[]).map((r) => `<tr>
+    <td class="muted" style="white-space:nowrap">${new Date(r.created_at).toLocaleString("id-ID")}</td>
+    <td>${esc(r.actor_email ?? "(sistem)")}<br><span class="muted">${esc(r.actor_role ?? "")}</span></td>
+    <td><span class="pill">${esc(r.action)}</span></td>
+    <td>${esc(r.entity ?? "-")}${r.entity_id ? `<br><code style="font-size:11px">${esc(r.entity_id.slice(0, 8))}…</code>` : ""}</td>
+    <td class="muted" style="font-size:12px">${esc(r.details ? JSON.stringify(r.details) : "-")}</td>
+  </tr>`).join("") || `<tr><td colspan="5" class="muted">Belum ada aktivitas tercatat.</td></tr>`;
+  return c.html(base("Audit log", `
+    <div class="card">
+      <h1>Audit log</h1>
+      <p class="sub"><a href="/app">← Dashboard</a> · 200 aktivitas terbaru.</p>
+    </div>
+    <div class="card">
+      <table style="width:100%; border-collapse:collapse">
+        <thead><tr><th>Waktu</th><th>Pelaku</th><th>Aksi</th><th>Entitas</th><th>Detail</th></tr></thead>
+        <tbody>${list}</tbody>
+      </table>
     </div>
   `));
 });
@@ -1344,7 +1390,10 @@ pages.get("/app/questions", async (c) => {
   type Pass = { id: string; title: string | null };
   const passList = passages as unknown as Pass[];
   const passOptsForm = passList.map((p) => `<option value="${esc(p.id)}">${esc(p.title ?? "(tanpa judul)")}</option>`).join("");
-  const typeLabel: Record<string, string> = { pg: "Pil. ganda", benar_salah: "Benar/Salah", isian: "Isian", uraian: "Uraian" };
+  const typeLabel: Record<string, string> = {
+    pg: "Pil. ganda", benar_salah: "Benar/Salah", isian: "Isian", uraian: "Uraian",
+    pgk_centang: "PGK (centang)", menjodohkan: "Menjodohkan",
+  };
   const list = (qs as unknown as Q[]).map((q) => {
     let keyInfo = "";
     if (q.type === "pg" && q.content.options) {
@@ -1381,6 +1430,8 @@ pages.get("/app/questions", async (c) => {
           <option value="benar_salah">Benar / Salah</option>
           <option value="isian">Isian singkat</option>
           <option value="uraian">Uraian (dinilai guru)</option>
+          <option value="pgk_centang">Pilihan Ganda Kompleks (centang beberapa)</option>
+          <option value="menjodohkan">Menjodohkan</option>
         </select>
         <label>Teks soal</label>
         <textarea name="text" required rows="3" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
@@ -1403,6 +1454,22 @@ pages.get("/app/questions", async (c) => {
         <div id="box_uraian" hidden>
           <label>Rubrik <span class="muted">(opsional, dilihat guru saat menilai)</span></label>
           <textarea name="rubric" rows="3" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
+        </div>
+        <div id="box_pgkc" hidden>
+          <label>Pilihan (centang semua yang benar)</label>
+          <div class="optrow"><input type="checkbox" name="pgkc_correct" value="0"><input name="pgkc_opt" placeholder="Pilihan A"></div>
+          <div class="optrow"><input type="checkbox" name="pgkc_correct" value="1"><input name="pgkc_opt" placeholder="Pilihan B"></div>
+          <div class="optrow"><input type="checkbox" name="pgkc_correct" value="2"><input name="pgkc_opt" placeholder="Pilihan C"></div>
+          <div class="optrow"><input type="checkbox" name="pgkc_correct" value="3"><input name="pgkc_opt" placeholder="Pilihan D"></div>
+          <div class="optrow"><input type="checkbox" name="pgkc_correct" value="4"><input name="pgkc_opt" placeholder="Pilihan E (opsional)"></div>
+        </div>
+        <div id="box_mjd" hidden>
+          <label>Pasangan <span class="muted">(kiri ↔ kanan; urutan yang Anda tulis = jawaban benar)</span></label>
+          <div class="optrow"><input name="mjd_left" placeholder="Kiri 1"><span class="muted">↔</span><input name="mjd_right" placeholder="Kanan 1"></div>
+          <div class="optrow"><input name="mjd_left" placeholder="Kiri 2"><span class="muted">↔</span><input name="mjd_right" placeholder="Kanan 2"></div>
+          <div class="optrow"><input name="mjd_left" placeholder="Kiri 3"><span class="muted">↔</span><input name="mjd_right" placeholder="Kanan 3"></div>
+          <div class="optrow"><input name="mjd_left" placeholder="Kiri 4 (opsional)"><span class="muted">↔</span><input name="mjd_right" placeholder="Kanan 4 (opsional)"></div>
+          <p class="muted" style="margin-top:4px">Siswa melihat kiri & kanan dalam urutan ini juga, tapi mereka harus memilih pasangan yang benar dari dropdown.</p>
         </div>
 
         <label>Gambar <span class="muted">(opsional, max 400 KB; JPG/PNG/WebP)</span></label>
@@ -1439,7 +1506,9 @@ pages.get("/app/questions", async (c) => {
       const $$ = (q) => document.querySelector(q);
       function showBox() {
         const t = $$('#qtype').value;
-        for (const name of ['pg','bs','isian','uraian']) $$('#box_'+name).hidden = (name !== (t==='benar_salah'?'bs':t));
+        const map = { benar_salah: 'bs', pgk_centang: 'pgkc', menjodohkan: 'mjd' };
+        const show = map[t] || t;
+        for (const name of ['pg','bs','isian','uraian','pgkc','mjd']) $$('#box_'+name).hidden = (name !== show);
       }
       $$('#qtype').addEventListener('change', showBox); showBox();
       document.getElementById('tb').addEventListener('click', async (e) => {
@@ -1499,6 +1568,25 @@ pages.get("/app/questions", async (c) => {
           if (!payload.accepted.length) { err.textContent = 'Isi minimal satu jawaban yang diterima.'; err.hidden = false; return; }
         } else if (type === 'uraian') {
           payload.rubric = e.target.rubric.value.trim() || null;
+        } else if (type === 'pgk_centang') {
+          const opts = [...e.target.querySelectorAll('input[name=pgkc_opt]')].map((x) => x.value.trim());
+          const correct = [...e.target.querySelectorAll('input[name=pgkc_correct]:checked')].map((x) => +x.value);
+          // Filter opsi kosong & remap correct indices supaya tetap konsisten.
+          const filteredOpts = []; const idxMap = {};
+          opts.forEach((o, i) => { if (o) { idxMap[i] = filteredOpts.length; filteredOpts.push(o); } });
+          const remapped = correct.map((i) => idxMap[i]).filter((v) => v !== undefined);
+          if (filteredOpts.length < 2 || remapped.length === 0) {
+            err.textContent = 'Butuh ≥2 opsi dan minimal 1 jawaban benar.'; err.hidden = false; return;
+          }
+          payload.options = filteredOpts; payload.correct_indexes = remapped;
+        } else if (type === 'menjodohkan') {
+          const lefts = [...e.target.querySelectorAll('input[name=mjd_left]')].map((x) => x.value.trim());
+          const rights = [...e.target.querySelectorAll('input[name=mjd_right]')].map((x) => x.value.trim());
+          // Pasangkan baris-per-baris; buang baris kosong.
+          const left = [], right = [];
+          lefts.forEach((l, i) => { if (l && rights[i]) { left.push(l); right.push(rights[i]); } });
+          if (left.length < 2) { err.textContent = 'Butuh minimal 2 pasangan.'; err.hidden = false; return; }
+          payload.left = left; payload.right = right;
         }
         const r = await fetch('/api/questions', { method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
