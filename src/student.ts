@@ -811,6 +811,31 @@ student.get("/s/take/:sid", async (c) => {
             clearTimeout(t); t = setTimeout(() => save(q.id, { text: inp.value }), 400);
           });
           el.appendChild(inp);
+        } else if (q.type === 'simulasi') {
+          // Render HTML simulasi di iframe sandbox. Siswa simpan jawaban via
+          // postMessage({type:'answer', text}) ke parent window.
+          const wrap = document.createElement('div');
+          wrap.innerHTML = '<p class="muted" style="margin:4px 0">Interaksi simulasi di bawah. Jawaban tersimpan otomatis saat Anda berinteraksi.</p>';
+          const ifr = document.createElement('iframe');
+          ifr.sandbox = 'allow-scripts';
+          ifr.style.cssText = 'width:100%; height:360px; border:1px solid var(--bd); border-radius:8px; background:#fff';
+          const prev = (A[q.id] && A[q.id].text) || '';
+          const html = '<base target="_blank"><style>body{font:14px/1.4 system-ui,sans-serif;margin:12px;color:#111}</style>' +
+            '<script>window.sendAnswer=(t)=>parent.postMessage({type:"answer",qid:' + JSON.stringify(q.id) + ',text:String(t)},"*")</scr' + 'ipt>' +
+            q.content.html + '<script>try{window.initialAnswer=' + JSON.stringify(prev) + '}catch(_){};</scr' + 'ipt>';
+          ifr.srcdoc = html;
+          wrap.appendChild(ifr);
+          const noteWrap = document.createElement('div');
+          noteWrap.innerHTML = '<label style="margin-top:10px">Catatan tambahan (opsional)</label>';
+          const ta2 = document.createElement('textarea'); ta2.rows = 3;
+          ta2.style.cssText = 'width:100%;padding:8px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit';
+          ta2.placeholder = 'Tambahan penjelasan…'; ta2.value = (A[q.id] && A[q.id].note) || '';
+          let t3; ta2.addEventListener('input', () => {
+            clearTimeout(t3); t3 = setTimeout(() => save(q.id, { note: ta2.value, text: A[q.id]?.text ?? '' }), 400);
+          });
+          noteWrap.appendChild(ta2);
+          wrap.appendChild(noteWrap);
+          el.appendChild(wrap);
         } else if (q.type === 'uraian') {
           const ta = document.createElement('textarea'); ta.rows = 6;
           ta.style.cssText = 'width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit;resize:vertical';
@@ -990,6 +1015,14 @@ student.get("/s/take/:sid", async (c) => {
         if (k === 'C') { calcDisp.value = ''; return; }
         if (k === '=') { calcDisp.value = compute(calcDisp.value); return; }
         calcDisp.value += k;
+      });
+
+      // Simulasi: terima postMessage dari iframe sandbox dan simpan sebagai
+      // text (digabung dengan note bila ada).
+      window.addEventListener('message', (ev) => {
+        const d = ev.data; if (!d || d.type !== 'answer' || !d.qid) return;
+        const q = Q.find((x) => x.id === d.qid); if (!q || q.type !== 'simulasi') return;
+        save(q.id, { text: String(d.text || ''), note: A[q.id]?.note ?? '' });
       });
 
       // Chat sederhana (polling 5 dtk).
@@ -1229,7 +1262,7 @@ student.post("/s/take/:sid/submit", async (c) => {
           when 'menjodohkan' then case when it.binary_benar then it.points * it.weight else 0 end
           else 0 end), 0) as got_auto,
       coalesce(sum(it.points * it.weight), 0) as total,
-      coalesce(sum(case when it.type = 'uraian' then it.points * it.weight else 0 end), 0) as manual_pending
+      coalesce(sum(case when it.type in ('uraian','simulasi') then it.points * it.weight else 0 end), 0) as manual_pending
       from items it`;
     const sc = scored[0] as { got_auto: string; total: string; manual_pending: string };
     const total = parseFloat(sc.total); const gotAuto = parseFloat(sc.got_auto);

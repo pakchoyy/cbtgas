@@ -602,10 +602,36 @@ pages.get("/app/exams", async (c) => {
             <select name="group_id"><option value="">— tanpa grup —</option>${groupOpts}</select></div>
           <div><label>Posisi dalam grup</label><input name="group_position" type="number" min="1" placeholder="1"></div>
         </div>
-        <div class="row"><button class="primary" type="submit">Buat ujian</button></div>
+        <div class="row">
+          <button class="primary" type="submit">Buat ujian</button>
+          <button type="button" id="btnGen">Auto-generate dari bank soal</button>
+        </div>
         <p class="err" id="errex" hidden></p>
       </form>
     </div>
+    <dialog id="genDlg" style="max-width:420px; width:92%">
+      <h3 style="margin:0 0 10px">Auto-generate ujian</h3>
+      <form id="genForm" method="dialog">
+        <label>Judul</label><input name="title" required>
+        <label>Jenis</label>
+        <select name="kind"><option value="tryout" selected>Tryout</option><option value="harian">Harian</option><option value="pts_pas">PTS/PAS</option><option value="sumatif">Sumatif</option></select>
+        <label>Durasi (menit)</label><input name="duration_minutes" type="number" min="5" value="60" required>
+        <label>Jumlah per tipe</label>
+        <div class="grid">
+          <div><label style="font-size:12px">Pil. ganda</label><input name="pg" type="number" min="0" value="10"></div>
+          <div><label style="font-size:12px">Benar/Salah</label><input name="benar_salah" type="number" min="0" value="0"></div>
+          <div><label style="font-size:12px">Isian</label><input name="isian" type="number" min="0" value="0"></div>
+          <div><label style="font-size:12px">Uraian</label><input name="uraian" type="number" min="0" value="0"></div>
+          <div><label style="font-size:12px">PGK centang</label><input name="pgk_centang" type="number" min="0" value="0"></div>
+          <div><label style="font-size:12px">Menjodohkan</label><input name="menjodohkan" type="number" min="0" value="0"></div>
+        </div>
+        <div class="row">
+          <button class="primary" value="go">Generate</button>
+          <button value="cancel">Batal</button>
+        </div>
+        <p class="err" id="genErr" hidden></p>
+      </form>
+    </dialog>
     <div class="card">
       <h2>Daftar ujian</h2>
       <table>
@@ -614,6 +640,27 @@ pages.get("/app/exams", async (c) => {
       </table>
     </div>
     <script>
+      const genDlg = document.getElementById('genDlg');
+      document.getElementById('btnGen').addEventListener('click', () => genDlg.showModal());
+      document.getElementById('genForm').addEventListener('submit', async (e) => {
+        if (e.target.returnValue === 'cancel') return;
+        e.preventDefault();
+        const err = document.getElementById('genErr'); err.hidden = true;
+        const fd = new FormData(e.target);
+        const counts = {};
+        for (const k of ['pg','benar_salah','isian','uraian','pgk_centang','menjodohkan']) {
+          const n = +fd.get(k); if (n > 0) counts[k] = n;
+        }
+        if (Object.keys(counts).length === 0) { err.textContent = 'Minimal satu tipe'; err.hidden = false; return; }
+        const payload = { title: fd.get('title'), kind: fd.get('kind'),
+          duration_minutes: +fd.get('duration_minutes'), counts };
+        const r = await fetch('/api/exams/generate', { method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type':'application/json' }, body: JSON.stringify(payload) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) { genDlg.close(); location.href = '/app/exams/' + j.exam_id; }
+        else { err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
+      });
+
       document.getElementById('fex').addEventListener('submit', async (e) => {
         e.preventDefault();
         const err = document.getElementById('errex'); err.hidden = true;
@@ -774,6 +821,7 @@ pages.get("/app/exams/:id", async (c) => {
         <a class="btn" href="/app/exams/${esc(examId)}/lab">Mode lab komputer</a>
         <a class="btn" href="/app/exams/${esc(examId)}/items">Analisis butir soal</a>
         <a class="btn" href="/app/exams/${esc(examId)}/insights">Insights (distraktor + chat)</a>
+        <a class="btn" href="/app/exams/${esc(examId)}/print">🖨 Cetak soal</a>
       </div>
       <table>
         <thead><tr><th>Siswa</th><th>Kelas</th><th>Status</th><th>Auto</th><th>Manual</th><th>Final</th></tr></thead>
@@ -870,6 +918,89 @@ pages.get("/app/pin-resets", async (c) => {
       });
     </script>
   `));
+});
+
+// Printable: semua soal ujian + opsional kunci (?key=1). Cetak atau simpan
+// sebagai PDF untuk cadangan paper-based.
+pages.get("/app/exams/:id/print", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!sess) return c.redirect("/");
+  const examId = c.req.param("id");
+  const showKey = c.req.query("key") === "1";
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const e = await tx`select title, kind, duration_minutes from exams where id = ${examId}`;
+    if (e.length === 0) return null;
+    const qs = await tx`
+      select eq.position, q.type, q.content, q.points, k.answer_key, k.rubric,
+             p.title as passage_title, p.body as passage_body
+      from exam_questions eq
+      join questions q on q.id = eq.question_id
+      left join question_keys k on k.question_id = q.id
+      left join passages p on p.id = q.passage_id
+      where eq.exam_id = ${examId}
+      order by eq.position`;
+    return { ex: e[0], qs };
+  });
+  if (!data) return c.notFound();
+  const ex = data.ex as { title: string; kind: string; duration_minutes: number };
+  type Q = { position: number; type: string; points: string;
+    content: { text: string; options?: string[]; left?: string[]; right?: string[]; image?: string };
+    answer_key: Record<string, unknown> | null; rubric: string | null;
+    passage_title: string | null; passage_body: string | null };
+  const list = (data.qs as unknown as Q[]).map((q) => {
+    let body = `<p class="qtext"><b>${q.position}. (${q.points} pts)</b> ${esc(q.content.text)}</p>`;
+    if (q.passage_body) body = `<div class="passage"><b>${esc(q.passage_title ?? "Bacaan")}</b><br>${esc(q.passage_body)}</div>` + body;
+    if (q.content.image) body += `<img src="${esc(q.content.image)}" style="max-width:300px; max-height:200px; display:block; margin:4px 0">`;
+    if (q.type === "pg" || q.type === "benar_salah" || q.type === "pgk_centang") {
+      body += `<ol type="A" style="margin:4px 0 0 20px">` +
+        (q.content.options ?? []).map((o, i) => {
+          const marker = showKey && q.answer_key && (
+            (q.type === "pgk_centang" && Array.isArray(q.answer_key.correct) && (q.answer_key.correct as number[]).includes(i)) ||
+            (q.type !== "pgk_centang" && q.answer_key.index === i)
+          );
+          return `<li ${marker ? "style=\"background:#dcfce7; font-weight:600\"" : ""}>${esc(o)}${marker ? " ✓" : ""}</li>`;
+        }).join("") + `</ol>`;
+    } else if (q.type === "isian") {
+      body += `<p>Jawaban: ${showKey ? `<b>${esc(((q.answer_key?.accepted as string[]) ?? []).join(" / "))}</b>` : "____________________"}</p>`;
+    } else if (q.type === "menjodohkan") {
+      body += `<div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px; margin:4px 0">
+        <div><b>Kiri:</b><ol style="margin:0 0 0 20px">` + (q.content.left ?? []).map((l) => `<li>${esc(l)}</li>`).join("") + `</ol></div>
+        <div><b>Kanan:</b><ol type="A" style="margin:0 0 0 20px">` + (q.content.right ?? []).map((r) => `<li>${esc(r)}</li>`).join("") + `</ol></div>
+      </div>`;
+      if (showKey && Array.isArray(q.answer_key?.pairs)) {
+        body += `<p class="muted">Kunci: ${(q.answer_key.pairs as number[][]).map((p) => `${p[0] + 1}→${String.fromCharCode(65 + p[1])}`).join(", ")}</p>`;
+      }
+    } else if (q.type === "uraian" || q.type === "simulasi") {
+      body += `<p class="muted">Jawaban dinilai manual.${showKey && q.rubric ? ` Rubrik: ${esc(q.rubric)}` : ""}</p>`;
+      if (q.type !== "simulasi") body += `<div style="min-height:60px; border-bottom:1px dotted #999"></div>`;
+    }
+    return `<div class="q">${body}</div>`;
+  }).join("");
+  return c.html(`<!doctype html><html lang="id"><head>
+<meta charset="utf-8"><title>${esc(ex.title)}</title>
+<style>
+  @page { size: A4; margin: 15mm; }
+  body { font: 13px/1.5 Georgia, serif; color: #111; margin: 0; background: #fafafa; }
+  main { max-width: 720px; margin: 20px auto; background: #fff; padding: 24px; }
+  h1 { margin: 0 0 4px; }
+  .meta { color: #666; margin: 0 0 20px; }
+  .q { padding: 10px 0; border-bottom: 1px dashed #ddd; }
+  .qtext { margin: 0; }
+  .passage { background: #f5f5f5; padding: 10px; border-left: 3px solid #666; margin: 6px 0; white-space: pre-wrap; font-size: 13px; }
+  .no-print button { padding: 8px 14px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+  @media print { body { background: #fff; } main { max-width: none; margin: 0; padding: 0; } .no-print { display: none; } }
+</style></head><body><main>
+  <div class="no-print">
+    <button onclick="window.print()">🖨 Cetak / Simpan sebagai PDF</button>
+    <a href="?key=${showKey ? "0" : "1"}" style="margin-left:12px">${showKey ? "Sembunyikan" : "Tampilkan"} kunci</a>
+    <a href="/app/exams/${esc(examId)}" style="margin-left:12px">← Detail ujian</a>
+  </div>
+  <h1>${esc(ex.title)}</h1>
+  <p class="meta">${esc(ex.kind)} · Durasi ${ex.duration_minutes} menit · ${(data.qs as unknown as Q[]).length} soal${showKey ? " · <b>Lembar Kunci</b>" : ""}</p>
+  <p>Nama: ______________________________ Kelas: __________ Tanggal: __________</p>
+  ${list}
+</main></body></html>`);
 });
 
 // Sertifikat pencapaian untuk satu sesi ujian jika nilainya ≥ KKM
@@ -1831,7 +1962,9 @@ pages.get("/app/exams/:id/live", async (c) => {
               + '<td>' + r.answered + '/' + r.total + ' (' + pct + '%)' + bar + '</td>'
               + '<td>' + vio + '</td>'
               + '<td>' + dot(r.last_seen_at) + ' ' + timeAgo(r.last_seen_at) + '</td>'
-              + '<td><button onclick="openChat(\\'' + r.session_id + '\\', \\'' + escapeHtml(r.student_name).replace(/\\'/g,"") + '\\')" style="padding:4px 8px">💬</button></td></tr>';
+              + '<td><button onclick="openChat(\\'' + r.session_id + '\\', \\'' + escapeHtml(r.student_name).replace(/\\'/g,"") + '\\')" style="padding:4px 8px">💬</button>'
+              + (r.status === "active" ? ' <button onclick="extend(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="+5 menit">⏱+5</button> <button onclick="forceSubmit(\\'' + r.session_id + '\\')" style="padding:4px 8px" title="Paksa submit">⏹</button>' : "")
+              + '</td></tr>';
           }).join('');
         } catch (e) { t.textContent = 'Gagal memuat: ' + e; }
       }
@@ -1887,6 +2020,22 @@ pages.get("/app/exams/:id/live", async (c) => {
       }
       window.openChat = openChat;
       pollChats(); setInterval(pollChats, 5000);
+
+      // Override timer siswa individual.
+      window.extend = async (sid) => {
+        const r = await fetch('/api/sessions/' + sid + '/extend', {
+          method:'POST', credentials:'same-origin',
+          headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ minutes: 5 }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) tick(); else alert(j.error || r.status);
+      };
+      window.forceSubmit = async (sid) => {
+        if (!confirm('Paksa submit sesi ini sekarang?')) return;
+        const r = await fetch('/api/sessions/' + sid + '/force-submit', { method:'POST', credentials:'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) tick(); else alert(j.error || r.status);
+      };
     </script>
   `));
 });
@@ -1955,13 +2104,13 @@ pages.get("/app/sessions/:sid/grade", async (c) => {
       where es.id = ${sessionId}`;
     if (info.length === 0) return null;
     const rows = await tx`
-      select q.id, q.content, q.points, k.rubric, a.answer
+      select q.id, q.type, q.content, q.points, k.rubric, a.answer
       from exam_questions eq
       join questions q on q.id = eq.question_id
       left join question_keys k on k.question_id = q.id
       left join answers a on a.session_id = ${sessionId} and a.question_id = q.id
       where eq.exam_id = (select exam_id from exam_sessions where id = ${sessionId})
-        and q.type = 'uraian' order by eq.position`;
+        and q.type in ('uraian','simulasi') order by eq.position`;
     return { info: info[0], rows };
   });
   if (!data) return c.notFound();
@@ -2090,6 +2239,7 @@ pages.get("/app/questions", async (c) => {
           <option value="uraian">Uraian (dinilai guru)</option>
           <option value="pgk_centang">Pilihan Ganda Kompleks (centang beberapa)</option>
           <option value="menjodohkan">Menjodohkan</option>
+          <option value="simulasi">Simulasi interaktif (HTML+JS)</option>
         </select>
         <label>Teks soal <span class="muted">(dukung **tebal**, *miring*, \`kode\`, dan matematika $x^2$ atau $$\\int_0^1 x\\,dx$$)</span></label>
         <textarea name="text" required rows="3" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
@@ -2121,6 +2271,12 @@ pages.get("/app/questions", async (c) => {
           <div class="optrow"><input type="checkbox" name="pgkc_correct" value="2"><input name="pgkc_opt" placeholder="Pilihan C"></div>
           <div class="optrow"><input type="checkbox" name="pgkc_correct" value="3"><input name="pgkc_opt" placeholder="Pilihan D"></div>
           <div class="optrow"><input type="checkbox" name="pgkc_correct" value="4"><input name="pgkc_opt" placeholder="Pilihan E (opsional)"></div>
+        </div>
+        <div id="box_sim" hidden>
+          <label>HTML + JS simulasi <span class="muted">(dijalankan di iframe sandbox; panggil <code>window.sendAnswer(nilai)</code> untuk simpan jawaban)</span></label>
+          <textarea name="sim_html" rows="6" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font: 12px monospace" placeholder="&lt;button onclick=&quot;sendAnswer('hasil')&quot;&gt;Jalankan&lt;/button&gt;"></textarea>
+          <label>Rubrik penilaian (opsional)</label>
+          <textarea name="sim_rubric" rows="2" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
         </div>
         <div id="box_mjd" hidden>
           <label>Pasangan <span class="muted">(kiri ↔ kanan; urutan yang Anda tulis = jawaban benar)</span></label>
@@ -2168,9 +2324,9 @@ pages.get("/app/questions", async (c) => {
       const $$ = (q) => document.querySelector(q);
       function showBox() {
         const t = $$('#qtype').value;
-        const map = { benar_salah: 'bs', pgk_centang: 'pgkc', menjodohkan: 'mjd' };
+        const map = { benar_salah: 'bs', pgk_centang: 'pgkc', menjodohkan: 'mjd', simulasi: 'sim' };
         const show = map[t] || t;
-        for (const name of ['pg','bs','isian','uraian','pgkc','mjd']) $$('#box_'+name).hidden = (name !== show);
+        for (const name of ['pg','bs','isian','uraian','pgkc','mjd','sim']) $$('#box_'+name).hidden = (name !== show);
       }
       $$('#qtype').addEventListener('change', showBox); showBox();
       // Live preview teks soal.
@@ -2261,6 +2417,11 @@ pages.get("/app/questions", async (c) => {
             err.textContent = 'Butuh ≥2 opsi dan minimal 1 jawaban benar.'; err.hidden = false; return;
           }
           payload.options = filteredOpts; payload.correct_indexes = remapped;
+        } else if (type === 'simulasi') {
+          const html = e.target.sim_html.value;
+          if (!html.trim()) { err.textContent = 'HTML simulasi kosong.'; err.hidden = false; return; }
+          payload.html = html;
+          payload.rubric = e.target.sim_rubric.value.trim() || null;
         } else if (type === 'menjodohkan') {
           const lefts = [...e.target.querySelectorAll('input[name=mjd_left]')].map((x) => x.value.trim());
           const rights = [...e.target.querySelectorAll('input[name=mjd_right]')].map((x) => x.value.trim());

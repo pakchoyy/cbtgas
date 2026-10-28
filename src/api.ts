@@ -464,6 +464,15 @@ api.post("/api/questions", async (c) => {
     }
     content = { text, options };
     answer_key = { correct: Array.from(new Set(correctIdx)).sort((a, b) => a - b) };
+  } else if (type === "simulasi") {
+    // Simulasi: guru menulis HTML+JS yang dirender di iframe sandbox,
+    // siswa menyimpan jawaban via postMessage. Scoring manual (uraian-like).
+    const html = String(body.html ?? "").trim();
+    if (!html) return c.json({ error: "html simulasi kosong" }, 400);
+    if (html.length > 20_000) return c.json({ error: "html terlalu besar (>20KB)" }, 413);
+    content = { text, html };
+    answer_key = { manual: true };
+    rubric = body.rubric ? String(body.rubric) : null;
   } else if (type === "menjodohkan") {
     // Matching. left & right: string[]. pairs: array of [leftIdx, rightIdx] canonical.
     const left = Array.isArray(body.left) ? (body.left as string[]).filter(Boolean) : [];
@@ -569,6 +578,81 @@ api.post("/api/exams/:id/lab-start", async (c) => {
   }).catch((e) => ({ error: (e as Error).message }));
   if ("error" in result) return c.json(result, 400);
   return c.json(result);
+});
+
+// Perpanjang / potong deadline sesi individual (guru override timer).
+api.post("/api/sessions/:sid/extend", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sessionId = c.req.param("sid");
+  const body = await c.req.json().catch(() => null) as null | { minutes: number };
+  if (!body || typeof body.minutes !== "number") return c.json({ error: "minutes wajib (bilangan)" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const u = await tx`update exam_sessions
+      set deadline_at = deadline_at + make_interval(mins => ${body.minutes})
+      where id = ${sessionId} and status = 'active'
+      returning id, deadline_at`;
+    if (u.length) await audit(tx, actorFromSession(s), "session.extend", "session", sessionId, { minutes: body.minutes });
+    return u;
+  });
+  if (r.length === 0) return c.json({ error: "sesi tidak ditemukan atau tidak aktif" }, 404);
+  return c.json({ ok: true, ...(r[0] as object) });
+});
+
+// Paksa submit sesi yang masih aktif (siswa tertinggal, atau proctor
+// memutuskan menutup lebih awal). Hitung auto-score seperti submit normal.
+api.post("/api/sessions/:sid/force-submit", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sessionId = c.req.param("sid");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const ses = await tx`select exam_id, student_id, school_id, status from exam_sessions where id = ${sessionId}`;
+    if (ses.length === 0) throw new Error("sesi tidak ditemukan");
+    const row = ses[0] as { exam_id: string; student_id: string; school_id: string; status: string };
+    if (row.status === "submitted") return { already: true };
+    const g = await tx`
+      select coalesce(sum(
+        case q.type
+          when 'pg'          then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
+          when 'benar_salah' then case when (k.answer_key->>'index')::int = (a.answer->>'index')::int then q.points else 0 end
+          when 'isian'       then case when exists(
+                                    select 1 from jsonb_array_elements_text(k.answer_key->'accepted') x
+                                    where lower(trim(x.value)) = lower(trim(a.answer->>'text'))
+                                  ) then q.points else 0 end
+          when 'pgk_centang' then greatest(0::numeric, (
+            (select count(*) from jsonb_array_elements_text(k.answer_key->'correct') kx
+               where kx::int in (select x::int from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) x))
+            -
+            (select count(*) from jsonb_array_elements_text(coalesce(a.answer->'selected','[]'::jsonb)) ax
+               where ax::int not in (select x::int from jsonb_array_elements_text(k.answer_key->'correct') x))
+          )::numeric / nullif(jsonb_array_length(k.answer_key->'correct'), 0) * q.points)
+          when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
+          else 0 end), 0) as got,
+             coalesce(sum(q.points), 0) as total
+      from jsonb_array_elements_text(coalesce(
+        (select case when jsonb_typeof(question_order) = 'object' then question_order->'order'
+                     when jsonb_typeof(question_order) = 'array'  then question_order
+                     else null end
+         from exam_sessions where id = ${sessionId}),
+        (select to_jsonb(array_agg(question_id)) from exam_questions where exam_id = ${row.exam_id})
+      )) as qid
+      join questions q on q.id = qid.value::uuid
+      left join question_keys k on k.question_id = q.id
+      left join answers a on a.session_id = ${sessionId} and a.question_id = q.id`;
+    const sc = g[0] as { got: string; total: string };
+    const auto = parseFloat(sc.total) > 0 ? (parseFloat(sc.got) / parseFloat(sc.total)) * 100 : 0;
+    await tx`update exam_sessions set status = 'submitted', finished_at = now() where id = ${sessionId}`;
+    await tx`insert into scores (session_id, school_id, exam_id, student_id, auto_score, final_score)
+      values (${sessionId}, ${row.school_id}, ${row.exam_id}, ${row.student_id}, ${auto}, ${auto})
+      on conflict (session_id) do update set auto_score = excluded.auto_score,
+         final_score = coalesce(scores.manual_score, excluded.auto_score)`;
+    await audit(tx, actorFromSession(s), "session.force_submit", "session", sessionId, { score: auto });
+    return { ok: true, score: auto };
+  }).catch((e) => ({ error: (e as Error).message }));
+  if ("error" in r) return c.json(r, 400);
+  return c.json(r);
 });
 
 // Buka kembali sesi yang di-locked oleh anti-cheat. Reset violation_count
@@ -773,6 +857,7 @@ api.post("/api/sessions/:sid/manual-score", async (c) => {
           )::numeric / nullif(jsonb_array_length(k.answer_key->'correct'), 0) * q.points)
           when 'menjodohkan' then case when a.answer->'pairs' = k.answer_key->'pairs' then q.points else 0 end
           when 'uraian'      then coalesce((a.answer->>'manual_score')::numeric, 0)
+          when 'simulasi'    then coalesce((a.answer->>'manual_score')::numeric, 0)
           else 0 end), 0) as got,
              coalesce(sum(q.points), 0) as total
         from jsonb_array_elements_text(coalesce(
@@ -924,6 +1009,51 @@ api.delete("/api/questions/:id", async (c) => {
   );
   if (r.length === 0) return c.json({ error: "not found" }, 404);
   return c.json({ ok: true });
+});
+
+// Auto-generate ujian dari bank soal. Body: {title, duration_minutes,
+// counts: {pg?: n, benar_salah?: n, isian?: n, uraian?: n, …},
+// category_ids?: [uuid], kind?: harian/…}
+// Soal dipilih acak per tipe. Ujian baru dibuat dengan status draft dan
+// soal yang terpilih di-attach.
+api.post("/api/exams/generate", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null) as null | {
+    title: string; duration_minutes: number; kind?: string;
+    counts: Record<string, number>; category_ids?: string[];
+  };
+  if (!body?.title || !body.duration_minutes || !body.counts) return c.json({ error: "data kurang" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const picked: string[] = []; const detail: Record<string, number> = {};
+    for (const [type, countAny] of Object.entries(body.counts)) {
+      const count = Math.max(0, Math.floor(Number(countAny) || 0));
+      if (count === 0) continue;
+      const rows = body.category_ids && body.category_ids.length
+        ? await tx`select id from questions where type = ${type}
+                   and category_id in ${tx(body.category_ids)}
+                   order by random() limit ${count}`
+        : await tx`select id from questions where type = ${type}
+                   order by random() limit ${count}`;
+      const ids = (rows as unknown as Array<{ id: string }>).map((r) => r.id);
+      for (const id of ids) picked.push(id);
+      detail[type] = ids.length;
+    }
+    if (picked.length === 0) throw new Error("tidak ada soal yang cocok dengan filter");
+    const ins = await tx`insert into exams (school_id, creator_id, title, kind, duration_minutes, status)
+      values (${s.sid}, ${s.uid}, ${body.title}, ${body.kind ?? "tryout"}, ${body.duration_minutes}, 'draft')
+      returning id`;
+    const examId = (ins[0] as { id: string }).id;
+    for (let i = 0; i < picked.length; i++) {
+      await tx`insert into exam_questions (exam_id, question_id, school_id, position)
+               values (${examId}, ${picked[i]}, ${s.sid}, ${i + 1})`;
+    }
+    await audit(tx, actorFromSession(s), "exam.generate", "exam", examId, { picked: detail });
+    return { exam_id: examId, picked: detail, total: picked.length };
+  }).catch((e) => ({ error: (e as Error).message }));
+  if ("error" in result) return c.json(result, 400);
+  return c.json(result);
 });
 
 // ===== Grup ujian (rangkaian) =====
