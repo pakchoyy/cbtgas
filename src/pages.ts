@@ -274,6 +274,19 @@ pages.get("/", async (c) => {
       .mock { padding: 26px 0; }
       .mock .chip.c1 { left: -18px; bottom: 4px; } .mock .chip.c2 { right: -14px; top: 4px; }
       .dotg { width:9px; height:9px; border-radius:50%; background: var(--ok); }
+      .login { padding: 0 0 36px; }
+      .login h2 { font-size: 20px; margin: 0 0 14px; }
+      .roles { display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .role { display:grid; grid-template-columns: 52px 1fr; grid-template-rows: auto auto; gap: 4px 14px; align-items:center;
+              background: var(--surface); border: 1.5px solid var(--line); border-radius: 18px; padding: 18px 20px; text-decoration: none; color: var(--fg);
+              box-shadow: var(--shadow); transition: border-color .15s, transform .15s; }
+      main a.role { color: var(--fg); text-decoration: none; }
+      .role:hover { border-color: var(--brand); transform: translateY(-1px); }
+      .role .ri { grid-row: 1 / 3; width: 52px; height: 52px; border-radius: 14px; background: var(--soft); color: var(--brand); display:grid; place-items:center; }
+      .role .ri svg { width: 28px; height: 28px; fill:none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .role .rt { display:flex; flex-direction:column; } .role .rt b { font-size: 16.5px; } .role .rt span { color: var(--mut); font-size: 14px; }
+      .role .go { grid-column: 2; display:inline-flex; align-items:center; gap:8px; font-weight: 700; color: var(--brand); font-size: 14.5px; margin-top: 6px; }
+      @media (max-width: 720px) { .roles { grid-template-columns: 1fr; } }
       .feats { display:grid; grid-template-columns: repeat(4, 1fr); gap: 14px; padding: 8px 0 24px; }
       .feat { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }
       .feat svg { width: 36px; height: 36px; padding: 8px; border-radius: 10px; background: var(--soft); color: var(--brand); fill:none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -281,18 +294,17 @@ pages.get("/", async (c) => {
       @media (max-width: 860px) { .hero { grid-template-columns: 1fr; gap: 36px; padding-top: 16px; } .feats { grid-template-columns: 1fr 1fr; } .mock .chip.c1 { left: 8px; } .mock .chip.c2 { right: 8px; } }
       @media (max-width: 480px) { .feats { grid-template-columns: 1fr; } }
     </style>
-    <div class="top"><a class="brand" href="/">${LOGO}</a><a class="small" href="/s/login">Masuk siswa →</a></div>
+    <div class="top"><a class="brand" href="/">${LOGO}</a><a class="btn" href="#masuk" style="min-height:40px">Masuk</a></div>
     <section class="hero">
       <div>
         <span class="eyebrow">Gratis dicoba · tanpa instal</span>
         <h1>Ujian sekolah jadi <em>gampang</em>.</h1>
         <p class="lead">Buat soal, jadwalkan ujian, awasi siswa secara langsung, dan nilai keluar otomatis. Untuk SD, SMP, dan SMA, lancar di HP maupun komputer lab.</p>
         <div class="cta">
-          <a class="btn primary" href="/demo">Coba demo</a>
-          ${googleBtn("login", "Masuk dengan Google")}
-          <a class="btn ghost" href="/auth/google/start?mode=register">Belum punya akun?&nbsp;<b>Daftar dengan Google</b></a>
+          <a class="btn primary" href="/demo">Coba demo gratis</a>
+          <a class="btn" href="/auth/google/start?mode=register">Daftarkan sekolah</a>
         </div>
-        <p class="stu">Siswa? <a href="/s/login">Masuk pakai username dan PIN</a>.</p>
+        <p class="stu">Tidak perlu instal. Demo tanpa daftar, langsung dicoba.</p>
       </div>
       <div class="mock" aria-hidden="true">
         <div class="win">
@@ -303,6 +315,21 @@ pages.get("/", async (c) => {
         </div>
         <div class="chip c1"><span class="dotg"></span>28 siswa sedang mengerjakan</div>
         <div class="chip c2">Nilai rata-rata 84,5</div>
+      </div>
+    </section>
+    <section class="login" id="masuk" aria-labelledby="masukH">
+      <h2 id="masukH">Sudah punya akun? Masuk sesuai peran Anda</h2>
+      <div class="roles">
+        <a class="role" href="/s/login">
+          <span class="ri"><svg viewBox="0 0 24 24"><path d="M12 3L2 8l10 5 10-5zM6 10v5c0 2 3 4 6 4s6-2 6-4v-5"/></svg></span>
+          <span class="rt"><b>Saya siswa</b><span>Masuk pakai username dan PIN dari guru.</span></span>
+          <span class="go">Masuk siswa →</span>
+        </a>
+        <a class="role" href="/auth/google/start?mode=login">
+          <span class="ri"><svg viewBox="0 0 24 24"><path d="M3 5h18v12H3zM8 21h8M12 17v4"/></svg></span>
+          <span class="rt"><b>Saya guru / admin sekolah</b><span>Masuk dengan akun Google yang sudah terdaftar.</span></span>
+          <span class="go"><svg class="g" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.6 32.9 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.1-11.3-7.5l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.6l6.2 5.2C41.1 36 44 30.5 44 24c0-1.3-.1-2.3-.4-3.5z"/></svg> Masuk guru</span>
+        </a>
       </div>
     </section>
     <section class="feats">

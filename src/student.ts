@@ -117,6 +117,21 @@ const page = (title: string, body: string) => `<!doctype html>
   .keys button { min-height: 48px; font-size: 17px; }
   .chat-box { flex: 1; overflow-y: auto; min-height: 140px; max-height: 300px; padding: 6px; border: 1.5px solid var(--line);
               border-radius: 12px; background: var(--paper); font-size: 14px; }
+  .nav button.flag { background: #F59E0B; border-color: #F59E0B; color: #fff; }
+  .legend { display:flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--mut); margin: -8px 0 16px; }
+  .legend i { display:inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; border: 1.5px solid var(--line); }
+  .legend i.a { background: var(--brand); border-color: var(--brand); } .legend i.f { background: #F59E0B; border-color: #F59E0B; }
+  button.ragu[aria-pressed="true"] { background: #F59E0B; border-color: #F59E0B; color: #fff; }
+  .gate { position: fixed; inset: 0; z-index: 120; display:grid; place-items:center; padding: 24px; background: rgba(10,15,28,.86); }
+  .gate .card { max-width: 440px; text-align:center; margin: 0; }
+  .gate .card h2 { font-size: 21px; }
+  .gate .warn-ic { width: 56px; height: 56px; border-radius: 50%; display:grid; place-items:center; margin: 0 auto 12px; font-size: 28px; font-weight: 800; }
+  .toast { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 130; background: #B91C1C; color: #fff; padding: 10px 16px;
+           border-radius: 12px; font-weight: 600; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.25); max-width: calc(100% - 24px); }
+  .sum { display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+  .sum div { border: 1px solid var(--line); border-radius: 12px; padding: 10px; text-align:center; } .sum b { display:block; font-size: 22px; }
+  .jump { display:flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; justify-content:center; }
+  .jump button { min-height: 36px; min-width: 36px; padding: 0 8px; border-radius: 50%; font-size: 13px; }
   .badge { margin-left: 6px; background: var(--danger); color: #fff; padding: 1px 7px; border-radius: 999px; font-size: 11px; }
 </style>
 <link rel="stylesheet" href="/brand.css"></head><body><main>${body}</main>
@@ -167,6 +182,9 @@ student.get("/s", async (c) => {
   }).join("") || `<tr><td colspan="2" class="muted">Belum ada ujian yang dibuka untuk kelas Anda.</td></tr>`;
 
   return c.html(page("Portal Siswa", `
+    ${c.req.query("selesai") ? `<div class="card" role="status" style="border-color:var(--ok);display:flex;gap:14px;align-items:center">
+      <span style="width:40px;height:40px;border-radius:50%;background:var(--ok);color:#fff;display:grid;place-items:center;font-weight:800;flex:0 0 auto">✓</span>
+      <span><b>Ujian berhasil dikumpulkan.</b><br><span class="muted">Lihat nilainya di <a href="/s/history">riwayat ujian</a>.</span></span></div>` : ""}
     <div class="card">
       <h1>Halo, ${esc(me?.name ?? "siswa")}</h1>
       <p class="sub">Kelas: ${esc(me?.class_name ?? "- (belum terdaftar di kelas)")}</p>
@@ -785,9 +803,11 @@ student.get("/s/take/:sid", async (c) => {
       return { id: qid, pos: i + 1, type: q.type, content, perm: perm ?? null, passage: q.passage ?? null };
     });
     // Jawaban sebelumnya. Jika soal pakai perm, remap index asli index tampilan.
-    const prev = await tx`select question_id, answer from answers where session_id = ${sessionId}`;
+    const prev = await tx`select question_id, answer, flagged from answers where session_id = ${sessionId}`;
     const answers: Record<string, { index?: number; text?: string }> = {};
-    for (const a of prev as unknown as Array<{ question_id: string; answer: { index?: number; text?: string } | null }>) {
+    const flags: string[] = [];
+    for (const a of prev as unknown as Array<{ question_id: string; answer: { index?: number; text?: string } | null; flagged: boolean }>) {
+      if (a.flagged) flags.push(a.question_id);
       if (!a.answer) continue;
       const ans = { ...a.answer };
       const perm = perms[a.question_id];
@@ -798,7 +818,7 @@ student.get("/s/take/:sid", async (c) => {
       answers[a.question_id] = ans;
     }
     return {
-      title: sess.title, deadline: sess.deadline_at, questions, answers,
+      title: sess.title, deadline: sess.deadline_at, questions, answers, flags,
       anticheat: sess.anticheat_level, limit: sess.lock_after_violations,
       violations: sess.violation_count,
       paused_at: (sess as unknown as { paused_at: string | null }).paused_at,
@@ -825,7 +845,7 @@ student.get("/s/take/:sid", async (c) => {
 
   const payload = JSON.stringify({
     sessionId, deadline: data.deadline,
-    questions: data.questions, answers: data.answers,
+    questions: data.questions, answers: data.answers, flags: data.flags,
     anticheat: data.anticheat, limit: data.limit, violations: data.violations,
     paused_at: data.paused_at,
   });
@@ -836,6 +856,25 @@ student.get("/s/take/:sid", async (c) => {
         <p style="margin:0;opacity:.8">Waktu berhenti. Tunggu guru melanjutkan.</p>
       </div>
     </div>
+    <div id="gate" class="gate" hidden>
+      <div class="card">
+        <div class="warn-ic" id="gateIc" style="background:var(--soft);color:var(--brand)">⛶</div>
+        <h2 id="gateTitle">Ujian berjalan dalam layar penuh</h2>
+        <p class="sub" id="gateText">Selama ujian, jangan keluar dari layar penuh, berpindah aplikasi, atau menekan tombol kembali. Setiap pelanggaran dicatat dan terlihat oleh pengawas.</p>
+        <button class="primary" type="button" id="gateBtn" style="width:100%;min-height:52px">Masuk layar penuh &amp; mulai</button>
+      </div>
+    </div>
+    <div id="toast" class="toast" role="alert" hidden></div>
+    <dialog id="finish">
+      <h2 style="margin:0 0 4px">Selesai mengerjakan?</h2>
+      <p class="muted" id="finNote" style="margin:0"></p>
+      <div class="sum"><div><b id="finA">0</b><span class="muted">Dijawab</span></div><div><b id="finF">0</b><span class="muted">Ragu-ragu</span></div><div><b id="finU">0</b><span class="muted">Belum</span></div></div>
+      <div id="finJump"></div>
+      <div class="row" style="justify-content:flex-end">
+        <button type="button" id="finBack">Periksa lagi</button>
+        <button type="button" class="primary" id="finGo">Kumpulkan</button>
+      </div>
+    </dialog>
     <header class="exam-head">
       <h1>${esc(data.title!)}</h1>
       <div class="tools-row">
@@ -879,19 +918,22 @@ student.get("/s/take/:sid", async (c) => {
       </form>
     </section>
     <div class="nav" id="nav" aria-label="Nomor soal"></div>
+    <div class="legend" aria-hidden="true"><span><i class="a"></i>Dijawab</span><span><i class="f"></i>Ragu-ragu</span><span><i></i>Belum dijawab</span></div>
     <div id="qbox"></div>
     <p class="muted" style="margin-top:18px">Jawaban tersimpan otomatis setiap kali Anda memilih atau mengetik.</p>
     <div class="exam-foot"><div class="in">
-      <button id="prev">Sebelumnya</button>
-      <button id="next">Berikutnya</button>
+      <button id="prev" aria-label="Soal sebelumnya">‹ Sebelumnya</button>
       <span class="spacer"></span>
-      <button class="primary" id="submit">Kumpulkan</button>
+      <button id="ragu" class="ragu" aria-pressed="false">Ragu-ragu</button>
+      <span class="spacer"></span>
+      <button id="next" class="primary">Berikutnya ›</button>
     </div></div>
     <script id="data" type="application/json">${payload.replace(/</g, "\\u003c")}</script>
     <script>
       const D = JSON.parse(document.getElementById('data').textContent);
       let isPaused = !!D.paused_at;
       const Q = D.questions; const A = D.answers || {}; let i = 0;
+      const F = new Set(D.flags || []); let submitting = false;
       let violations = D.violations || 0; const limit = D.limit || 0; const level = D.anticheat || 'log';
       const nav = document.getElementById('nav'); const qbox = document.getElementById('qbox');
       function escapeHtml(s) { return (s||'').replace(/[&<>\"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]); }
@@ -1062,10 +1104,13 @@ student.get("/s/take/:sid", async (c) => {
         }
         qbox.appendChild(el);
         renderMath(el);
+        const rg = document.getElementById('ragu'); rg.setAttribute('aria-pressed', String(F.has(q.id)));
+        document.getElementById('prev').disabled = i === 0;
+        document.getElementById('next').textContent = i === Q.length - 1 ? 'Selesai' : 'Berikutnya ›';
         nav.innerHTML = '';
         Q.forEach((qq, k) => {
           const b = document.createElement('button'); b.textContent = k+1;
-          if (hasAnswer(qq.id)) b.className = 'ans';
+          if (F.has(qq.id)) b.className = 'flag'; else if (hasAnswer(qq.id)) b.className = 'ans';
           if (k === i) b.className = (b.className + ' cur').trim();
           b.addEventListener('click', () => { i = k; render(); });
           nav.appendChild(b);
@@ -1125,13 +1170,52 @@ student.get("/s/take/:sid", async (c) => {
       }
       window.addEventListener('online', flushQueue);
       updateBadge(); if (navigator.onLine) flushQueue();
-      document.getElementById('prev').onclick = () => { if (i > 0) { i--; render(); } };
-      document.getElementById('next').onclick = () => { if (i < Q.length-1) { i++; render(); } };
-      document.getElementById('submit').onclick = async () => {
-        if (!confirm('Kumpulkan ujian sekarang?')) return;
-        const r = await fetch('/s/take/' + D.sessionId + '/submit', { method:'POST', credentials:'same-origin' });
-        if (r.ok) location.href = '/s'; else alert('Gagal: ' + r.status);
+      document.getElementById('prev').onclick = () => { if (i > 0) { i--; render(); window.scrollTo(0, 0); } };
+      document.getElementById('next').onclick = () => {
+        if (i < Q.length - 1) { i++; render(); window.scrollTo(0, 0); } else openFinish();
       };
+      document.getElementById('ragu').onclick = async () => {
+        const q = Q[i]; const on = !F.has(q.id);
+        on ? F.add(q.id) : F.delete(q.id); render();
+        fetch('/s/take/' + D.sessionId + '/flag', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question_id: q.id, flagged: on }) }).catch(() => {});
+      };
+      // Soal dianggap selesai bila dijawab lengkap (menjodohkan: semua pasangan terisi).
+      const done = (q) => q.type === 'menjodohkan'
+        ? Array.isArray(A[q.id]?.pairs) && A[q.id].pairs.length >= (q.content.left || []).length
+        : hasAnswer(q.id);
+      const finish = document.getElementById('finish');
+      function openFinish() {
+        const unans = Q.map((q, k) => [q, k]).filter(([q]) => !done(q));
+        const rag = Q.map((q, k) => [q, k]).filter(([q]) => F.has(q.id));
+        document.getElementById('finA').textContent = Q.length - unans.length;
+        document.getElementById('finF').textContent = rag.length;
+        document.getElementById('finU').textContent = unans.length;
+        const go = document.getElementById('finGo'); go.disabled = unans.length > 0;
+        document.getElementById('finNote').textContent = unans.length
+          ? 'Masih ada soal yang belum dijawab. Ujian bisa dikumpulkan setelah semua soal terjawab.'
+          : rag.length ? 'Semua soal sudah dijawab, tapi masih ada yang ragu-ragu. Periksa lagi atau kumpulkan sekarang.'
+          : 'Semua soal sudah dijawab. Setelah dikumpulkan, jawaban tidak bisa diubah.';
+        const list = unans.length ? unans : rag;
+        document.getElementById('finJump').innerHTML = list.length
+          ? '<p class="muted" style="margin:4px 0 0;text-align:center">' + (unans.length ? 'Belum dijawab' : 'Ragu-ragu') + ' — ketuk untuk membuka:</p><div class="jump">' + list.map(([q, k]) => '<button type="button" data-k="' + k + '">' + (k + 1) + '</button>').join('') + '</div>' : '';
+        finish.showModal();
+      }
+      document.getElementById('finJump').addEventListener('click', (e) => {
+        const k = e.target.dataset.k; if (k === undefined) return; finish.close(); i = +k; render(); window.scrollTo(0, 0);
+      });
+      document.getElementById('finBack').onclick = () => finish.close();
+      document.getElementById('finGo').onclick = () => submitExam(false);
+      async function submitExam(auto) {
+        if (submitting) return; submitting = true;
+        try { await flushQueue(); } catch (_) {}
+        if (auto) showGate('⏱', 'Waktu habis', 'Jawaban Anda sedang dikumpulkan otomatis…', null);
+        const r = await fetch('/s/take/' + D.sessionId + '/submit', { method:'POST', credentials:'same-origin' }).catch(() => null);
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        if (r && r.ok) { location.href = '/s?selesai=1'; return; }
+        submitting = false;
+        showGate('!', 'Gagal mengumpulkan', 'Periksa koneksi internet, lalu coba lagi. Jawaban Anda tetap tersimpan.', ['Coba lagi', () => submitExam(auto)]);
+      }
       // Timer
       let dl = new Date(D.deadline).getTime();
       const t = document.getElementById('t');
@@ -1141,7 +1225,7 @@ student.get("/s/take/:sid", async (c) => {
         const m = String(Math.floor(left/60)).padStart(2,'0'); const s = String(left%60).padStart(2,'0');
         t.textContent = m + ':' + s;
         if (left < 300) t.classList.add('warn');
-        if (left === 0) { document.getElementById('submit').click(); return; }
+        if (left === 0) { submitExam(true); return; }
         setTimeout(tick, 1000);
       }
       tick(); render();
@@ -1160,7 +1244,7 @@ student.get("/s/take/:sid", async (c) => {
         if (j.locked) { alert('Sesi terkunci karena pelanggaran berulang.'); location.reload(); return; }
         if (level !== 'log') {
           const remain = limit ? Math.max(0, limit - violations) : null;
-          alert('Peringatan ('+kind+'). Pelanggaran: '+violations + (remain!==null?', sisa toleransi: '+remain:''));
+          toast('Pelanggaran tercatat: ' + (KIND[kind] || kind) + ' (' + violations + 'x' + (remain !== null ? ', sisa ' + remain : '') + ')');
         }
       }
       // Kalkulator sederhana (parser dua stack, bukan eval).
@@ -1262,6 +1346,44 @@ student.get("/s/take/:sid", async (c) => {
       }
       heartbeat();
 
+      // ===== Mode ujian: layar penuh, tombol kembali, keluar halaman =====
+      const KIND = { tab_blur: 'meninggalkan halaman ujian', visibility_hidden: 'berpindah aplikasi/tab', contextmenu: 'klik kanan',
+        copy: 'menyalin', paste: 'menempel', fullscreen_exit: 'keluar dari layar penuh' };
+      let toastT;
+      function toast(msg) { const el = document.getElementById('toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, 5000); }
+      const gate = document.getElementById('gate');
+      let gateAction = null;
+      function showGate(ic, title, text, action) {
+        document.getElementById('gateIc').textContent = ic;
+        document.getElementById('gateTitle').textContent = title;
+        document.getElementById('gateText').textContent = text;
+        const b = document.getElementById('gateBtn'); b.hidden = !action;
+        if (action) { b.textContent = action[0]; gateAction = action[1]; }
+        gate.hidden = false;
+      }
+      document.getElementById('gateBtn').onclick = () => { if (gateAction) gateAction(); };
+      const canFs = !!(document.fullscreenEnabled && document.documentElement.requestFullscreen);
+      const enterFs = () => document.documentElement.requestFullscreen({ navigationUI: 'hide' }).then(() => { gate.hidden = true; }).catch(() => { gate.hidden = true; });
+      if (canFs && !isPaused) {
+        showGate('⛶', 'Ujian berjalan dalam layar penuh', 'Selama ujian, jangan keluar dari layar penuh, berpindah aplikasi, atau menekan tombol kembali. Setiap pelanggaran dicatat dan terlihat oleh pengawas.', ['Masuk layar penuh & mulai', enterFs]);
+      }
+      document.addEventListener('fullscreenchange', () => {
+        if (document.fullscreenElement || submitting) return;
+        report('fullscreen_exit');
+        showGate('!', 'Anda keluar dari layar penuh', 'Ini tercatat sebagai pelanggaran. Kembali ke layar penuh untuk melanjutkan ujian.', ['Kembali ke layar penuh', enterFs]);
+        document.getElementById('gateIc').style.cssText = 'background:#FEE2E2;color:#B91C1C';
+      });
+      // Tombol kembali (HP/peramban): tahan di halaman ujian dan beri peringatan.
+      history.pushState({ exam: 1 }, '', location.href);
+      window.addEventListener('popstate', () => {
+        if (submitting) return;
+        history.pushState({ exam: 1 }, '', location.href);
+        showGate('!', 'Tombol kembali dinonaktifkan', 'Anda sedang mengerjakan ujian. Selesaikan dulu lewat tombol Selesai di soal terakhir.',
+          ['Lanjutkan ujian', () => canFs && !document.fullscreenElement ? enterFs() : (gate.hidden = true)]);
+        document.getElementById('gateIc').style.cssText = 'background:#FEF3C7;color:#B45309';
+      });
+      window.addEventListener('beforeunload', (e) => { if (!submitting) { e.preventDefault(); e.returnValue = ''; } });
+
       document.addEventListener('visibilitychange', () => { if (document.hidden) report('visibility_hidden'); });
       window.addEventListener('blur', () => report('tab_blur'));
       document.addEventListener('contextmenu', (e) => { e.preventDefault(); report('contextmenu'); });
@@ -1269,6 +1391,24 @@ student.get("/s/take/:sid", async (c) => {
       document.addEventListener('paste', (e) => { e.preventDefault(); report('paste'); });
     </script>
   `));
+});
+
+// Tandai / lepas "ragu-ragu" pada satu soal.
+student.post("/s/take/:sid/flag", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.json({ error: "unauthorized" }, 401);
+  const sessionId = c.req.param("sid");
+  const body = await c.req.json().catch(() => null) as null | { question_id: string; flagged: boolean };
+  if (!body?.question_id || typeof body.flagged !== "boolean") return c.json({ error: "bad body" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
+    tx`insert into answers (session_id, question_id, school_id, flagged, updated_at)
+       select ${sessionId}, ${body.question_id}, ${stu.sid}, ${body.flagged}, now()
+       where exists (select 1 from exam_sessions
+                     where id = ${sessionId} and student_id = ${stu.uid} and status = 'active')
+       on conflict (session_id, question_id) do update set flagged = excluded.flagged`,
+  );
+  return c.json({ ok: true });
 });
 
 // Simpan jawaban. Payload:
