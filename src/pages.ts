@@ -11,35 +11,33 @@ export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>(
 
 // Navigasi staf dikelompokkan per pekerjaan. Grup "Admin" hanya untuk admin;
 // halamannya tetap menjaga hak akses sendiri.
-// Navigasi staf. "Utama" = yang paling sering dipakai (juga jadi navbar bawah
-// di HP); sisanya di "Lainnya". Grup admin hanya untuk admin.
-const NAV_GROUPS: Array<{ title: string; admin?: boolean; items: Array<[string, string, string]> }> = [
-  { title: "", items: [["/app", "Beranda", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"], ["/app/exams", "Ujian", "M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"], ["/app/questions", "Bank soal", "M5 4h11l3 3v13H5zM9 10h6M9 14h6"], ["/app/students", "Siswa", "M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 11a3 3 0 1 0 0-6M22 21v-1a5 5 0 0 0-4-4.9"]] },
-  { title: "Lainnya", items: [["/app/pin-resets", "Reset PIN", "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4"], ["/app/exam-groups", "Rangkaian", "M4 6h16M4 12h16M4 18h10"], ["/app/categories", "Kategori", "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"], ["/app/passages", "Bacaan", "M4 5h7a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H4zM20 5h-7"]] },
-  { title: "Admin", admin: true, items: [["/app/settings", "Pengaturan", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"], ["/app/users", "Staf", "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"], ["/app/restore", "Backup & pulihkan", "M4 12a8 8 0 1 0 3-6.2M4 4v4h4"], ["/app/audit", "Audit log", "M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"], ["/app/bulk", "Operasi massal", "M4 7h16M4 12h16M4 17h16"], ["/app/shared-banks", "Bank publik", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"]] },
+// Navigasi staf: lima tujuan utama (juga navbar bawah di HP). Halaman lain
+// dijangkau dari Pengaturan supaya menu tetap pendek.
+const NAV: Array<[string, string, string]> = [
+  ["/app", "Beranda", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"], ["/app/questions", "Bank soal", "M5 4h11l3 3v13H5zM9 10h6M9 14h6"], ["/app/exams", "Ujian", "M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"], ["/app/students", "Siswa", "M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 11a3 3 0 1 0 0-6M22 21v-1a5 5 0 0 0-4-4.9"], ["/app/settings", "Pengaturan", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"],
 ];
+const MOON = "M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z";
 const icon = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 
 const sidebar = (role: string) => `
 <header class="mbar">
   <a class="brand" href="/app">${LOGO}</a>
-  <button type="button" class="ghost" id="navOpen" aria-label="Buka menu" aria-controls="side" aria-expanded="false">${icon("M4 7h16M4 12h16M4 17h16")}</button>
+  <span class="mbar-act">
+    <button type="button" class="ghost" data-theme-toggle aria-label="Ganti terang/gelap">${icon(MOON)}</button>
+    <button type="button" class="ghost" id="navOpen" aria-label="Menu" aria-controls="side" aria-expanded="false">${icon("M4 7h16M4 12h16M4 17h16")}</button>
+  </span>
 </header>
-<nav class="bnav" aria-label="Menu cepat">
-  ${NAV_GROUPS[0].items.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span>${label}</span></a>`).join("")}
-  <button type="button" id="navMore">${icon("M5 12h.01M12 12h.01M19 12h.01")}<span>Lainnya</span></button>
+<nav class="bnav" aria-label="Menu utama">
+  ${NAV.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span>${label}</span></a>`).join("")}
 </nav>
 <aside class="side" id="side">
   <a class="brand" href="/app" aria-label="CBT Yuk, beranda">${LOGO}</a>
   <nav class="nav" aria-label="Utama">
-    ${NAV_GROUPS.filter((g) => !g.admin || role === "admin").map((g, gi) => `<div class="${gi === 0 ? "nav-main" : "nav-g"}">
-      ${g.title ? `<p class="nav-h">${g.title}</p>` : ""}
-      ${g.items.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span data-i18n-src="${label}">${label}</span></a>`).join("")}
-    </div>`).join("")}
+    <div class="nav-main">${NAV.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span data-i18n-src="${label}">${label}</span></a>`).join("")}</div>
   </nav>
   <div class="side-foot">
     <a class="ghost fb" href="${FEEDBACK_WA}" target="_blank" rel="noopener">${icon("M4 5h16v11H8l-4 4zM8 9h8M8 12h5")}<span>Kritik &amp; saran</span></a>
-    <button type="button" class="ghost" id="toggleTheme">${icon("M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z")}<span>Tema</span></button>
+    <button type="button" class="ghost" data-theme-toggle>${icon(MOON)}<span>Terang / gelap</span></button>
     <button type="button" class="ghost" id="toggleLang">${icon("M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18")}<span>ID / EN</span></button>
     <form method="post" action="/auth/logout"><button type="submit" class="ghost">${icon("M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10")}<span data-i18n-src="Keluar">Keluar</span></button></form>
   </div>
@@ -154,7 +152,7 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
     .mbar .ghost { color: var(--fg); background:transparent; border:none; min-width:44px; min-height:44px; padding:0; box-shadow:none; }
     .mbar { justify-content: space-between; }
     .side .nav-main { display: none; }
-    .side .nav-g:first-of-type .nav-h { margin-top: 4px; }
+    .mbar-act { display:flex; gap: 2px; }
     .side { inset: 0 0 0 auto; border-right: none; border-left: 1px solid var(--line); transform: translateX(100%); transition: transform .2s; box-shadow: 0 0 40px rgba(0,0,0,.3); }
     .bnav { display:grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
             background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
@@ -196,19 +194,17 @@ ${INSTALL_SHEET}
     const openBtn = document.getElementById('navOpen'), scrim = document.getElementById('scrim');
     const setNav = (on) => { document.body.classList.toggle('nav-open', on); if (scrim) scrim.hidden = !on; openBtn?.setAttribute('aria-expanded', String(on)); };
     openBtn?.addEventListener('click', () => setNav(true));
-    document.getElementById('navMore')?.addEventListener('click', () => setNav(true));
     scrim?.addEventListener('click', () => setNav(false));
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setNav(false); });
   })();
   // Tema: sistem terang gelap sistem. Bahasa: id ↔ en.
-  document.getElementById('toggleTheme')?.addEventListener('click', () => {
-    const cur = document.documentElement.getAttribute('data-theme');
-    const next = cur === 'dark' ? null : (cur === 'light' ? 'dark' : 'light');
-    try {
-      if (next) { document.documentElement.setAttribute('data-theme', next); localStorage.setItem('theme', next); }
-      else { document.documentElement.removeAttribute('data-theme'); localStorage.removeItem('theme'); }
-    } catch (_) {}
-  });
+  document.querySelectorAll('[data-theme-toggle]').forEach((b) => b.addEventListener('click', () => {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+      (!document.documentElement.getAttribute('data-theme') && matchMedia('(prefers-color-scheme: dark)').matches);
+    const next = isDark ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('theme', next); } catch (_) {}
+  }));
   document.getElementById('toggleLang')?.addEventListener('click', () => {
     let cur = 'id'; try { cur = localStorage.getItem('lang') || 'id'; } catch (_) {}
     const next = cur === 'id' ? 'en' : 'id';
@@ -235,6 +231,7 @@ ${INSTALL_SHEET}
 </body>
 </html>`;
 
+const googleIcon = `<svg class="g" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.6 32.9 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.1-11.3-7.5l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.6l6.2 5.2C41.1 36 44 30.5 44 24c0-1.3-.1-2.3-.4-3.5z"/></svg>`;
 const googleBtn = (mode: "login" | "register", label: string) => `
 <a class="btn primary" href="/auth/google/start?mode=${mode}">
   <svg class="g" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.6 32.9 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.1-11.3-7.5l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.6l6.2 5.2C41.1 36 44 30.5 44 24c0-1.3-.1-2.3-.4-3.5z"/></svg>
@@ -278,31 +275,8 @@ pages.get("/", async (c) => {
       .mock { padding: 26px 0; }
       .mock .chip.c1 { left: -18px; bottom: 4px; } .mock .chip.c2 { right: -14px; top: 4px; }
       .dotg { width:9px; height:9px; border-radius:50%; background: var(--ok); }
-      .lpop { position: relative; }
-      .lpop summary { list-style: none; min-height: 42px; border-radius: 999px; padding: 8px 18px; gap: 8px; }
-      .lpop summary::-webkit-details-marker { display:none; }
-      .lpop summary svg { width: 18px; height: 18px; fill:none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-      .lpop-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; width: 270px; background: var(--surface); border: 1px solid var(--line);
-                   border-radius: 18px; padding: 8px; box-shadow: 0 20px 50px rgba(15,23,42,.18); }
-      .lpop-menu a { display:flex; gap: 12px; align-items:center; padding: 10px; border-radius: 12px; text-decoration: none; color: var(--fg); }
-      main .lpop-menu a { color: var(--fg); }
-      .lpop-menu a:hover { background: var(--soft); }
-      .lpop-menu .li { width: 40px; height: 40px; border-radius: 12px; background: var(--soft); color: var(--brand); display:grid; place-items:center; flex: 0 0 auto; }
-      .lpop-menu .li svg { width: 22px; height: 22px; fill:none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-      .lpop-menu b { display:block; font-size: 15px; } .lpop-menu small { color: var(--mut); font-size: 13px; }
-      .login { padding: 0 0 36px; }
-      .login h2 { font-size: 20px; margin: 0 0 14px; }
-      .roles { display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-      .role { display:grid; grid-template-columns: 52px 1fr; grid-template-rows: auto auto; gap: 4px 14px; align-items:center;
-              background: var(--surface); border: 1.5px solid var(--line); border-radius: 18px; padding: 18px 20px; text-decoration: none; color: var(--fg);
-              box-shadow: var(--shadow); transition: border-color .15s, transform .15s; }
-      main a.role { color: var(--fg); text-decoration: none; }
-      .role:hover { border-color: var(--brand); transform: translateY(-1px); }
-      .role .ri { grid-row: 1 / 3; width: 52px; height: 52px; border-radius: 14px; background: var(--soft); color: var(--brand); display:grid; place-items:center; }
-      .role .ri svg { width: 28px; height: 28px; fill:none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-      .role .rt { display:flex; flex-direction:column; } .role .rt b { font-size: 16.5px; } .role .rt span { color: var(--mut); font-size: 14px; }
-      .role .go { grid-column: 2; display:inline-flex; align-items:center; gap:8px; font-weight: 700; color: var(--brand); font-size: 14.5px; margin-top: 6px; }
-      @media (max-width: 720px) { .roles { grid-template-columns: 1fr; } }
+      .topin { min-height: 42px; border-radius: 999px; padding: 8px 18px; gap: 8px; }
+      .topin svg { width: 18px; height: 18px; fill:none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
       .feats { display:grid; grid-template-columns: repeat(4, 1fr); gap: 14px; padding: 8px 0 24px; }
       .feat { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }
       .feat svg { width: 36px; height: 36px; padding: 8px; border-radius: 10px; background: var(--soft); color: var(--brand); fill:none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -311,13 +285,7 @@ pages.get("/", async (c) => {
       @media (max-width: 480px) { .feats { grid-template-columns: 1fr; } }
     </style>
     <div class="top"><a class="brand" href="/">${LOGO}</a>
-      <details class="lpop">
-        <summary class="btn primary"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h4v16h-4M10 8l4 4-4 4M14 12H3"/></svg>Masuk</summary>
-        <div class="lpop-menu">
-          <a href="/s/login"><span class="li"><svg viewBox="0 0 24 24"><path d="M12 3L2 8l10 5 10-5zM6 10v5c0 2 3 4 6 4s6-2 6-4v-5"/></svg></span><span><b>Siswa</b><small>Username &amp; PIN dari guru</small></span></a>
-          <a href="/auth/google/start?mode=login"><span class="li"><svg viewBox="0 0 24 24"><path d="M3 5h18v12H3zM8 21h8M12 17v4"/></svg></span><span><b>Guru / admin</b><small>Pakai akun Google</small></span></a>
-        </div>
-      </details></div>
+      <a class="btn primary topin" href="/masuk"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h4v16h-4M10 8l4 4-4 4M14 12H3"/></svg>Masuk</a></div>
     <section class="hero">
       <div>
         <span class="eyebrow">Gratis dicoba · tanpa instal</span>
@@ -325,7 +293,7 @@ pages.get("/", async (c) => {
         <p class="lead">Buat soal, jadwalkan ujian, awasi siswa secara langsung, dan nilai keluar otomatis. Untuk SD, SMP, dan SMA, lancar di HP maupun komputer lab.</p>
         <div class="cta">
           <a class="btn primary" href="/demo">Coba demo gratis</a>
-          <a class="btn" href="/auth/google/start?mode=register">Daftarkan sekolah</a>
+          <a class="btn" href="/masuk">Masuk / Daftar</a>
         </div>
         <p class="stu">Tidak perlu instal. Demo tanpa daftar, langsung dicoba.</p>
       </div>
@@ -338,21 +306,6 @@ pages.get("/", async (c) => {
         </div>
         <div class="chip c1"><span class="dotg"></span>28 siswa sedang mengerjakan</div>
         <div class="chip c2">Nilai rata-rata 84,5</div>
-      </div>
-    </section>
-    <section class="login" id="masuk" aria-labelledby="masukH">
-      <h2 id="masukH">Sudah punya akun? Masuk sesuai peran Anda</h2>
-      <div class="roles">
-        <a class="role" href="/s/login">
-          <span class="ri"><svg viewBox="0 0 24 24"><path d="M12 3L2 8l10 5 10-5zM6 10v5c0 2 3 4 6 4s6-2 6-4v-5"/></svg></span>
-          <span class="rt"><b>Saya siswa</b><span>Masuk pakai username dan PIN dari guru.</span></span>
-          <span class="go">Masuk siswa →</span>
-        </a>
-        <a class="role" href="/auth/google/start?mode=login">
-          <span class="ri"><svg viewBox="0 0 24 24"><path d="M3 5h18v12H3zM8 21h8M12 17v4"/></svg></span>
-          <span class="rt"><b>Saya guru / admin sekolah</b><span>Masuk dengan akun Google yang sudah terdaftar.</span></span>
-          <span class="go"><svg class="g" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.6 32.9 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.1-11.3-7.5l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.6l6.2 5.2C41.1 36 44 30.5 44 24c0-1.3-.1-2.3-.4-3.5z"/></svg> Masuk guru</span>
-        </a>
       </div>
     </section>
     <section class="feats">
@@ -1092,18 +1045,33 @@ pages.get("/owner", async (c) => {
 pages.get("/app/settings", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
-  if (sess.role !== "admin") return c.redirect("/app");
+  const admin = sess.role === "admin";
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const rows = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
-    tx`select name, level, npsn, color, operator_name, operator_phone, plan, created_at from schools where id = ${sess.sid}`);
+  const [rows, pend] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => [
+    await tx`select name, level, npsn, color, operator_name, operator_phone, plan, created_at from schools where id = ${sess.sid}`,
+    await tx`select count(*)::int as n from pin_resets where status = 'pending'`,
+  ] as const);
+  const pending = (pend[0] as { n: number }).n;
+  const tile = (href: string, title: string, desc: string, d: string, badge = "") =>
+    `<a class="tile" href="${href}"><span class="ti">${icon(d)}</span><span class="tt"><b>${title}${badge}</b><span>${desc}</span></span><span class="chev" aria-hidden="true">›</span></a>`;
   const sc = rows[0] as { name: string; level: string; npsn: string | null; color: string; operator_name: string; operator_phone: string; plan: string; created_at: string };
   const swatches = Object.entries(BRAND_COLORS).map(([k, v]) => `
     <label class="sw"><input type="radio" name="color" value="${k}" ${sc.color === k ? "checked" : ""}>
       <span style="--c:${v.hex}"></span>${v.label}</label>`).join("");
   const lv = (v: string, t: string) => `<option value="${v}" ${sc.level === v ? "selected" : ""}>${t}</option>`;
   return c.html(base("Pengaturan", `
-    <div class="page-head"><div><h1>Pengaturan sekolah</h1><p>Identitas dan tampilan yang dilihat guru dan siswa.</p></div></div>
-    <form id="fs" class="two">
+    <div class="page-head"><div><h1>Pengaturan</h1><p>${esc(sc.name)} · paket ${esc(sc.plan === "trial" ? "uji coba" : sc.plan)}</p></div></div>
+    <div class="tiles">
+      ${tile("/app/pin-resets", "Reset PIN siswa", "Setujui permintaan siswa yang lupa PIN", "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4", pending ? ` <span class="pill closed">${pending}</span>` : "")}
+      ${admin ? tile("/app/users", "Guru & admin", "Undang guru, pengawas, atau admin lain", "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0M19 8v6M16 11h6") : ""}
+      ${admin ? tile("#profil", "Profil sekolah", "Nama, jenjang, kontak, dan warna", "M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6") : ""}
+      ${admin ? tile("/app/restore", "Backup & pulihkan", "Unduh cadangan data atau pulihkan", "M4 12a8 8 0 1 0 3-6.2M4 4v4h4") : ""}
+    </div>
+    <div class="card">
+      <h2>Tampilan</h2>
+      <div class="seg" id="thm" role="group" aria-label="Tema"><button type="button" data-t="light">Terang</button><button type="button" data-t="dark">Gelap</button><button type="button" data-t="">Ikuti perangkat</button></div>
+    </div>
+    ${admin ? `<div id="profil" style="scroll-margin-top:80px"></div><form id="fs" class="two">
       <div class="card">
         <h2>Identitas</h2>
         <label>Nama sekolah</label><input name="name" required value="${esc(sc.name)}">
@@ -1124,8 +1092,19 @@ pages.get("/app/settings", async (c) => {
         <p class="muted" style="margin-bottom:0">Paket: <b>${esc(sc.plan === "trial" ? "Uji coba" : sc.plan)}</b> · terdaftar ${new Date(sc.created_at).toLocaleDateString("id-ID", { dateStyle: "long", timeZone: "Asia/Jakarta" })}</p>
       </div>
       <div class="row" style="grid-column:1/-1;margin:0"><button class="primary" type="submit">Simpan perubahan</button><span id="msg" class="muted" role="status"></span></div>
-    </form>
+    </form>` : ""}
     <style>
+      .tiles { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 16px; }
+      .tile { display:flex; align-items:center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px; box-shadow: var(--shadow); text-decoration: none; color: var(--fg); min-height: 76px; }
+      main a.tile { color: var(--fg); text-decoration: none; }
+      .tile:hover { border-color: var(--brand); }
+      .tile .ti { width: 46px; height: 46px; border-radius: 14px; background: var(--soft); color: var(--brand); display:grid; place-items:center; flex: 0 0 auto; }
+      .tile .ti svg { width: 22px; height: 22px; fill:none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .tile .tt { flex: 1; min-width: 0; display:flex; flex-direction:column; } .tile .tt span { color: var(--mut); font-size: 13.5px; }
+      .tile .chev { color: var(--mut); font-size: 22px; }
+      .seg { display:flex; flex-wrap: wrap; gap: 6px; }
+      .seg button { border-radius: 999px; min-height: 40px; }
+      .seg button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
       .sws { display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
       .sw { display:flex; align-items:center; gap:10px; border:1.5px solid var(--line); border-radius: 12px; padding: 10px 12px; margin:0; cursor:pointer; font-weight:600; }
       .sw input { position:absolute; opacity:0; }
@@ -1139,9 +1118,19 @@ pages.get("/app/settings", async (c) => {
     </style>
     <script>
       const HEX = ${JSON.stringify(Object.fromEntries(Object.entries(BRAND_COLORS).map(([k, v]) => [k, v.hex])))};
+      const thm = document.getElementById('thm');
+      const curT = () => { try { return localStorage.getItem('theme') || ''; } catch (_) { return ''; } };
+      const markT = () => thm.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.t === curT())));
+      thm.addEventListener('click', (e) => {
+        const t = e.target.dataset.t; if (t === undefined) return;
+        try { t ? localStorage.setItem('theme', t) : localStorage.removeItem('theme'); } catch (_) {}
+        t ? document.documentElement.setAttribute('data-theme', t) : document.documentElement.removeAttribute('data-theme');
+        markT();
+      });
+      markT();
       const f = document.getElementById('fs'), msg = document.getElementById('msg');
-      f.addEventListener('change', (e) => { if (e.target.name === 'color') document.documentElement.style.setProperty('--brand', HEX[e.target.value]); });
-      f.addEventListener('submit', async (e) => {
+      if (f) f.addEventListener('change', (e) => { if (e.target.name === 'color') document.documentElement.style.setProperty('--brand', HEX[e.target.value]); });
+      if (f) f.addEventListener('submit', async (e) => {
         e.preventDefault(); msg.className = 'muted'; msg.textContent = 'Menyimpan…';
         const d = Object.fromEntries(new FormData(f));
         const r = await fetch('/api/school', { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
@@ -2895,12 +2884,39 @@ pages.get("/app/questions", async (c) => {
         <button type="button" class="primary" id="btnNew">+ Tulis soal</button>
       </div>
     </div>
-    <div class="qbar">
-      <input type="search" id="fq" placeholder="Cari teks soal…" aria-label="Cari soal">
-      <select id="ft" aria-label="Tipe"><option value="">Semua tipe</option></select>
-      <select id="fc" aria-label="Kategori"><option value="">Semua kategori</option></select>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="mine" aria-selected="true">Soal saya <b id="nMine"></b></button>
+      <button type="button" role="tab" data-tab="pub" aria-selected="false">Soal publik</button>
     </div>
-    <div id="qlist"></div>
+    <section id="tabMine">
+      <div class="chips" id="cats" aria-label="Kategori"></div>
+      <div class="qbar">
+        <input type="search" id="fq" placeholder="Cari soal…" aria-label="Cari soal">
+        <select id="ft" aria-label="Tipe"><option value="">Semua tipe</option></select>
+      </div>
+      <div id="qlist"></div>
+    </section>
+    <section id="tabPub" hidden>
+      <div class="pubhead"><p class="muted" style="margin:0">Kumpulan soal yang dibagikan sekolah lain. Simpan ke bank Anda, lalu edit sesukanya.</p>
+        <button type="button" id="btnShare">Bagikan soal saya</button></div>
+      <div id="publist"><p class="muted">Memuat…</p></div>
+    </section>
+    <dialog id="sh" class="sheet" aria-labelledby="shTitle">
+      <form id="shf" method="dialog" style="display:flex;flex-direction:column;min-height:0;flex:1">
+        <div class="sheet-head"><h2 id="shTitle">Bagikan ke publik</h2><button type="button" class="x" id="shX" aria-label="Tutup">✕</button></div>
+        <div class="sheet-body">
+          <p class="hint">Sekolah lain bisa melihat dan menyimpan salinan soal ini, termasuk kuncinya. Soal yang sedang dipakai ujian terbuka tidak bisa dibagikan.</p>
+          <label for="shT">Judul</label><input id="shT" required maxlength="80" placeholder="mis. Matematika Kelas 7 Bab Pecahan">
+          <label for="shC">Soal yang dibagikan</label><select id="shC"><option value="">Semua soal saya</option></select>
+          <label for="shD">Keterangan <span class="muted">(opsional)</span></label><input id="shD" maxlength="200">
+        </div>
+        <div class="sheet-foot"><button type="button" id="shCancel">Batal</button><span class="spacer"></span><button class="primary" type="submit">Bagikan</button></div>
+      </form>
+    </dialog>
+    <dialog id="pv" class="sheet" aria-labelledby="pvTitle">
+      <div class="sheet-head"><h2 id="pvTitle">Isi bank</h2><button type="button" class="x" id="pvX" aria-label="Tutup">✕</button></div>
+      <div class="sheet-body" id="pvBody"></div>
+    </dialog>
 
     <dialog id="ed" class="sheet" aria-labelledby="edTitle">
       <form id="ef" method="dialog">
@@ -2952,8 +2968,24 @@ Jawaban: B
     </dialog>
 
     <style>
-      .qbar { display:grid; grid-template-columns: 1fr 180px 200px; gap: 8px; margin-bottom: 14px; }
-      @media (max-width: 640px) { .qbar { grid-template-columns: 1fr 1fr; } .qbar input { grid-column: 1 / -1; } }
+      .tabs { display:flex; gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 14px; }
+      .tabs button { flex: 1; border: none; box-shadow: none; background: transparent; border-radius: 10px; min-height: 42px; color: var(--mut); }
+      .tabs button[aria-selected="true"] { background: var(--soft); color: var(--brand); }
+      .tabs b { font-weight: 700; opacity: .8; }
+      .chips { display:flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 10px; scrollbar-width: none; }
+      .chips::-webkit-scrollbar { display:none; }
+      .chips button { flex: 0 0 auto; min-height: 38px; padding: 6px 14px; border-radius: 999px; font-size: 13.5px; }
+      .chips button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+      .chips .add { border-style: dashed; color: var(--brand); }
+      .qbar { display:grid; grid-template-columns: minmax(0, 1fr) 170px; gap: 8px; margin-bottom: 14px; }
+      .qbar > * { min-width: 0; }
+      @media (max-width: 480px) { .qbar { grid-template-columns: minmax(0, 1fr) 130px; } }
+      .qc, .qc p, .qc li span { overflow-wrap: anywhere; }
+      .qc .katex-display { overflow-x: auto; overflow-y: hidden; }
+      .pubhead { display:flex; gap: 12px; align-items:center; justify-content:space-between; flex-wrap: wrap; margin-bottom: 12px; }
+      .pb { display:flex; gap: 14px; align-items:center; flex-wrap: wrap; }
+      .pb .pt { flex: 1 1 220px; min-width: 0; } .pb .pt > b, .pb .pt > span { display:block; } .pb .pt span { color: var(--mut); font-size: 13.5px; }
+      .pb .row { margin: 0; }
       .qc { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; margin-bottom: 10px; box-shadow: var(--shadow); }
       .qc-top { display:flex; gap: 8px; align-items:center; flex-wrap: wrap; margin-bottom: 8px; }
       .qc-top .sp { flex: 1; }
@@ -3001,7 +3033,24 @@ Jawaban: B
       const $ = (id) => document.getElementById(id);
       const math = (el) => { if (window.renderMathInElement) renderMathInElement(el, { delimiters: [{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}], throwOnError: false }); };
       TYPES.forEach(([k, v]) => $('ft').insertAdjacentHTML('beforeend', '<option value="' + k + '">' + v + '</option>'));
-      D.cats.forEach((c) => { $('fc').insertAdjacentHTML('beforeend', '<option value="' + c.id + '">' + esc(c.name) + '</option>'); $('catList').insertAdjacentHTML('beforeend', '<option value="' + esc(c.name) + '">'); });
+      D.cats.forEach((c) => $('catList').insertAdjacentHTML('beforeend', '<option value="' + esc(c.name) + '">'));
+      let catSel = '';
+      function drawCats() {
+        const n = (id) => D.qs.filter((q) => q.category_id === id).length;
+        $('cats').innerHTML = '<button type="button" data-c="" aria-pressed="' + (catSel === '') + '">Semua</button>' +
+          D.cats.map((c) => '<button type="button" data-c="' + c.id + '" aria-pressed="' + (catSel === c.id) + '">' + esc(c.name) + ' <span class="muted">' + n(c.id) + '</span></button>').join('') +
+          '<button type="button" class="add" id="addCat">+ Kategori</button>';
+      }
+      $('cats').addEventListener('click', async (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        if (b.id === 'addCat') {
+          const name = (prompt('Nama kategori baru (mis. Matematika Kelas 7):') || '').trim(); if (!name) return;
+          try { catSel = await catId(name); drawCats(); draw(); } catch (x) { alert(x.message); }
+          return;
+        }
+        catSel = b.dataset.c; drawCats(); draw();
+      });
+      drawCats();
 
       function keyView(q) {
         const k = q.answer_key || {}, o = q.content.options || [];
@@ -3013,9 +3062,9 @@ Jawaban: B
         return '';
       }
       function draw() {
-        const t = $('fq').value.trim().toLowerCase(), ty = $('ft').value, ca = $('fc').value;
+        const t = $('fq').value.trim().toLowerCase(), ty = $('ft').value, ca = catSel;
         const v = D.qs.filter((q) => (!ty || q.type === ty) && (!ca || q.category_id === ca) && (!t || (q.content.text || '').toLowerCase().includes(t)));
-        $('qsum').textContent = D.qs.length + ' soal' + (v.length !== D.qs.length ? ' · ' + v.length + ' tampil' : '') + '. Pakai ulang di ujian mana pun.';
+        $('qsum').textContent = v.length !== D.qs.length ? v.length + ' dari ' + D.qs.length + ' soal tampil.' : 'Simpan soal sekali, pakai di ujian mana pun.';
         $('qlist').innerHTML = v.length ? v.map((q) =>
           '<article class="qc"><div class="qc-top"><span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + (+q.points) + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
           (TYPES.some(([k]) => k === q.type) ? '<button type="button" data-ed="' + q.id + '">Edit</button>' : '') +
@@ -3024,8 +3073,59 @@ Jawaban: B
           : '<div class="empty-q">' + (D.qs.length ? 'Tidak ada soal yang cocok.' : '<b>Bank soal masih kosong.</b><br>Mulai dengan <b>+ Tulis soal</b> atau <b>Upload soal</b> (Word, PDF, Excel).') + '</div>';
         math($('qlist'));
       }
-      ['fq','ft','fc'].forEach((id) => $(id).addEventListener('input', draw));
+      ['fq','ft'].forEach((id) => $(id).addEventListener('input', draw));
+      $('nMine').textContent = D.qs.length;
       draw();
+
+      // ===== Tab & soal publik =====
+      let pubLoaded = false;
+      document.querySelector('.tabs').addEventListener('click', (e) => {
+        const tab = e.target.closest('[data-tab]'); if (!tab) return;
+        document.querySelectorAll('.tabs [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b === tab)));
+        $('tabMine').hidden = tab.dataset.tab !== 'mine'; $('tabPub').hidden = tab.dataset.tab !== 'pub';
+        if (tab.dataset.tab === 'pub' && !pubLoaded) loadPub();
+      });
+      async function loadPub() {
+        pubLoaded = true;
+        const r = await fetch('/api/public-banks', { credentials: 'same-origin' });
+        const list = r.ok ? await r.json() : [];
+        $('publist').innerHTML = list.length ? list.map((b) =>
+          '<article class="qc pb"><span class="pt"><b>' + esc(b.title) + '</b><span>' + esc(b.school_name) + ' · ' + b.question_count + ' soal · disimpan ' + b.download_count + 'x' + (b.mine ? ' · <b style="display:inline;color:var(--brand)">milik Anda</b>' : '') + '</span>' +
+          (b.description ? '<span>' + esc(b.description) + '</span>' : '') + '</span>' +
+          '<span class="row"><button type="button" data-pv="' + esc(b.slug) + '">Lihat</button>' + (b.mine ? '' : '<button type="button" class="primary" data-save="' + esc(b.slug) + '">Simpan ke bank saya</button>') + '</span></article>').join('')
+          : '<div class="empty-q"><b>Belum ada soal publik.</b><br>Jadilah yang pertama: tekan <b>Bagikan soal saya</b>.</div>';
+      }
+      $('publist').addEventListener('click', async (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        if (b.dataset.save) {
+          b.disabled = true; b.textContent = 'Menyimpan…';
+          const r = await fetch('/api/public-banks/' + b.dataset.save + '/save', { method: 'POST', credentials: 'same-origin' });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) { alert('Gagal: ' + (j.error || r.status)); b.disabled = false; b.textContent = 'Simpan ke bank saya'; return; }
+          alert(j.ok + ' soal disimpan ke kategori "' + j.category + '".'); location.reload();
+        }
+        if (b.dataset.pv) {
+          const r = await fetch('/public/banks/' + b.dataset.pv); const j = await r.json().catch(() => null);
+          if (!j) { alert('Gagal memuat.'); return; }
+          $('pvTitle').textContent = j.title;
+          $('pvBody').innerHTML = (j.payload.questions || []).map((q, k) => '<article class="qc"><div class="qc-top"><span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">No. ' + (k + 1) + '</span></div><p>' + esc(q.content.text || '') + '</p>' + keyView(q) + '</article>').join('');
+          $('pv').showModal(); math($('pvBody'));
+        }
+      });
+      $('pvX').onclick = () => $('pv').close();
+      D.cats.forEach((c) => $('shC').insertAdjacentHTML('beforeend', '<option value="' + c.id + '">Kategori: ' + esc(c.name) + '</option>'));
+      $('btnShare').onclick = () => $('sh').showModal();
+      ['shX', 'shCancel'].forEach((id) => $(id).onclick = () => $('sh').close());
+      $('shf').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const title = $('shT').value.trim(); if (!title) return;
+        const slug = (title.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'bank') + '-' + Math.random().toString(36).slice(2, 6);
+        const r = await fetch('/api/shared-banks', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug, title, description: $('shD').value.trim() || undefined, category_id: $('shC').value || null }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { alert('Gagal: ' + (j.error || r.status)); return; }
+        $('sh').close(); alert(j.count + ' soal dibagikan.'); pubLoaded = false; loadPub();
+      });
 
       // ===== Editor =====
       const ed = $('ed'); let cur = null; let img = undefined;
@@ -3293,6 +3393,53 @@ Jawaban: B
   `, { role: sess.role }));
 });
 
+
+// Satu pintu untuk masuk atau mendaftar: dua kartu, tiga pilihan jelas.
+pages.get("/masuk", async (c) => {
+  if (await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE)) return c.redirect("/app");
+  return c.html(base("Masuk atau daftar", `
+    <style>
+      .mk-top { display:flex; justify-content:space-between; align-items:center; padding: 20px 0; }
+      .mk-head { text-align:center; padding: 12px 0 22px; }
+      .mk-head h1 { font-size: clamp(28px, 6vw, 40px); letter-spacing: -.03em; margin: 0 0 8px; }
+      .mk-head p { color: var(--mut); margin: 0 auto; }
+      .mk { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 880px; margin: 0 auto; }
+      @media (max-width: 720px) { .mk { grid-template-columns: 1fr; } }
+      .mk .card { margin: 0; padding: 24px; display:flex; flex-direction:column; gap: 10px; }
+      .mk h2 { margin: 0; font-size: 19px; }
+      .mk .sub { margin: 0 0 6px; }
+      .opt-btn { display:flex; align-items:center; gap: 14px; padding: 14px; border: 1.5px solid var(--line); border-radius: 16px; text-decoration:none; color: var(--fg); min-height: 72px; background: var(--surface); }
+      main a.opt-btn { color: var(--fg); text-decoration: none; }
+      .opt-btn:hover { border-color: var(--brand); background: var(--soft); }
+      .opt-btn .oi { width: 46px; height: 46px; border-radius: 14px; background: var(--soft); color: var(--brand); display:grid; place-items:center; flex: 0 0 auto; }
+      .opt-btn .oi svg { width: 24px; height: 24px; fill:none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .opt-btn .ot { flex: 1; min-width: 0; display:flex; flex-direction:column; } .opt-btn .ot span { color: var(--mut); font-size: 13.5px; }
+      .opt-btn .go { color: var(--brand); font-size: 22px; }
+      .mk .daftar { background: linear-gradient(150deg, var(--brand), color-mix(in srgb, var(--brand) 65%, #0F172A)); color: #fff; border: none; }
+      .mk .daftar h2, .mk .daftar p { color: #fff; } .mk .daftar .sub { color: rgba(255,255,255,.85); }
+      .mk .daftar ul { margin: 0 0 8px; padding-left: 18px; color: rgba(255,255,255,.9); font-size: 14.5px; } .mk .daftar li { margin: 4px 0; }
+      .mk .daftar .btn { background: #fff; color: #0F172A; border-color: #fff; min-height: 52px; margin-top: auto; }
+    </style>
+    <div class="mk-top"><a class="brand" href="/">${LOGO}</a><a href="/demo" style="font-weight:600">Coba demo dulu →</a></div>
+    <div class="mk-head"><h1>Masuk atau daftar</h1><p>Pilih sesuai keperluan Anda.</p></div>
+    <div class="mk">
+      <section class="card">
+        <h2>Sudah punya akun</h2>
+        <p class="sub muted">Masuk sesuai peran Anda.</p>
+        <a class="opt-btn" href="/s/login"><span class="oi"><svg viewBox="0 0 24 24"><path d="M12 3L2 8l10 5 10-5zM6 10v5c0 2 3 4 6 4s6-2 6-4v-5"/></svg></span>
+          <span class="ot"><b>Saya siswa</b><span>Pakai username dan PIN dari guru</span></span><span class="go">›</span></a>
+        <a class="opt-btn" href="/auth/google/start?mode=login"><span class="oi">${googleIcon}</span>
+          <span class="ot"><b>Saya guru / admin</b><span>Masuk dengan akun Google</span></span><span class="go">›</span></a>
+      </section>
+      <section class="card daftar">
+        <h2>Sekolah baru</h2>
+        <p class="sub">Daftarkan sekolah Anda dalam 1 menit, gratis selama masa uji coba.</p>
+        <ul><li>Akun Google Anda jadi admin sekolah</li><li>Tambah guru, siswa, dan soal kapan saja</li><li>Tanpa instal, jalan di HP dan komputer</li></ul>
+        <a class="btn" href="/auth/google/start?mode=register">${googleIcon} Daftar dengan Google</a>
+      </section>
+    </div>
+  `, { nav: false }));
+});
 
 pages.get("/demo", (c) => {
   const on = c.env.DEMO_LOGIN === "1";

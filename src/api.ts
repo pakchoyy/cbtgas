@@ -940,7 +940,7 @@ api.post("/api/sessions/:sid/manual-score", async (c) => {
 // dengan slug URL-safe. Siapa saja bisa unduh via /public/banks/:slug.
 api.post("/api/shared-banks", async (c) => {
   const s = getSess(c);
-  if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const body = await c.req.json().catch(() => null) as null | {
     slug: string; title: string; description?: string; category_id?: string | null;
   };
@@ -973,6 +973,64 @@ api.post("/api/shared-banks", async (c) => {
   }).catch((e) => ({ error: (e as Error).message }));
   if ("error" in result) return c.json(result, 400);
   return c.json(result, 201);
+});
+
+// Katalog bank soal publik semua sekolah.
+api.get("/api/public-banks", async (c) => {
+  const s = getSess(c);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select * from list_public_banks()`);
+  return c.json(rows);
+});
+
+// Soal tersimpan (content + kunci) → bentuk body editor, supaya bisa lewat buildQuestion.
+function bodyFromStored(q: { type: string; content: Record<string, unknown>; answer_key: Record<string, unknown> | null; rubric: string | null; points: unknown }) {
+  const k = q.answer_key ?? {}, ct = q.content;
+  const b: Record<string, unknown> = { type: q.type, text: ct.text, points: Number(q.points) || 1 };
+  if (typeof ct.image === "string") b.image = ct.image;
+  if (q.type === "pg") { b.options = ct.options; b.correct = k.index; }
+  else if (q.type === "benar_salah") b.correct = k.index === 0;
+  else if (q.type === "pgk_centang") { b.options = ct.options; b.correct_indexes = k.correct; }
+  else if (q.type === "isian") b.accepted = k.accepted;
+  else if (q.type === "uraian") b.rubric = q.rubric;
+  else if (q.type === "menjodohkan") {
+    const left = (ct.left as string[]) ?? [], right = (ct.right as string[]) ?? [];
+    const pairs = (k.pairs as [number, number][]) ?? [];
+    b.left = left; b.right = left.map((_, i) => right[pairs.find((p) => p[0] === i)?.[1] ?? i]);
+  }
+  return b;
+}
+
+// Salin isi bank publik ke bank soal sekolah sendiri (kategori = judul bank).
+api.post("/api/public-banks/:slug/save", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const slug = c.req.param("slug");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const out = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const r = await tx`select title, payload from public_bank(${slug})`;
+    if (r.length === 0) return null;
+    const bank = r[0] as { title: string; payload: { questions: Array<{ type: string; content: Record<string, unknown>; answer_key: Record<string, unknown> | null; rubric: string | null; points: unknown }> } };
+    const cat = await tx`select id from categories where lower(name) = lower(${bank.title})`;
+    const catId = cat.length ? (cat[0] as { id: string }).id
+      : ((await tx`insert into categories (school_id, name) values (${s.sid}, ${bank.title}) returning id`)[0] as { id: string }).id;
+    let ok = 0, skip = 0;
+    for (const raw of bank.payload.questions ?? []) {
+      const q = buildQuestion({ ...bodyFromStored(raw), category_id: catId });
+      if ("error" in q) { skip++; continue; }
+      const ins = await tx`insert into questions (school_id, author_id, type, content, points, category_id)
+        values (${s.sid}, ${s.uid}, ${q.type}, ${q.content as unknown as string}, ${q.points}, ${q.categoryId}) returning id`;
+      await tx`insert into question_keys (question_id, school_id, answer_key, rubric)
+        values (${(ins[0] as { id: string }).id}, ${s.sid}, ${q.answer_key as unknown as string}, ${q.rubric})`;
+      ok++;
+    }
+    await tx`select increment_bank_download(${slug})`;
+    await audit(tx, actorFromSession(s), "bank.save", "shared_bank", null, { slug, ok, skip });
+    return { ok, skip, category: bank.title };
+  });
+  if (!out) return c.json({ error: "bank tidak ditemukan" }, 404);
+  return c.json(out);
 });
 
 api.get("/api/shared-banks", async (c) => {
