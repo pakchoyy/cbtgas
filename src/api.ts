@@ -1464,7 +1464,8 @@ api.get("/api/students/:id/analytics", async (c) => {
       where es.student_id = ${id} and es.status = 'submitted'
       order by es.finished_at`;
     // Persen benar per kategori: hitung soal + benar dari semua jawaban siswa.
-    const byCat = await tx`
+    const [byCat, violations] = await Promise.all([
+      tx`
       select coalesce(cat.name, '(tanpa kategori)') as category,
              count(*)::int as total,
              sum(case
@@ -1487,11 +1488,12 @@ api.get("/api/students/:id/analytics", async (c) => {
       left join question_keys k on k.question_id = q.id
       left join categories cat on cat.id = q.category_id
       where es.student_id = ${id} and es.status = 'submitted'
-      group by cat.name order by cat.name`;
-    const violations = await tx`
+      group by cat.name order by cat.name`,
+      tx`
       select count(*)::int as n, kind
       from violations v join exam_sessions es on es.id = v.session_id
-      where es.student_id = ${id} group by kind order by kind`;
+      where es.student_id = ${id} group by kind order by kind`,
+    ]);
     return { info: info[0], timeline, byCat, violations };
   });
   if (!data) return c.json({ error: "siswa tidak ditemukan" }, 404);

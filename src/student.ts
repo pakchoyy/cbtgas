@@ -547,8 +547,10 @@ student.post("/s/forgot", async (c) => {
       if (existing.length === 0) {
         await tx`insert into pin_resets (school_id, student_id) values (${sid}, ${stuRow.id})`;
       }
-      const sch = await tx`select name from schools where id = ${sid}`;
-      const admins = await tx`select email from users where role in ('admin','teacher') and active`;
+      const [sch, admins] = await Promise.all([
+        tx`select name from schools where id = ${sid}`,
+        tx`select email from users where role in ('admin','teacher') and active`,
+      ]);
       return {
         schoolName: (sch[0] as { name: string } | undefined)?.name ?? "",
         studentName: stuRow.name,
@@ -702,12 +704,14 @@ student.get("/demo/konfirmasi", async (c) => {
   if (!stu) return c.redirect("/demo");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const d = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
-    const me = await tx`select s.name, s.username, c.name as class_name, sc.name as school
+    const [me, ex] = await Promise.all([
+      tx`select s.name, s.username, c.name as class_name, sc.name as school
                         from students s left join classes c on c.id = s.class_id join schools sc on sc.id = s.school_id
-                        where s.id = ${stu.uid}`;
-    const ex = await tx`select e.id, e.title, e.duration_minutes,
+                        where s.id = ${stu.uid}`,
+      tx`select e.id, e.title, e.duration_minutes,
                           (select count(*) from exam_questions where exam_id = e.id)::int as n
-                        from exams e where e.title = ${DEMO_EXAM} and e.status = 'open' limit 1`;
+                        from exams e where e.title = ${DEMO_EXAM} and e.status = 'open' limit 1`,
+    ]);
     return { me: me[0], ex: ex[0] };
   });
   const me = d.me as { name: string; username: string; class_name: string | null; school: string } | undefined;

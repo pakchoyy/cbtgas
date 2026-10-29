@@ -873,11 +873,13 @@ pages.get("/app/exam-groups", async (c) => {
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [groups, exams] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
-    const g = await tx`select g.id, g.title, g.strict_order,
+    const [g, e] = await Promise.all([
+      tx`select g.id, g.title, g.strict_order,
                               (select count(*) from exams e where e.group_id = g.id) as exam_count
-                       from exam_groups g order by g.created_at desc`;
-    const e = await tx`select id, title, group_id, group_position from exams
-                       where group_id is not null order by group_id, group_position`;
+                       from exam_groups g order by g.created_at desc`,
+      tx`select id, title, group_id, group_position from exams
+                       where group_id is not null order by group_id, group_position`,
+    ]);
     return [g, e] as const;
   });
   type G = { id: string; title: string; strict_order: boolean; exam_count: string };
@@ -936,11 +938,13 @@ pages.get("/app/exams", async (c) => {
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [exams, groups] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
-    const e = await tx`select e.id, e.title, e.kind, e.duration_minutes, e.status,
+    const [e, g] = await Promise.all([
+      tx`select e.id, e.title, e.kind, e.duration_minutes, e.status,
               (select count(*) from exam_questions where exam_id = e.id) as qc,
               (select count(*) from exam_classes where exam_id = e.id) as cc
-       from exams e order by e.created_at desc`;
-    const g = await tx`select id, title from exam_groups order by title`;
+       from exams e order by e.created_at desc`,
+      tx`select id, title from exam_groups order by title`,
+    ]);
     return [e, g] as const;
   });
   type Ex = { id: string; title: string; kind: string; duration_minutes: number; status: string; qc: number; cc: number };
@@ -1087,10 +1091,10 @@ pages.get("/app/settings", async (c) => {
   if (!sess) return c.redirect("/");
   const admin = sess.role === "admin";
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const [rows, pend] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => [
-    await tx`select name, level, npsn, color, operator_name, operator_phone, plan, created_at from schools where id = ${sess.sid}`,
-    await tx`select count(*)::int as n from pin_resets where status = 'pending'`,
-  ] as const);
+  const [rows, pend] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => Promise.all([
+    tx`select name, level, npsn, color, operator_name, operator_phone, plan, created_at from schools where id = ${sess.sid}`,
+    tx`select count(*)::int as n from pin_resets where status = 'pending'`,
+  ]));
   const pending = (pend[0] as { n: number }).n;
   const tile = (href: string, title: string, desc: string, d: string, badge = "") =>
     `<a class="tile" href="${href}"><span class="ti">${icon(d)}</span><span class="tt"><b>${title}${badge}</b><span>${desc}</span></span><span class="chev" aria-hidden="true">›</span></a>`;
@@ -1194,12 +1198,14 @@ pages.get("/app/exams/new", async (c) => {
   if (sess.role === "proctor") return c.redirect("/app/exams");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [classes, questions, cats, groups] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
-    const cl = await tx`select c.id, c.name, c.year, (select count(*) from students s where s.class_id = c.id and s.active)::int as n
-                        from classes c order by c.year desc, c.name`;
-    const q = await tx`select q.id, q.type, substring(q.content->>'text', 1, 140) as text, q.points, q.category_id
-                       from questions q order by q.created_at desc limit 500`;
-    const ct = await tx`select id, name from categories order by name`;
-    const g = await tx`select id, title from exam_groups order by title`;
+    const [cl, q, ct, g] = await Promise.all([
+      tx`select c.id, c.name, c.year, (select count(*) from students s where s.class_id = c.id and s.active)::int as n
+                        from classes c order by c.year desc, c.name`,
+      tx`select q.id, q.type, substring(q.content->>'text', 1, 140) as text, q.points, q.category_id
+                       from questions q order by q.created_at desc limit 500`,
+      tx`select id, name from categories order by name`,
+      tx`select id, title from exam_groups order by title`,
+    ]);
     return [cl, q, ct, g] as const;
   });
   const data = JSON.stringify({ classes, questions, cats, groups }).replace(/</g, "\\u003c");
@@ -1420,19 +1426,20 @@ pages.get("/app/exams/:id", async (c) => {
   const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
     const ex = await tx`select id, title, kind, duration_minutes, status from exams where id = ${examId}`;
     if (ex.length === 0) return null;
-    const bank = await tx`select id, content from questions where type = 'pg' order by created_at desc limit 500`;
-    const picked = await tx`select question_id from exam_questions where exam_id = ${examId}`;
-    const classes = await tx`select id, name from classes order by year desc, name`;
-    const pickedClasses = await tx`select class_id from exam_classes where exam_id = ${examId}`;
-    const scores = await tx`
+    const [bank, picked, classes, pickedClasses, scores, summary, needsManual] = await Promise.all([
+      tx`select id, content from questions where type = 'pg' order by created_at desc limit 500`,
+      tx`select question_id from exam_questions where exam_id = ${examId}`,
+      tx`select id, name from classes order by year desc, name`,
+      tx`select class_id from exam_classes where exam_id = ${examId}`,
+      tx`
       select es.id as session_id, st.name as student_name, c.name as class_name,
              es.status, es.violation_count, sc.auto_score, sc.manual_score, sc.final_score
       from exam_sessions es
       join students st on st.id = es.student_id
       left join classes c on c.id = st.class_id
       left join scores sc on sc.session_id = es.id
-      where es.exam_id = ${examId} order by st.name`;
-    const summary = await tx`
+      where es.exam_id = ${examId} order by st.name`,
+      tx`
       select coalesce(c.name, '(tanpa kelas)') as class_name,
              count(*) as peserta, count(sc.final_score) as nilai_tersedia,
              round(avg(sc.final_score), 2) as rata_rata,
@@ -1440,11 +1447,12 @@ pages.get("/app/exams/:id", async (c) => {
       from exam_sessions es join students st on st.id = es.student_id
       left join classes c on c.id = st.class_id
       left join scores sc on sc.session_id = es.id
-      where es.exam_id = ${examId} group by c.name order by c.name`;
-    const needsManual = await tx`
+      where es.exam_id = ${examId} group by c.name order by c.name`,
+      tx`
       select count(*)::int as n from exam_questions eq
       join questions q on q.id = eq.question_id
-      where eq.exam_id = ${examId} and q.type = 'uraian'`;
+      where eq.exam_id = ${examId} and q.type = 'uraian'`,
+    ]);
     return { ex: ex[0], bank, picked, classes, pickedClasses, scores, summary, needsManual };
   });
   if (!data) return c.notFound();
@@ -1830,14 +1838,15 @@ pages.get("/app/students/:id/report", async (c) => {
       join schools sch on sch.id = s.school_id
       where s.id = ${studentId}`;
     if (info.length === 0) return null;
-    const scores = await tx`
+    const [scores, summary] = await Promise.all([
+      tx`
       select e.title, e.kind, es.finished_at, sc.final_score, sc.auto_score, sc.manual_score
       from exam_sessions es
       join exams e on e.id = es.exam_id
       left join scores sc on sc.session_id = es.id
       where es.student_id = ${studentId} and es.status = 'submitted'
-      order by es.finished_at`;
-    const summary = await tx`
+      order by es.finished_at`,
+      tx`
       select coalesce(cat.name, '(tanpa kategori)') as category,
              count(*)::int as total,
              sum(case
@@ -1860,7 +1869,8 @@ pages.get("/app/students/:id/report", async (c) => {
       left join question_keys k on k.question_id = q.id
       left join categories cat on cat.id = q.category_id
       where es.student_id = ${studentId} and es.status = 'submitted'
-      group by cat.name order by cat.name`;
+      group by cat.name order by cat.name`,
+    ]);
     return { info: info[0], scores, summary };
   });
   if (!data) return c.notFound();
@@ -1977,14 +1987,15 @@ pages.get("/app/students/:id/analytics", async (c) => {
   const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
     const info = await tx`select name, username from students where id = ${studentId}`;
     if (info.length === 0) return null;
-    const timeline = await tx`
+    const [timeline, byCat] = await Promise.all([
+      tx`
       select e.title, es.finished_at, sc.final_score
       from exam_sessions es
       join exams e on e.id = es.exam_id
       left join scores sc on sc.session_id = es.id
       where es.student_id = ${studentId} and es.status = 'submitted'
-      order by es.finished_at`;
-    const byCat = await tx`
+      order by es.finished_at`,
+      tx`
       select coalesce(cat.name, '(tanpa kategori)') as category,
              count(*)::int as total,
              sum(case
@@ -2007,7 +2018,8 @@ pages.get("/app/students/:id/analytics", async (c) => {
       left join question_keys k on k.question_id = q.id
       left join categories cat on cat.id = q.category_id
       where es.student_id = ${studentId} and es.status = 'submitted'
-      group by cat.name order by cat.name`;
+      group by cat.name order by cat.name`,
+    ]);
     return { info: info[0], timeline, byCat };
   });
   if (!data) return c.notFound();
@@ -2115,10 +2127,12 @@ pages.get("/app/bulk", async (c) => {
   if (sess.role !== "admin") return c.html(base("Bulk", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`, { role: sess.role }));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [classes, exams] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
-    const cl = await tx`select id, name from classes order by name`;
-    const ex = await tx`select e.id, e.title,
+    const [cl, ex] = await Promise.all([
+      tx`select id, name from classes order by name`,
+      tx`select e.id, e.title,
       (select count(*) from exam_sessions where exam_id = e.id) as sess_count
-      from exams e order by e.created_at desc`;
+      from exams e order by e.created_at desc`,
+    ]);
     return [cl, ex] as const;
   });
   type Cl = { id: string; name: string };
@@ -2319,10 +2333,12 @@ pages.get("/app/shared-banks", async (c) => {
   if (sess.role !== "admin") return c.html(base("Bank publik", `<div class="card"><p class="err">Hanya admin.</p><a class="btn" href="/app">Dashboard</a></div>`, { role: sess.role }));
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [banks, categories] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
-    const b = await tx`select id, slug, title, description, download_count,
+    const [b, c] = await Promise.all([
+      tx`select id, slug, title, description, download_count,
                               jsonb_array_length(payload->'questions') as question_count,
-                              created_at from shared_banks order by created_at desc`;
-    const c = await tx`select id, name from categories order by name`;
+                              created_at from shared_banks order by created_at desc`,
+      tx`select id, name from categories order by name`,
+    ]);
     return [b, c] as const;
   });
   type B = { id: string; slug: string; title: string; description: string | null;
@@ -2921,13 +2937,13 @@ pages.get("/app/questions", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const [qs, cats] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => [
-    await tx`select q.id, q.type, q.content - 'image' - 'audio' - 'html' as content, q.content ? 'image' as has_image,
+  const [qs, cats] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => Promise.all([
+    tx`select q.id, q.type, q.content - 'image' - 'audio' - 'html' as content, q.content ? 'image' as has_image,
                     q.points, q.category_id, k.answer_key
              from questions q left join question_keys k on k.question_id = q.id
              order by q.created_at desc limit 1000`,
-    await tx`select id, name from categories order by name`,
-  ] as const);
+    tx`select id, name from categories order by name`,
+  ]));
   const data = JSON.stringify({ qs, cats, canDelete: sess.role === "admin" }).replace(/</g, "\\u003c");
   return c.html(base("Bank soal", `
     <div class="page-head">
