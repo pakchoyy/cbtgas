@@ -2923,7 +2923,6 @@ pages.get("/app/questions", async (c) => {
     <dialog id="up" class="sheet" aria-labelledby="upTitle">
       <div class="sheet-head"><h2 id="upTitle">Upload soal</h2><button type="button" class="x" id="upX" aria-label="Tutup">✕</button></div>
       <div class="sheet-body">
-        <div class="seg" id="upTabs" style="margin:8px 0 4px"><button type="button" data-u="doc" aria-pressed="true">Word / PDF</button><button type="button" data-u="xls" aria-pressed="false">Excel</button></div>
         <div id="upDoc">
           <p class="hint" style="margin-top:10px">Unggah naskah soal yang biasa Anda ketik. Tulis dengan pola seperti ini:</p>
           <pre class="sample">1. Ibu kota Indonesia adalah …
@@ -2940,15 +2939,8 @@ Jawaban: B
             <li>Dua huruf atau lebih (A, C) jadi PG kompleks. Benar/Salah, teks isian, dan soal tanpa pilihan (uraian) juga dikenali.</li>
             <li>Gambar dan rumus di dokumen belum ikut terbaca. Tambahkan lewat tombol Edit setelah disimpan.</li>
           </ul>
-          <label class="btn primary" style="margin:6px 0 0">Pilih file Word / PDF<input type="file" id="upDocFile" accept=".docx,.pdf" hidden></label>
+          <label class="btn primary" style="margin:6px 0 0">Pilih file Word atau PDF<input type="file" id="upDocFile" accept=".docx,.pdf" hidden></label>
         </div>
-        <ol class="howto" id="upXls" hidden>
-          <li><b>Unduh template</b>, isi satu soal per baris.</li>
-          <li>Kolom <b>Tipe</b>: PG, PGK, Benar-Salah, Isian, Uraian, atau Menjodohkan.</li>
-          <li>Kolom <b>Jawaban</b>: huruf untuk PG (B), beberapa huruf untuk PGK (A,C), Benar/Salah, jawaban isian dipisah | , atau pedoman untuk uraian. Menjodohkan: isi A–E dengan "kiri = kanan".</li>
-          <li>Pilih file, lalu periksa pratinjau sebelum disimpan.</li>
-          <li class="row" style="list-style:none;margin-left:-20px"><button type="button" id="upTpl">Unduh template</button><label class="btn primary" style="margin:0">Pilih file Excel<input type="file" id="upFile" accept=".xlsx,.xls,.csv" hidden></label></li>
-        </ol>
         <div id="upPrev"></div>
       </div>
       <div class="sheet-foot"><button type="button" id="upCancel">Batal</button><span class="spacer"></span><button type="button" class="primary" id="upGo" disabled>Simpan soal</button></div>
@@ -3161,38 +3153,8 @@ Jawaban: B
 
       // ===== Upload Excel =====
       const up = $('up'); let rows = [];
-      const loadX = () => window.XLSX ? Promise.resolve(window.XLSX) : new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload = () => ok(window.XLSX); s.onerror = () => no(new Error('Gagal memuat pembaca Excel.')); document.head.appendChild(s); });
       $('btnUp').onclick = () => { $('upPrev').innerHTML = ''; $('upGo').disabled = true; up.showModal(); };
       ['upX', 'upCancel'].forEach((id) => $(id).onclick = () => up.close());
-      $('upTpl').onclick = async () => {
-        const X = await loadX();
-        const ws = X.utils.aoa_to_sheet([
-          ['Tipe', 'Soal', 'A', 'B', 'C', 'D', 'E', 'Jawaban', 'Poin', 'Kategori'],
-          ['PG', 'Ibu kota Indonesia adalah …', 'Bandung', 'Jakarta', 'Surabaya', 'Medan', '', 'B', 1, 'IPS'],
-          ['PGK', 'Pilih bilangan prima.', '2', '4', '5', '9', '11', 'A,C,E', 2, 'Matematika'],
-          ['Benar-Salah', 'Air mendidih pada 100 °C.', '', '', '', '', '', 'Benar', 1, 'IPA'],
-          ['Isian', 'Planet terdekat dari Matahari adalah …', '', '', '', '', '', 'Merkurius | Merkurius.', 1, 'IPA'],
-          ['Uraian', 'Jelaskan proses fotosintesis.', '', '', '', '', '', 'Menyebut cahaya, klorofil, CO2, air, glukosa', 5, 'IPA'],
-          ['Menjodohkan', 'Jodohkan negara dengan ibu kotanya.', 'Jepang = Tokyo', 'Prancis = Paris', 'Mesir = Kairo', '', '', '', 3, 'IPS']]);
-        ws['!cols'] = [{ wch: 13 }, { wch: 44 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 30 }, { wch: 6 }, { wch: 14 }];
-        const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'Soal'); X.writeFile(wb, 'template-soal-cbt-yuk.xlsx');
-      };
-      const TMAP = { pg: 'pg', 'pilihan ganda': 'pg', pgk: 'pgk_centang', 'pg kompleks': 'pgk_centang', 'benar-salah': 'benar_salah', 'benar salah': 'benar_salah', bs: 'benar_salah', isian: 'isian', uraian: 'uraian', esai: 'uraian', menjodohkan: 'menjodohkan' };
-      function parseRow(r, n) {
-        const g = (k) => String(r[k] ?? '').trim();
-        const type = TMAP[g('tipe').toLowerCase()], text = g('soal'), ans = g('jawaban');
-        const opts = ['a', 'b', 'c', 'd', 'e'].map(g).filter(Boolean);
-        const q = { row: n, type, text, points: +g('poin') || 1, category_name: g('kategori') };
-        if (!type) return [q, 'Tipe tidak dikenal'];
-        if (!text) return [q, 'Soal kosong'];
-        if (type === 'pg') { q.options = opts; q.correct = L.indexOf(ans.toUpperCase()); if (q.correct < 0 || q.correct >= opts.length) return [q, 'Jawaban harus huruf pilihan']; }
-        if (type === 'pgk_centang') { q.options = opts; q.correct_indexes = ans.toUpperCase().split(/[ ,;]+/).filter(Boolean).map((x) => L.indexOf(x)); if (!q.correct_indexes.length || q.correct_indexes.some((x) => x < 0 || x >= opts.length)) return [q, 'Jawaban harus huruf, mis. A,C']; }
-        if (type === 'benar_salah') { const v = ans.toLowerCase(); if (v !== 'benar' && v !== 'salah') return [q, 'Jawaban harus Benar atau Salah']; q.correct = v === 'benar'; }
-        if (type === 'isian') { q.accepted = ans.split('|').map((x) => x.trim()).filter(Boolean); if (!q.accepted.length) return [q, 'Jawaban kosong']; }
-        if (type === 'uraian') q.rubric = ans;
-        if (type === 'menjodohkan') { const pr = opts.map((x) => x.split('=').map((y) => y.trim())); if (pr.length < 2 || pr.some((p) => p.length !== 2 || !p[0] || !p[1])) return [q, 'Isi A–E dengan "kiri = kanan"']; q.left = pr.map((p) => p[0]); q.right = pr.map((p) => p[1]); }
-        return [q, ''];
-      }
       // ===== Word / PDF: ambil teks, lalu kenali pola "1. soal / A. pilihan / Jawaban: B" =====
       const loadJs = (src, test) => test() ? Promise.resolve() : new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('Gagal memuat pembaca file. Periksa koneksi.')); document.head.appendChild(s); });
       // .docx dibaca langsung (zip + XML) supaya penomoran otomatis Word ikut terbaca:
@@ -3297,11 +3259,6 @@ Jawaban: B
           : '<p class="err">Tidak ada soal yang dikenali. Pastikan soal bernomor (1. 2. 3.) dan pilihan diawali A. B. C.</p>';
         $('upGo').disabled = !rows.length;
       }
-      $('upTabs').addEventListener('click', (e) => {
-        const u = e.target.dataset.u; if (!u) return;
-        $('upTabs').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === e.target)));
-        $('upDoc').hidden = u !== 'doc'; $('upXls').hidden = u !== 'xls'; $('upPrev').innerHTML = ''; $('upGo').disabled = true;
-      });
       $('upDocFile').addEventListener('change', async (e) => {
         const f = e.target.files[0]; e.target.value = ''; if (!f) return;
         $('upPrev').innerHTML = '<p class="muted" style="margin-top:14px">Membaca ' + esc(f.name) + '…</p>';
@@ -3310,15 +3267,6 @@ Jawaban: B
           const lines = /\\.pdf$/i.test(f.name) ? await pdfLines(buf) : await docxLines(buf);
           showParsed(parseLines(lines), 'No.');
         } catch (x) { $('upPrev').innerHTML = ''; alert('Gagal membaca file: ' + x.message); }
-      });
-      $('upFile').addEventListener('change', async (e) => {
-        const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-        try {
-          const X = await loadX(); const wb = X.read(await f.arrayBuffer(), { type: 'array' });
-          const raw = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
-          const norm = raw.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.trim().toLowerCase(), v])));
-          showParsed(norm.map((r, j) => parseRow(r, j + 2)).filter(([q]) => q.text || q.type), 'Baris');
-        } catch (x) { alert('Gagal membaca file: ' + x.message); }
       });
       $('upGo').onclick = async () => {
         $('upGo').disabled = true;
