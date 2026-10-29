@@ -5,7 +5,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, APP_NAME, BRAND_COLORS, kindLabel } from "./ui";
+import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -32,12 +32,13 @@ const sidebar = (role: string) => `
 <aside class="side" id="side">
   <a class="brand" href="/app" aria-label="CBT Yuk, beranda">${LOGO}</a>
   <nav class="nav" aria-label="Utama">
-    ${NAV_GROUPS.filter((g) => !g.admin || role === "admin").map((g) => `
+    ${NAV_GROUPS.filter((g) => !g.admin || role === "admin").map((g, gi) => `<div class="${gi === 0 ? "nav-main" : "nav-g"}">
       ${g.title ? `<p class="nav-h">${g.title}</p>` : ""}
       ${g.items.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span data-i18n-src="${label}">${label}</span></a>`).join("")}
-    `).join("")}
+    </div>`).join("")}
   </nav>
   <div class="side-foot">
+    <a class="ghost fb" href="${FEEDBACK_WA}" target="_blank" rel="noopener">${icon("M4 5h16v11H8l-4 4zM8 9h8M8 12h5")}<span>Kritik &amp; saran</span></a>
     <button type="button" class="ghost" id="toggleTheme">${icon("M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z")}<span>Tema</span></button>
     <button type="button" class="ghost" id="toggleLang">${icon("M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18")}<span>ID / EN</span></button>
     <form method="post" action="/auth/logout"><button type="submit" class="ghost">${icon("M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10")}<span data-i18n-src="Keluar">Keluar</span></button></form>
@@ -110,6 +111,8 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
   .side-foot { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 16px; display:flex; flex-direction:column; gap:2px; }
   .side-foot form { margin:0; }
   .side-foot .ghost { border: none; background: transparent; box-shadow:none; }
+  .side-foot a.ghost { text-decoration: none; }
+  .side-foot .fb { color: #15803D; }
   .mbar, .bnav { display:none; }
   .scrim { position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 55; }
   .app-foot { color:var(--mut); font-size:12px; text-align:center; margin-top:40px; }
@@ -150,6 +153,8 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
             backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); padding: 6px 10px; min-height: 58px; }
     .mbar .ghost { color: var(--fg); background:transparent; border:none; min-width:44px; min-height:44px; padding:0; box-shadow:none; }
     .mbar { justify-content: space-between; }
+    .side .nav-main { display: none; }
+    .side .nav-g:first-of-type .nav-h { margin-top: 4px; }
     .side { inset: 0 0 0 auto; border-right: none; border-left: 1px solid var(--line); transform: translateX(100%); transition: transform .2s; box-shadow: 0 0 40px rgba(0,0,0,.3); }
     .bnav { display:grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
             background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
@@ -3152,7 +3157,7 @@ Jawaban: B
       });
 
       // ===== Upload Excel =====
-      const up = $('up'); let rows = [];
+      const up = $('up'); let rows = []; let lastText = [];
       $('btnUp').onclick = () => { $('upPrev').innerHTML = ''; $('upGo').disabled = true; up.showModal(); };
       ['upX', 'upCancel'].forEach((id) => $(id).onclick = () => up.close());
       // ===== Word / PDF: ambil teks, lalu kenali pola "1. soal / A. pilihan / Jawaban: B" =====
@@ -3213,9 +3218,14 @@ Jawaban: B
         return out;
       }
       function parseLines(raw) {
-        let lines = raw.join('\\n').replace(/\\r/g, '').split('\\n').map((l) => l.replace(/\\s+/g, ' ').trim()).filter(Boolean);
-        // Pilihan sebaris ("A. 3  B. 4  C. 5") dipecah per baris.
-        lines = lines.flatMap((l) => /^[A-Ea-e]\\s*[.)]\\s/.test(l) && /\\s[B-Eb-e]\\s*[.)]\\s/.test(l) ? l.split(/\\s+(?=[B-Eb-e]\\s*[.)]\\s)/) : [l]);
+        let lines = raw.join('\\n').replace(/[\\r\\u200b\\ufeff]/g, '').split('\\n').map((l) => l.replace(/\\s+/g, ' ').trim()).filter(Boolean);
+        lastText = lines;
+        // Pilihan sebaris ("A. 3  B. 4  C. 5", juga menempel di baris soal) dipecah per baris.
+        lines = lines.flatMap((l) => {
+          const lower = /^\\(?[a-e]\\s*[.)]\\s/.test(l) && /\\s\\(?[b-e]\\s*[.)]\\s/.test(l);
+          const upper = (l.match(/(^|\\s)\\(?[A-E]\\s*[.)]\\s/g) || []).length >= 2;
+          return lower ? l.split(/\\s+(?=\\(?[b-e]\\s*[.)]\\s)/) : upper ? l.split(/\\s+(?=\\(?[A-E]\\s*[.)]\\s)/) : [l];
+        });
         // Kunci jawaban di akhir dokumen: "Kunci Jawaban" lalu "1. B 2. C ...".
         const keyMap = {};
         const ki = lines.findIndex((l) => /^kunci(\\s+jawaban)?\\s*:?\\s*$/i.test(l) || /^kunci(\\s+jawaban)?\\s*:?\\s*1\\s*[.)\\-:]/i.test(l));
@@ -3226,13 +3236,14 @@ Jawaban: B
         const qs = []; let cur = null;
         for (const l of lines) {
           let m;
-          if ((m = l.match(/^(\\d{1,3})\\s*[.)]\\s*(.+)$/))) {
+          if ((m = l.match(/^(?:no\\.?|nomor|soal)?\\s*(\\d{1,3})\\s*[.):\\-](?:\\s+(.*)|$)/i))) {
+            m[2] = m[2] || '';
             cur = { no: +m[1], text: m[2], opts: [], ans: '' }; qs.push(cur); continue;
           }
           if (!cur) continue;
-          if ((m = l.match(/^([A-Ea-e])\\s*[.)]\\s*(.+)$/))) { cur.opts.push(m[2]); continue; }
+          if ((m = l.match(/^\\(?([A-Ea-e])\\s*[.):]\\s+(.+)$/))) { cur.opts.push(m[2]); continue; }
           if ((m = l.match(/^(jawaban|kunci|jawab|jwb|ans)\\s*[:=]\\s*(.+)$/i))) { cur.ans = m[2].trim(); continue; }
-          if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text += ' ' + l;
+          if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text = (cur.text + ' ' + l).trim();
         }
         return qs.map((c, j) => {
           const ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').trim();
@@ -3256,7 +3267,9 @@ Jawaban: B
         $('upPrev').innerHTML = parsed.length ? '<p style="margin:14px 0 0"><b>' + rows.length + ' soal siap disimpan</b>' + (bad.length ? ' · <span class="err" style="margin:0">' + bad.length + ' bermasalah (dilewati)</span>' : '') + '</p>' +
           '<div class="uprev"><table><thead><tr><th>' + unit + '</th><th>Tipe</th><th>Soal</th><th>Status</th></tr></thead><tbody>' +
           parsed.map(([q, err]) => '<tr><td>' + q.row + '</td><td>' + esc(TL[q.type] || '?') + '</td><td>' + esc(q.text.slice(0, 70)) + (q.options ? '<br><span class="muted">' + q.options.length + ' pilihan</span>' : '') + '</td><td class="' + (err ? 'bad' : '') + '">' + (err ? esc(err) : '✓') + '</td></tr>').join('') + '</tbody></table></div>'
-          : '<p class="err">Tidak ada soal yang dikenali. Pastikan soal bernomor (1. 2. 3.) dan pilihan diawali A. B. C.</p>';
+          : '<p class="err">Tidak ada soal yang dikenali. Pastikan soal bernomor (1. 2. 3.) dan pilihan diawali A. B. C.</p>' +
+            (lastText.length ? '<details open><summary>Teks yang terbaca dari file (' + lastText.length + ' baris)</summary><pre class="sample">' + esc(lastText.slice(0, 40).join('\\n')) + '</pre></details>'
+              : '<p class="hint">Tidak ada teks yang bisa dibaca. Jika PDF berupa hasil scan/foto, ketik ulang di Word atau ekspor dari Word ke PDF.</p>');
         $('upGo').disabled = !rows.length;
       }
       $('upDocFile').addEventListener('change', async (e) => {

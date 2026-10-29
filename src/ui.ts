@@ -15,6 +15,9 @@ export const brandHex = (key: string | null | undefined) => (BRAND_COLORS[key ??
 
 export const APP_NAME = "CBT Yuk";
 
+// Kritik & saran langsung ke WhatsApp pengelola.
+export const FEEDBACK_WA = "https://wa.me/6289530713597?text=" + encodeURIComponent("Halo CBT Yuk, saya mau kasih kritik/saran: ");
+
 // Jenis ujian lama disimpan sebagai kode; yang baru berupa teks bebas.
 const KIND_LABELS: Record<string, string> = { harian: "Ulangan harian", pts_pas: "PTS / PAS", sumatif: "Sumatif", tryout: "Tryout" };
 export const kindLabel = (k: string) => KIND_LABELS[k] ?? k;
@@ -34,7 +37,7 @@ export const SITE_FOOTER = `
     <nav class="sf-col" aria-label="Produk"><h4>Produk</h4>
       <a href="/demo">Coba demo</a><a href="/s/login">Masuk siswa</a><a href="/auth/google/start?mode=register">Daftar sekolah</a></nav>
     <nav class="sf-col" aria-label="Bantuan"><h4>Bantuan</h4>
-      <a href="mailto:admin@bantuguruyuk.web.id">Hubungi kami</a><a href="/privasi">Kebijakan privasi</a><a href="/syarat">Syarat layanan</a></nav>
+      <a href="${FEEDBACK_WA}" target="_blank" rel="noopener">Kritik &amp; saran (WhatsApp)</a><a href="mailto:admin@bantuguruyuk.web.id">Email kami</a><a href="/privasi">Kebijakan privasi</a><a href="/syarat">Syarat layanan</a></nav>
   </div>
   <div class="sf-bot"><span>© CBT Yuk</span><span>Dibuat untuk sekolah Indonesia</span></div>
 </footer>`;

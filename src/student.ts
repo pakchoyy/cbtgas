@@ -9,7 +9,7 @@ import {
 } from "./session";
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
-import { SHARED_CSS, LOGO, kindLabel } from "./ui";
+import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA } from "./ui";
 import { createSession, finalizeSession } from "./scoring";
 
 type Bindings = {
@@ -235,6 +235,7 @@ student.get("/s", async (c) => {
       <div class="card">
         <h2>Riwayat & belajar</h2>
         <div class="row" style="margin-top:0"><a class="btn" href="/s/history">Riwayat nilai</a><a class="btn" href="/s/rekomendasi">Rekomendasi belajar</a></div>
+        <p class="muted" style="margin:14px 0 0">Ada masalah atau saran? <a href="${FEEDBACK_WA}" target="_blank" rel="noopener">Kirim lewat WhatsApp</a></p>
       </div>
     </div>
   `));
