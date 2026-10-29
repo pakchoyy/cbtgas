@@ -15,6 +15,12 @@ export const brandHex = (key: string | null | undefined) => (BRAND_COLORS[key ??
 
 export const APP_NAME = "CBT Yuk";
 
+// Tahun ajar berjalan (Juli–Juni, WIB), mis. "2026/2027".
+export const schoolYear = () => {
+  const d = new Date(Date.now() + 7 * 3600_000), y = d.getUTCFullYear();
+  return d.getUTCMonth() >= 6 ? `${y}/${y + 1}` : `${y - 1}/${y}`;
+};
+
 const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 export const ICON_EDIT = svg("M4 20h4L19 9l-4-4L4 16zM14 6l4 4");
 export const ICON_DEL = svg("M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3");
@@ -250,6 +256,21 @@ export const SHARED_CSS = `
   .sf-bot { max-width:1040px; margin:0 auto; padding: 16px 20px 26px; border-top: 1px solid #1E293B; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; font-size:13px; color:#64748B; }
   @media (max-width: 640px) { .sf-in { grid-template-columns: 1fr 1fr; } .sf-brand { grid-column: 1 / -1; } }
 
+  /* Kartu folder (kategori soal, kelas) */
+  .folders { display:grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .folder { display:flex; align-items:center; gap: 14px; text-align:left; padding: 14px; min-height: 76px; border-radius: 18px; width: 100%;
+            background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--fg); font-weight: 400; white-space: normal; justify-content:flex-start; }
+  .folder:hover { border-color: hsl(var(--h, 217) 70% 55%); }
+  .folder .fi { width: 46px; height: 46px; border-radius: 14px; flex: 0 0 auto; display:grid; place-items:center; font-weight: 800; font-size: 19px;
+                background: hsl(var(--h, 217) 85% 95%); color: hsl(var(--h, 217) 65% 40%); }
+  :root[data-theme="dark"] .folder .fi { background: hsl(var(--h, 217) 40% 20%); color: hsl(var(--h, 217) 80% 75%); }
+  .folder .ft { flex: 1; min-width: 0; display:flex; flex-direction:column; } .folder .ft b { font-size: 15.5px; } .folder .ft span { color: var(--mut); font-size: 13px; }
+  .folder .chev { color: var(--mut); font-size: 22px; }
+  .folder.add { border-style: dashed; box-shadow: none; } .folder.add .fi { background: var(--soft); color: var(--brand); }
+  .folder.pack button { min-height: 38px; padding: 6px 14px; font-size: 13.5px; flex: 0 0 auto; }
+  .crumb { display:flex; align-items:center; gap: 10px; margin: 0 0 12px; flex-wrap: wrap; }
+  .crumb button { min-height: 38px; padding: 6px 12px; font-size: 13.5px; border-radius: 999px; }
+  .crumb b { font-size: 17px; }
   /* Panel dialog (sheet) */
   dialog.sheet { max-width: 680px; width: calc(100% - 16px); padding: 0; max-height: calc(100dvh - 24px); }
   dialog.sheet[open] { display:flex; flex-direction:column; }
@@ -260,6 +281,13 @@ export const SHARED_CSS = `
   .sheet-body { padding: 8px 20px 18px; overflow-y: auto; flex: 1; }
   .sheet-foot { display:flex; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--surface); }
   .sheet-foot .spacer { flex: 1; }
+  /* Saklar on/off */
+  input.switch { appearance: none; -webkit-appearance: none; width: 48px; height: 28px; min-height: 0; border-radius: 999px; background: var(--line); position: relative; cursor: pointer; flex: 0 0 auto; border: none; padding: 0; transition: background .15s; }
+  input.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s; }
+  input.switch:checked { background: var(--brand); } input.switch:checked::after { transform: translateX(20px); }
+  .sw-row { display:flex; align-items:center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); margin: 0; font-weight: 400; min-height: 56px; cursor: pointer; }
+  .sw-row > span { flex: 1; display:flex; flex-direction:column; } .sw-row small { color: var(--mut); font-size: 13px; }
+
   /* Tombol ikon (edit/hapus di tabel) */
   .ibtn { width: 40px; height: 40px; min-height: 40px; padding: 0; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--mut); box-shadow: none; }
   .ibtn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }

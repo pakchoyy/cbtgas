@@ -173,6 +173,26 @@ const page = (title: string, body: string) => `<!doctype html>
 ${UI_JS}
 </body></html>`;
 
+// Layar "ujian terkunci": siswa memasukkan kode buka dari pengawas.
+const lockedCard = (title: string, sessionId: string) => `
+  <div class="card" style="max-width:440px;margin:10vh auto 0;text-align:center;padding:28px">
+    <div style="width:60px;height:60px;border-radius:50%;margin:0 auto 12px;display:grid;place-items:center;font-size:28px;background:#FEE2E2;color:#B91C1C">🔒</div>
+    <h1 style="font-size:22px">Ujian terkunci</h1>
+    <p class="sub">${esc(title)}<br>Terlalu banyak pelanggaran (keluar layar, pindah aplikasi). Minta <b>kode buka</b> ke pengawas, lalu masukkan di bawah. Jawaban Anda tetap aman.</p>
+    <form id="uf"><input id="uc" class="token" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="••••••" aria-label="Kode buka" required
+      style="font:800 26px/1 ui-monospace,Menlo,monospace;letter-spacing:.35em;text-align:center;min-height:60px">
+      <button class="primary" style="width:100%;min-height:52px;margin-top:12px">Buka ujian</button></form>
+    <p class="err" id="ue" hidden></p>
+  </div>
+  <script>
+    document.getElementById('uf').addEventListener('submit', async (e) => {
+      e.preventDefault(); const er = document.getElementById('ue'); er.hidden = true;
+      const r = await fetch('/s/take/${sessionId}/unlock', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: document.getElementById('uc').value }) });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) location.href = '/s/take/${sessionId}'; else { er.textContent = j.error || 'Gagal.'; er.hidden = false; }
+    });
+  </script>`;
+
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[ch]!));
 }
@@ -875,15 +895,7 @@ student.get("/s/take/:sid", async (c) => {
         <div class="row"><a class="btn" href="/s">Kembali</a></div>
       </div>`));
   }
-  if ("locked" in data) {
-    return c.html(page(data.title!, `
-      <div class="card">
-        <h1>${esc(data.title!)}</h1>
-        <p class="err">Sesi dikunci oleh sistem anti-contek karena pelanggaran berulang.
-        Hubungi guru atau pengawas untuk membuka kembali.</p>
-        <div class="row"><a class="btn" href="/s">Kembali</a></div>
-      </div>`));
-  }
+  if ("locked" in data) return c.html(page(data.title!, lockedCard(data.title!, sessionId)));
 
   const payload = JSON.stringify({
     sessionId, deadline: data.deadline,
@@ -1276,7 +1288,7 @@ student.get("/s/take/:sid", async (c) => {
         });
         const j = await r.json().catch(() => ({}));
         violations = j.count || violations + 1;
-        if (j.locked) { alert('Sesi terkunci karena pelanggaran berulang.'); location.reload(); return; }
+        if (j.locked) { submitting = true; location.reload(); return; }
         if (level !== 'log') {
           const remain = limit ? Math.max(0, limit - violations) : null;
           toast('Pelanggaran tercatat: ' + (KIND[kind] || kind) + ' (' + violations + 'x' + (remain !== null ? ', sisa ' + remain : '') + ')');
@@ -1528,9 +1540,11 @@ student.post("/s/take/:sid/violation", async (c) => {
              values (${stu.sid}, ${sessionId}, ${kind})`;
     const nextCount = row.violation_count + 1;
     const limit = row.lock_after_violations ?? 0;
-    const shouldLock = row.anticheat_level === "lock" && limit > 0 && nextCount >= limit;
+    // "Peringatan" dan "Kunci" sama-sama mengunci setelah batas tercapai; "Catat saja" tidak.
+    const shouldLock = row.anticheat_level !== "log" && limit > 0 && nextCount >= limit && row.status === "active";
     if (shouldLock) {
-      await tx`update exam_sessions set violation_count = ${nextCount}, status = 'locked'
+      const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
+      await tx`update exam_sessions set violation_count = ${nextCount}, status = 'locked', unlock_code = ${code}, unlock_tries = 0
                where id = ${sessionId}`;
     } else {
       await tx`update exam_sessions set violation_count = ${nextCount}
@@ -1538,6 +1552,31 @@ student.post("/s/take/:sid/violation", async (c) => {
     }
     return { ok: true, count: nextCount, locked: shouldLock, level: row.anticheat_level };
   });
+  return c.json(out);
+});
+
+// Siswa memasukkan kode buka dari pengawas. Benar → lanjut, pelanggaran mulai dari 0.
+student.post("/s/take/:sid/unlock", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.json({ error: "unauthorized" }, 401);
+  const sessionId = c.req.param("sid");
+  const body = await c.req.json().catch(() => null) as null | { code: string };
+  const code = String(body?.code ?? "").replace(/\D/g, "");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const out = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
+    const r = await tx`select status, unlock_code, unlock_tries from exam_sessions where id = ${sessionId} and student_id = ${stu.uid}`;
+    const row = r[0] as { status: string; unlock_code: string | null; unlock_tries: number } | undefined;
+    if (!row || row.status !== "locked") return { error: "Sesi tidak sedang terkunci.", status: 400 as const };
+    if (row.unlock_tries >= 5) return { error: "Terlalu banyak percobaan. Minta pengawas membuka dari layar pantau.", status: 429 as const };
+    if (!row.unlock_code || code !== row.unlock_code) {
+      await tx`update exam_sessions set unlock_tries = unlock_tries + 1 where id = ${sessionId}`;
+      return { error: "Kode salah. Tanyakan kode yang benar ke pengawas.", status: 400 as const };
+    }
+    await tx`update exam_sessions set status = 'active', violation_count = 0, unlock_code = null, unlock_tries = 0
+             where id = ${sessionId}`;
+    return { ok: true };
+  });
+  if ("error" in out) return c.json({ error: out.error }, out.status);
   return c.json(out);
 });
 

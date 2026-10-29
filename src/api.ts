@@ -1,6 +1,7 @@
 // REST API staf: kelas & siswa. Semua di-guard sesi staf dan dibungkus withTenant.
 
 import { Hono } from "hono";
+import type postgres from "postgres";
 import { connect, withTenant, edgeCache } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
 import { hashPin } from "./hash";
@@ -8,7 +9,7 @@ import { sendEmail, inviteEmail, pinNotifyEmail } from "./email";
 function esc2(s: string): string { return s.replace(/[&<>"']/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[ch]!)); }
 import { audit, actorFromSession } from "./audit";
 import { distractorRows, itemRows } from "./analytics";
-import { BRAND_COLORS } from "./ui";
+import { BRAND_COLORS, schoolYear } from "./ui";
 import { createSession, finalizeSession, writeScore } from "./scoring";
 
 export const api = new Hono<{ Bindings: AuthBindings & { APP_ENV: string; RESEND_API_KEY?: string; EMAIL_FROM?: string } }>();
@@ -117,18 +118,20 @@ api.post("/api/students", async (c) => {
     name: string; username: string; class_id?: string | null;
     gender?: "L" | "P" | null; nisn?: string | null; pin: string;
   };
-  if (!body?.name || !body?.username || !body?.pin) return c.json({ error: "missing fields" }, 400);
-  if (!/^\d{4,8}$/.test(body.pin)) return c.json({ error: "pin harus 4–8 digit" }, 400);
+  if (!body?.name?.trim()) return c.json({ error: "Nama siswa wajib diisi." }, 400);
+  if (body.pin && !/^\d{4,8}$/.test(body.pin)) return c.json({ error: "PIN harus 4–8 angka." }, 400);
   try {
-    const pin_hash = await hashPin(body.pin);
+    const pin = body.pin || newPin();
+    const pin_hash = await hashPin(pin);
     const sql = connect(c.env.HYPERDRIVE.connectionString);
-    const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-      tx`insert into students (school_id, class_id, name, username, gender, nisn, pin_hash)
-         values (${s.sid}, ${body.class_id ?? null}, ${body.name}, ${body.username},
+    const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+      const username = body.username?.trim() ? body.username.trim().toLowerCase() : await newUsername(tx, body.name, new Set());
+      return tx`insert into students (school_id, class_id, name, username, gender, nisn, pin_hash)
+         values (${s.sid}, ${body.class_id ?? null}, ${body.name.trim()}, ${username},
                  ${body.gender ?? null}, ${body.nisn ?? null}, ${pin_hash})
-         returning id, name, username`,
-    );
-    return c.json(r[0], 201);
+         returning id, name, username`;
+    });
+    return c.json({ ...(r[0] as object), pin }, 201);
   } catch (e) {
     console.error("POST /api/students", (e as Error).message, (e as Error).stack);
     return c.json({ error: (e as Error).message }, 400);
@@ -166,56 +169,74 @@ api.patch("/api/students/:id", async (c) => {
 // Import siswa dari CSV. Body: text/csv dengan header
 //   name,username,class,gender,nisn,pin
 // 'class' dicocokkan ke classes.name (case-sensitive). Baris gagal dilaporkan.
+// Impor siswa (dari Excel yang dibaca di browser). Cukup nama + kelas; NISN,
+// username, dan PIN opsional. Kelas yang belum ada dibuat otomatis. Balasan
+// berisi username + PIN baru supaya bisa dicetak sebagai kartu login.
 api.post("/api/students/import", async (c) => {
   const s = getSess(c);
-  if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
-  const text = await c.req.text();
-  const rows = parseCsv(text);
-  if (rows.length === 0) return c.json({ error: "csv kosong" }, 400);
-  const header = rows[0].map((x) => x.toLowerCase().trim());
-  const want = ["name", "username", "class", "gender", "nisn", "pin"];
-  const idx: Record<string, number> = {};
-  for (const k of want) idx[k] = header.indexOf(k);
-  if (idx.name < 0 || idx.username < 0 || idx.pin < 0) {
-    return c.json({ error: "header wajib: name, username, pin (plus opsional class, gender, nisn)" }, 400);
-  }
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null) as null | { students: Array<{ name?: string; class?: string; nisn?: string; username?: string; pin?: string; gender?: string }> };
+  const list = body?.students ?? [];
+  if (list.length === 0) return c.json({ error: "Tidak ada siswa di file." }, 400);
+  if (list.length > 300) return c.json({ error: "Maksimal 300 siswa sekali impor." }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const result = await withTenant(
-    sql, { schoolId: s.sid, role: s.role, userId: s.uid },
-    async (tx) => {
-      const classes = await tx`select id, name from classes`;
-      const classMap = new Map<string, string>();
-      for (const row of classes as unknown as Array<{ id: string; name: string }>) classMap.set(row.name, row.id);
-      const ok: string[] = []; const fail: { row: number; error: string }[] = [];
-      for (let i = 1; i < rows.length; i++) {
-        const r = rows[i]; if (r.length === 1 && r[0] === "") continue;
-        const name = r[idx.name]?.trim(); const username = r[idx.username]?.trim();
-        const pin = r[idx.pin]?.trim();
-        const className = idx.class >= 0 ? r[idx.class]?.trim() : "";
-        const gender = idx.gender >= 0 ? r[idx.gender]?.trim().toUpperCase() : "";
-        const nisn = idx.nisn >= 0 ? r[idx.nisn]?.trim() : "";
-        if (!name || !username || !pin) { fail.push({ row: i + 1, error: "name/username/pin kosong" }); continue; }
-        if (!/^\d{4,8}$/.test(pin)) { fail.push({ row: i + 1, error: "pin bukan 4-8 digit" }); continue; }
-        if (gender && gender !== "L" && gender !== "P") { fail.push({ row: i + 1, error: "gender harus L/P" }); continue; }
-        const classId = className ? classMap.get(className) : null;
-        if (className && !classId) { fail.push({ row: i + 1, error: `kelas '${className}' tidak ada` }); continue; }
-        try {
-          const pin_hash = await hashPin(pin);
-          const ins = await tx`insert into students
-            (school_id, class_id, name, username, gender, nisn, pin_hash)
-            values (${s.sid}, ${classId ?? null}, ${name}, ${username},
-                    ${gender || null}, ${nisn || null}, ${pin_hash})
-            returning id`;
-          ok.push((ins[0] as { id: string }).id);
-        } catch (e) {
-          fail.push({ row: i + 1, error: (e as Error).message.slice(0, 120) });
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const classes = new Map<string, string>();
+    for (const r of await tx`select id, name from classes` as unknown as Array<{ id: string; name: string }>) classes.set(r.name.trim().toLowerCase(), r.id);
+    const created: Array<{ name: string; class: string; username: string; pin: string }> = [];
+    const fail: Array<{ row: number; error: string }> = [];
+    const newClasses: string[] = [];
+    const taken = new Set<string>();
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i], row = i + 2;
+      const name = String(r.name ?? "").trim(), cls = String(r.class ?? "").trim();
+      if (!name) { fail.push({ row, error: "nama kosong" }); continue; }
+      const pin = String(r.pin ?? "").trim() || newPin();
+      if (!/^\d{4,8}$/.test(pin)) { fail.push({ row, error: "PIN harus 4–8 angka" }); continue; }
+      const g = String(r.gender ?? "").trim().toUpperCase().charAt(0);
+      let classId: string | null = null;
+      if (cls) {
+        classId = classes.get(cls.toLowerCase()) ?? null;
+        if (!classId) {
+          const ins = await tx`insert into classes (school_id, name, grade, year) values (${s.sid}, ${cls}, ${gradeOf(cls)}, ${schoolYear()}) returning id`;
+          classId = (ins[0] as { id: string }).id; classes.set(cls.toLowerCase(), classId); newClasses.push(cls);
         }
       }
-      return { ok: ok.length, fail };
-    },
-  );
+      try {
+        const username = String(r.username ?? "").trim().toLowerCase() || await newUsername(tx, name, taken);
+        taken.add(username);
+        await tx`insert into students (school_id, class_id, name, username, gender, nisn, pin_hash)
+          values (${s.sid}, ${classId}, ${name}, ${username}, ${g === "L" || g === "P" ? g : null}, ${String(r.nisn ?? "").trim() || null}, ${await hashPin(pin)})`;
+        created.push({ name, class: cls, username, pin });
+      } catch (e) { fail.push({ row, error: (e as Error).message.includes("duplicate") ? "username sudah dipakai" : (e as Error).message.slice(0, 100) }); }
+    }
+    await audit(tx, actorFromSession(s), "student.import", "student", null, { ok: created.length, fail: fail.length, classes: newClasses });
+    return { ok: created.length, created, fail, newClasses };
+  });
   return c.json(result);
 });
+
+const newPin = () => String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
+
+// "7A" → 7, "X-IPA-1" → 10, "XII" → 12; selain itu kosong.
+function gradeOf(cls: string): number | null {
+  const d = cls.match(/^\s*(\d{1,2})/); if (d) { const n = +d[1]; return n >= 1 && n <= 12 ? n : null; }
+  const r = cls.toUpperCase().match(/^\s*(XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)\b/);
+  return r ? ({ I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10, XI: 11, XII: 12 } as Record<string, number>)[r[1]] : null;
+}
+
+// Username dari nama ("Andi Saputra" → "andi.saputra"), unik di semua sekolah
+// karena siswa masuk tanpa kode sekolah.
+async function newUsername(tx: postgres.TransactionSql, name: string, taken: Set<string>): Promise<string> {
+  const base = name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9 ]/g, "").trim().split(/\s+/).slice(0, 2).join(".").slice(0, 24) || "siswa";
+  for (let n = 1; n < 200; n++) {
+    const u = n === 1 ? base : `${base}${n}`;
+    if (taken.has(u)) continue;
+    const hit = await tx`select 1 from find_students_by_username(${u}) limit 1`;
+    if (hit.length === 0) return u;
+  }
+  return `${base}${Date.now() % 100000}`;
+}
 
 // Parser CSV minimal: dukung quoting standar (RFC 4180), newline di dalam quote.
 function parseCsv(text: string): string[][] {
@@ -711,7 +732,7 @@ api.post("/api/sessions/:sid/unlock", async (c) => {
   const sessionId = c.req.param("sid");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
-    const u = await tx`update exam_sessions set status = 'active', violation_count = 0,
+    const u = await tx`update exam_sessions set status = 'active', violation_count = 0, unlock_code = null, unlock_tries = 0,
        deadline_at = greatest(deadline_at, now() + interval '15 minutes')
        where id = ${sessionId} and status = 'locked' returning id, deadline_at`;
     if (u.length) await audit(tx, actorFromSession(s), "session.unlock", "session", sessionId);
@@ -1199,7 +1220,7 @@ api.post("/api/questions/bulk", async (c) => {
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const cats = new Map<string, string>();
     for (const r of await tx`select id, name from categories` as unknown as Array<{ id: string; name: string }>) cats.set(r.name.toLowerCase(), r.id);
-    let ok = 0; const fail: Array<{ row: number; error: string }> = [];
+    let ok = 0; const ids: string[] = []; const fail: Array<{ row: number; error: string }> = [];
     for (let i = 0; i < body.questions.length; i++) {
       const row = { ...body.questions[i] };
       const cname = typeof row.category_name === "string" ? row.category_name.trim() : "";
@@ -1215,12 +1236,13 @@ api.post("/api/questions/bulk", async (c) => {
       if ("error" in q) { fail.push({ row: Number(row.row ?? i + 2), error: q.error }); continue; }
       const ins = await tx`insert into questions (school_id, author_id, type, content, points, category_id)
         values (${s.sid}, ${s.uid}, ${q.type}, ${q.content as unknown as string}, ${q.points}, ${q.categoryId}) returning id`;
+      const qid = (ins[0] as { id: string }).id;
       await tx`insert into question_keys (question_id, school_id, answer_key, rubric)
-        values (${(ins[0] as { id: string }).id}, ${s.sid}, ${q.answer_key as unknown as string}, ${q.rubric})`;
-      ok++;
+        values (${qid}, ${s.sid}, ${q.answer_key as unknown as string}, ${q.rubric})`;
+      ok++; ids.push(qid);
     }
     await audit(tx, actorFromSession(s), "question.bulk", "question", null, { ok, fail: fail.length });
-    return { ok, fail };
+    return { ok, ids, fail };
   });
   return c.json(result);
 });
@@ -1552,7 +1574,7 @@ api.get("/api/exams/:id/live", async (c) => {
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select es.id as session_id, es.status, es.started_at, es.last_seen_at,
-              es.deadline_at, es.violation_count,
+              es.deadline_at, es.violation_count, case when es.status = 'locked' then es.unlock_code end as unlock_code,
               st.name as student_name, st.username, c.name as class_name,
               (select count(*) from answers a where a.session_id = es.id) as answered,
               coalesce(jsonb_array_length(

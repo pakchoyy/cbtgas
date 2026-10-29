@@ -5,7 +5,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, UI_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA } from "./ui";
+import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, UI_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -14,8 +14,13 @@ export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>(
 // Navigasi staf: lima tujuan utama (juga navbar bawah di HP). Halaman lain
 // dijangkau dari Pengaturan supaya menu tetap pendek.
 const NAV: Array<[string, string, string]> = [
-  ["/app", "Dashboard", "M4 4h7v9H4zM13 4h7v5h-7zM13 11h7v9h-7zM4 15h7v5H4z"], ["/app/questions", "Bank soal", "M5 4h11l3 3v13H5zM9 10h6M9 14h6"], ["/app/exams", "Ujian", "M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"], ["/app/students", "Siswa", "M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 11a3 3 0 1 0 0-6M22 21v-1a5 5 0 0 0-4-4.9"], ["/app/settings", "Pengaturan", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"],
+  ["/app", "Dashboard", "M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z"],
+  ["/app/questions", "Bank soal", "M2 4h7a3 3 0 0 1 3 3v14a2 2 0 0 0-2-2H2zM22 4h-7a3 3 0 0 0-3 3v14a2 2 0 0 1 2-2h8z"],
+  ["/app/exams", "Ujian", "M9 2h6v4H9zM16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M9 14l2 2 4-4"],
+  ["/app/students", "Siswa", "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"],
+  ["/app/settings", "Pengaturan", "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"],
 ];
+const AI_SOAL = "https://bantuguruyuk.web.id/soal";
 const MOON = "M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z";
 const icon = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 
@@ -28,7 +33,7 @@ const sidebar = (role: string) => `
   </span>
 </header>
 <nav class="bnav" aria-label="Menu utama">
-  ${NAV.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span>${label}</span></a>`).join("")}
+  ${NAV.map(([href, label, d]) => `<a href="${href}"${href === "/app/exams" ? ` class="fab"` : ""}>${icon(d)}<span>${label}</span></a>`).join("")}
 </nav>
 <aside class="side" id="side">
   <a class="brand" href="/app" aria-label="CBT Yuk, beranda">${LOGO}</a>
@@ -37,6 +42,7 @@ const sidebar = (role: string) => `
   </nav>
   <div class="side-foot">
     <button type="button" class="ghost" data-install>${icon("M12 3v12M7 10l5 5 5-5M5 21h14")}<span>Pasang aplikasi</span></button>
+    <a class="ghost" href="/panduan">${icon("M4 19.5V5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2zM8 7h8M8 11h6")}<span>Petunjuk</span></a>
     <a class="ghost" href="/tentang">${icon("M12 8h.01M11 12h1v5h1M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z")}<span>Tentang</span></a>
     <a class="ghost" href="/tentang#kontak">${icon("M4 5h16v14H4zM4 7l8 6 8-6")}<span>Kontak</span></a>
     <a class="ghost fb" href="${FEEDBACK_WA}" target="_blank" rel="noopener">${icon("M4 5h16v11H8l-4 4zM8 9h8M8 12h5")}<span>Kritik &amp; saran</span></a>
@@ -112,7 +118,7 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
   .nav-h { margin: 18px 10px 6px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); }
   .nav a, .side-foot .ghost { display:flex; align-items:center; gap:12px; min-height:42px; padding: 8px 10px; border-radius: 10px;
           color: var(--mut); text-decoration:none; font-size:14px; font-weight:600; width:100%; justify-content:flex-start; }
-  .nav svg, .side-foot svg, .mbar .ghost svg, .bnav svg { width:19px; height:19px; flex:0 0 auto; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .nav svg, .side-foot svg, .mbar .ghost svg, .bnav svg { width:19px; height:19px; flex:0 0 auto; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
   .nav a:hover, .side-foot .ghost:hover { color: var(--fg); background: var(--paper); }
   .nav a[aria-current="page"] { color: var(--brand); background: var(--soft); }
   .side-foot { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 16px; display:flex; flex-direction:column; gap:2px; }
@@ -173,7 +179,12 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
             border-top: 1px solid var(--line); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); }
     .bnav a, .bnav button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap: 3px; min-height: 52px; padding: 4px 2px;
             border: none; background: transparent; box-shadow: none; border-radius: 12px; color: var(--mut); font-size: 11.5px; font-weight: 600; text-decoration: none; white-space: nowrap; }
-    .bnav svg { width: 22px; height: 22px; }
+    .bnav svg { width: 22px; height: 22px; stroke-width: 1.6; }
+    .bnav a.fab svg { width: 28px; height: 28px; padding: 13px; box-sizing: content-box; margin-top: -26px; border-radius: 20px; color: #fff;
+                      background: linear-gradient(140deg, var(--brand), color-mix(in srgb, var(--brand) 65%, #0F172A)); stroke-width: 1.9;
+                      box-shadow: 0 8px 20px color-mix(in srgb, var(--brand) 40%, transparent), 0 0 0 5px var(--surface); }
+    .bnav a.fab { color: var(--brand); font-weight: 700; }
+    .bnav a.fab[aria-current="page"] svg { background: linear-gradient(140deg, var(--brand), color-mix(in srgb, var(--brand) 65%, #0F172A)); width: 28px; height: 28px; padding: 13px; }
     .bnav a[aria-current="page"] { color: var(--brand); }
     .bnav a[aria-current="page"] svg { background: var(--soft); border-radius: 999px; padding: 3px 12px; width: 48px; height: 28px; box-sizing: border-box; }
     body.app main { padding-bottom: 96px; }
@@ -251,11 +262,112 @@ ${UI_JS}
 </body>
 </html>`;
 
-// Tahun ajar berjalan (Juli–Juni), mis. "2026/2027".
-const schoolYear = () => {
-  const d = new Date(Date.now() + 7 * 3600_000), y = d.getUTCFullYear();
-  return d.getUTCMonth() >= 6 ? `${y}/${y + 1}` : `${y - 1}/${y}`;
-};
+// Pembaca naskah soal Word/PDF di browser (dipakai Bank soal dan wizard ujian).
+// Halaman pemakai harus punya `const L = 'ABCDEF'` dan `let lastText = []`.
+const DOC_PARSER_JS = `
+      // ===== Word / PDF: ambil teks, lalu kenali pola "1. soal / A. pilihan / Jawaban: B" =====
+      const loadJs = (src, test) => test() ? Promise.resolve() : new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('Gagal memuat pembaca file. Periksa koneksi.')); document.head.appendChild(s); });
+      // .docx dibaca langsung (zip + XML) supaya penomoran otomatis Word ikut terbaca:
+      // level 1 jadi "1.", "2.", level berhuruf jadi "A.", "B.".
+      async function docxLines(buf) {
+        await loadJs('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', () => window.JSZip);
+        const zip = await window.JSZip.loadAsync(buf);
+        const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+        const xml = async (name) => { const f = zip.file(name); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
+        const all = (el, tag) => [...el.getElementsByTagNameNS(W, tag)];
+        const at = (el, a) => el ? el.getAttributeNS(W, a) || el.getAttribute('w:' + a) : null;
+        const docX = await xml('word/document.xml'); if (!docX) throw new Error('Bukan file Word (.docx) yang valid.');
+        const numX = await xml('word/numbering.xml'), stX = await xml('word/styles.xml');
+        const fmt = {};
+        if (numX) {
+          const abs = {};
+          all(numX, 'abstractNum').forEach((a) => { const m = {}; all(a, 'lvl').forEach((l) => { m[at(l, 'ilvl')] = at(all(l, 'numFmt')[0], 'val'); }); abs[at(a, 'abstractNumId')] = m; });
+          all(numX, 'num').forEach((n) => { fmt[at(n, 'numId')] = abs[at(all(n, 'abstractNumId')[0], 'val')] || {}; });
+        }
+        const styleNum = {};
+        if (stX) all(stX, 'style').forEach((st) => { const np = all(st, 'numPr')[0]; if (np) styleNum[at(st, 'styleId')] = [at(all(np, 'numId')[0], 'val'), at(all(np, 'ilvl')[0], 'val') || '0']; });
+        const cnt = {}, out = [];
+        for (const p of all(docX, 'p')) {
+          const text = all(p, 't').map((t) => t.textContent).join('');
+          let numId = null, ilvl = '0';
+          const np = all(p, 'numPr')[0];
+          if (np) { numId = at(all(np, 'numId')[0], 'val'); ilvl = at(all(np, 'ilvl')[0], 'val') || '0'; }
+          if (!numId) { const ps = all(p, 'pStyle')[0]; const sn = ps && styleNum[at(ps, 'val')]; if (sn) { numId = sn[0]; if (!np) ilvl = sn[1]; } }
+          let pre = '';
+          if (numId && numId !== '0' && text.trim()) {
+            const c = cnt[numId] = cnt[numId] || {}; c[ilvl] = (c[ilvl] || 0) + 1;
+            Object.keys(c).forEach((k) => { if (+k > +ilvl) c[k] = 0; });
+            const f = (fmt[numId] || {})[ilvl] || (ilvl === '0' ? 'decimal' : 'lowerLetter');
+            pre = /letter/i.test(f) ? L[(c[ilvl] - 1) % 6] + '. ' : f === 'bullet' || f === 'none' ? '' : c[ilvl] + '. ';
+          }
+          out.push(pre + text);
+        }
+        return out;
+      }
+      async function pdfLines(buf) {
+        const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+        await loadJs(base + 'pdf.min.js', () => window.pdfjsLib);
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = base + 'pdf.worker.min.js';
+        const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+        const out = [];
+        for (let n = 1; n <= pdf.numPages; n++) {
+          const items = (await (await pdf.getPage(n)).getTextContent()).items.filter((it) => it.str.trim());
+          let y = null, line = '';
+          for (const it of items) {
+            const iy = Math.round(it.transform[5]);
+            if (y !== null && Math.abs(iy - y) > 3) { out.push(line); line = ''; }
+            line += (line && !line.endsWith(' ') && !it.str.startsWith(' ') ? ' ' : '') + it.str; y = iy;
+          }
+          if (line) out.push(line);
+        }
+        return out;
+      }
+      function parseLines(raw) {
+        let lines = raw.join('\\n').replace(/[\\r\\u200b\\ufeff]/g, '').split('\\n').map((l) => l.replace(/\\s+/g, ' ').trim()).filter(Boolean);
+        lastText = lines;
+        // Pilihan sebaris ("A. 3  B. 4  C. 5", juga menempel di baris soal) dipecah per baris.
+        lines = lines.flatMap((l) => {
+          const lower = /^\\(?[a-e]\\s*[.)]\\s/.test(l) && /\\s\\(?[b-e]\\s*[.)]\\s/.test(l);
+          const upper = (l.match(/(^|\\s)\\(?[A-E]\\s*[.)]\\s/g) || []).length >= 2;
+          return lower ? l.split(/\\s+(?=\\(?[b-e]\\s*[.)]\\s)/) : upper ? l.split(/\\s+(?=\\(?[A-E]\\s*[.)]\\s)/) : [l];
+        });
+        // Kunci jawaban di akhir dokumen: "Kunci Jawaban" lalu "1. B 2. C ...".
+        const keyMap = {};
+        const ki = lines.findIndex((l) => /^kunci(\\s+jawaban)?\\s*:?\\s*$/i.test(l) || /^kunci(\\s+jawaban)?\\s*:?\\s*1\\s*[.)\\-:]/i.test(l));
+        if (ki >= 0) {
+          const tail = lines.splice(ki).join(' ').replace(/^kunci(\\s+jawaban)?\\s*:?/i, ' ');
+          for (const m of tail.matchAll(/(\\d+)\\s*[.)\\-:=]?\\s*([A-Ea-e](?:\\s*,\\s*[A-Ea-e])*|benar|salah)\\b/gi)) keyMap[+m[1]] = m[2];
+        }
+        const qs = []; let cur = null;
+        for (const l of lines) {
+          let m;
+          if ((m = l.match(/^(?:no\\.?|nomor|soal)?\\s*(\\d{1,3})\\s*[.):\\-](?:\\s+(.*)|$)/i))) {
+            m[2] = m[2] || '';
+            cur = { no: +m[1], text: m[2], opts: [], ans: '' }; qs.push(cur); continue;
+          }
+          if (!cur) continue;
+          if ((m = l.match(/^\\(?([A-Ea-e])\\s*[.):]\\s+(.+)$/))) { cur.opts.push(m[2]); continue; }
+          if ((m = l.match(/^(jawaban|kunci|jawab|jwb|ans)\\s*[:=]\\s*(.+)$/i))) { cur.ans = m[2].trim(); continue; }
+          if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text = (cur.text + ' ' + l).trim();
+        }
+        return qs.map((c, j) => {
+          const ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').trim();
+          const q = { row: j + 1, text: c.text.trim(), points: 1 };
+          if (c.opts.length >= 2) {
+            const letters = ans.toUpperCase().split(/[\\s,;]+/).filter((x) => /^[A-E]$/.test(x)).map((x) => L.indexOf(x));
+            q.options = c.opts;
+            if (!letters.length) { q.type = 'pg'; return [q, 'Kunci jawaban belum ada']; }
+            if (letters.some((x) => x >= c.opts.length)) { q.type = 'pg'; return [q, 'Kunci di luar pilihan']; }
+            if (letters.length > 1) { q.type = 'pgk_centang'; q.correct_indexes = letters; } else { q.type = 'pg'; q.correct = letters[0]; }
+            return [q, ''];
+          }
+          if (/^(benar|salah)$/i.test(ans)) { q.type = 'benar_salah'; q.correct = /^benar$/i.test(ans); return [q, '']; }
+          if (ans) { q.type = 'isian'; q.accepted = ans.split('|').map((x) => x.trim()).filter(Boolean); return [q, '']; }
+          q.type = 'uraian'; return [q, ''];
+        });
+      }
+`;
+
 const googleIcon = `<svg class="g" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.6 32.9 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.1-11.3-7.5l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.6l6.2 5.2C41.1 36 44 30.5 44 24c0-1.3-.1-2.3-.4-3.5z"/></svg>`;
 const googleBtn = (mode: "login" | "register", label: string) => `
 <a class="btn primary" href="/auth/google/start?mode=${mode}">
@@ -433,6 +545,44 @@ pages.get("/syarat", (c) => c.html(legalPage("Syarat Layanan", `
   <p><a href="mailto:${CONTACT}">${CONTACT}</a></p>
 `)));
 
+// Petunjuk pemakaian singkat untuk guru dan siswa.
+pages.get("/panduan", (c) => {
+  const step = (n: number, t: string, d: string, href = "", cta = "") => `<li><span class="pn">${n}</span><div><b>${t}</b><p>${d}</p>${href ? `<a class="btn" href="${href}">${cta}</a>` : ""}</div></li>`;
+  return c.html(base("Petunjuk", `
+    <style>
+      .pg { max-width: 760px; margin: 0 auto; }
+      .pg ol { list-style: none; padding: 0; margin: 0; }
+      .pg li { display:flex; gap: 14px; padding: 16px 0; border-top: 1px solid var(--line); } .pg li:first-child { border-top: none; }
+      .pg .pn { width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto; display:grid; place-items:center; font-weight: 800; background: var(--soft); color: var(--brand); }
+      .pg li p { margin: 2px 0 8px; color: var(--mut); } .pg li .btn { min-height: 38px; padding: 6px 14px; font-size: 13.5px; }
+      .faq details { border-top: 1px solid var(--line); padding: 12px 0; } .faq summary { font-weight: 700; cursor: pointer; } .faq p { color: var(--mut); margin: 8px 0 0; }
+    </style>
+    <div class="pg">
+      <div style="padding:20px 0"><a class="brand" href="/">${LOGO}</a></div>
+      <h1>Petunjuk CBT Yuk</h1>
+      <p class="sub">Lima langkah dari nol sampai nilai keluar.</p>
+      <section class="card"><h2>Untuk guru & admin</h2><ol>
+        ${step(1, "Buat kelas dan masukkan siswa", "Menu Siswa → Impor dari Excel. Cukup isi Nama dan Kelas. Kelas, username, dan PIN dibuat otomatis; unduh kartu loginnya untuk dibagikan.", "/app/students", "Buka Siswa")}
+        ${step(2, "Isi bank soal", "Tulis soal langsung, upload naskah Word/PDF, tambahkan contoh soal siap pakai, atau buat soal dengan AI.", "/app/questions", "Buka Bank soal")}
+        ${step(3, "Buat ujian", "Tombol Ujian di tengah → pilih kelas, pilih kategori soal, lalu buka sekarang atau jadwalkan.", "/app/exams/new", "Buat ujian")}
+        ${step(4, "Awasi saat ujian", "Buka ujian → Pantau. Lihat siapa yang sedang mengerjakan, tambah waktu, dan bacakan kode buka bila siswa terkunci karena pelanggaran.")}
+        ${step(5, "Lihat nilai", "Nilai pilihan ganda, isian, dan menjodohkan keluar otomatis. Soal uraian dinilai dari halaman ujian.")}
+      </ol></section>
+      <section class="card"><h2>Untuk siswa</h2><ol>
+        ${step(1, "Masuk", "Buka alamat sekolah, pilih Masuk → Saya siswa, isi username dan PIN dari guru.", "/s/login", "Halaman masuk siswa")}
+        ${step(2, "Mulai ujian", "Pilih ujian, periksa data, tekan Mulai. Ujian berjalan dalam layar penuh.")}
+        ${step(3, "Kerjakan & kumpulkan", "Tandai Ragu-ragu bila belum yakin. Tombol Selesai ada di soal terakhir; ujian bisa dikumpulkan setelah semua soal dijawab. Waktu habis = terkumpul otomatis.")}
+      </ol></section>
+      <section class="card faq"><h2>Pertanyaan umum</h2>
+        <details><summary>Siswa terkunci saat ujian?</summary><p>Itu karena keluar layar penuh atau pindah aplikasi berkali-kali. Pengawas melihat kode buka 6 angka di halaman Pantau; siswa memasukkannya dan bisa lanjut. Hitungan pelanggaran mulai dari 0 lagi.</p></details>
+        <details><summary>Siswa lupa PIN?</summary><p>Siswa tekan "Lupa PIN" di halaman masuk. Guru menyetujuinya di Pengaturan → Reset PIN siswa.</p></details>
+        <details><summary>Bisa dipasang seperti aplikasi?</summary><p>Bisa. Buka menu ☰ → Pasang aplikasi.</p></details>
+      </section>
+      <p class="muted" style="text-align:center">Masih bingung? <a href="${FEEDBACK_WA}" target="_blank" rel="noopener">Tanya lewat WhatsApp</a></p>
+    </div>
+  `, { nav: false }));
+});
+
 // Tentang & kontak (publik).
 pages.get("/tentang", (c) => c.html(base("Tentang", `
   <div style="padding:20px 0"><a class="brand" href="/">${LOGO}</a></div>
@@ -534,7 +684,7 @@ pages.get("/app", async (c) => {
     online: number; week_submits: number; avg_score: string };
   const steps: Array<[boolean, string, string, string, string]> = [
     [k.classes > 0, "Buat kelas", "Misalnya X-IPA-1. Siswa dan ujian dikelompokkan per kelas.", "/app/students", "Buat kelas"],
-    [k.students > 0, "Masukkan siswa", "Satu per satu atau sekaligus lewat file CSV. Siswa masuk pakai username + PIN.", "/app/students", "Tambah siswa"],
+    [k.students > 0, "Masukkan siswa", "Satu per satu atau sekaligus dari Excel. Username dan PIN dibuat otomatis.", "/app/students", "Tambah siswa"],
     [k.questions > 0, "Tulis soal", "Pilihan ganda, isian, uraian, menjodohkan, dan lainnya.", "/app/questions", "Buka bank soal"],
     [k.published > 0, "Buat & jadwalkan ujian", "Pilih soal, kelas peserta, durasi, lalu buka ujiannya.", "/app/exams/new", "Buat ujian"],
   ];
@@ -562,10 +712,24 @@ pages.get("/app", async (c) => {
 
   return c.html(base("Dashboard", `
     ${owner ? `<a class="card" href="/owner" style="display:flex;justify-content:space-between;align-items:center;text-decoration:none;color:inherit;padding:14px 20px"><span><b>Pemantauan layanan</b> <span class="muted">· lihat semua sekolah uji coba</span></span><span>→</span></a>` : ""}
-    <div class="page-head">
-      <div><h1>${esc(school?.name ?? "Sekolah")}</h1>
-      <p>Siswa masuk di <b>${esc(new URL(c.req.url).host)}/s/login</b> dengan username dan PIN.</p></div>
-      <a class="btn primary" href="/app/exams/new">+ Buat ujian</a>
+    <section class="dhero">
+      <p class="dh-eyebrow">${new Date(Date.now() + 7 * 3600_000).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })}</p>
+      <h1>${esc(school?.name ?? "Sekolah")}</h1>
+      <p class="dh-sub">Siswa masuk di <b>${esc(new URL(c.req.url).host)}/s/login</b></p>
+      <div class="dh-stats">
+        <div><b><span class="ldot"></span>${k.online}</b><span>sedang ujian</span></div>
+        <div><b>${(live as unknown as L[]).length}</b><span>ujian dibuka</span></div>
+        <div><b>${k.students}</b><span>siswa</span></div>
+        <div><b>${k.avg_score}</b><span>rata-rata nilai</span></div>
+      </div>
+      <a class="btn dh-cta" href="/app/exams/new">+ Buat ujian baru</a>
+    </section>
+
+    <div class="quick">
+      <a href="/app/questions?tulis=1"><span class="qi">${icon("M4 20h4L19 9l-4-4L4 16zM14 6l4 4")}</span><b>Tulis soal</b></a>
+      <a href="/app/questions?upload=1"><span class="qi">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}</span><b>Upload soal</b></a>
+      <a href="${AI_SOAL}" target="_blank" rel="noopener" class="ai"><span class="qi">${icon("M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z")}</span><b>Buat soal dengan AI</b></a>
+      <a href="/app/students"><span class="qi">${icon("M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0")}</span><b>Siswa & kelas</b></a>
     </div>
 
     ${doneCount < steps.length ? `
@@ -576,13 +740,26 @@ pages.get("/app", async (c) => {
       <ol class="steps" style="margin-top:8px">${stepList}</ol>
     </div>` : ""}
 
-    <div class="card stats">
-      <div class="stat live"><b>${k.online}</b><span>Sedang mengerjakan</span></div>
-      <div class="stat"><b>${(live as unknown as L[]).length}</b><span>Ujian dibuka</span></div>
-      <div class="stat"><b>${k.week_submits}</b><span>Dikumpulkan 7 hari</span></div>
-      <div class="stat"><b>${k.avg_score}</b><span>Rata-rata nilai</span></div>
-      <div class="stat"><b>${k.students}</b><span>Siswa aktif</span></div>
-    </div>
+    <style>
+      .dhero { position: relative; overflow: hidden; color: #fff; border-radius: 24px; padding: 22px 22px 20px; margin-bottom: 14px;
+               background: radial-gradient(420px 200px at 100% 0%, rgba(255,255,255,.18), transparent 60%), linear-gradient(140deg, var(--brand), color-mix(in srgb, var(--brand) 60%, #0F172A)); }
+      .dhero h1 { color: #fff; margin: 2px 0 2px; font-size: clamp(22px, 5vw, 30px); }
+      .dh-eyebrow { margin: 0; font-size: 13px; opacity: .8; } .dh-sub { margin: 0; font-size: 13.5px; opacity: .85; } .dh-sub b { color: #fff; }
+      .dh-stats { display:grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 16px 0; }
+      .dh-stats div { background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.2); border-radius: 14px; padding: 10px 12px; }
+      .dh-stats b { display:flex; align-items:center; gap: 6px; font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; } .dh-stats span { font-size: 12px; opacity: .85; }
+      .ldot { width: 8px; height: 8px; border-radius: 50%; background: #4ADE80; box-shadow: 0 0 0 3px rgba(74,222,128,.3); }
+      .dh-cta { width: 100%; min-height: 52px; background: #fff; color: #0F172A; border-color: #fff; font-size: 16px; }
+      @media (max-width: 560px) { .dh-stats { grid-template-columns: 1fr 1fr; } }
+      .quick { display:grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+      .quick a { display:flex; flex-direction:column; align-items:center; gap: 8px; padding: 14px 8px; text-align:center; background: var(--surface); border: 1px solid var(--line);
+                 border-radius: 18px; box-shadow: var(--shadow); color: var(--fg); text-decoration: none; font-size: 13.5px; }
+      main .quick a { color: var(--fg); text-decoration: none; }
+      .quick .qi { width: 44px; height: 44px; border-radius: 14px; background: var(--soft); color: var(--brand); display:grid; place-items:center; }
+      .quick .qi svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+      .quick a.ai .qi { background: linear-gradient(135deg, #A855F7, #EC4899); color: #fff; }
+      @media (max-width: 560px) { .quick { grid-template-columns: 1fr 1fr; } }
+    </style>
 
     <div class="two">
       <div class="card"><h2>Sedang berjalan</h2>${liveRows}</div>
@@ -591,7 +768,7 @@ pages.get("/app", async (c) => {
         ${upcoming || `<p class="muted" style="margin:0">Tidak ada draf atau ujian terjadwal.</p>`}
         <h2 style="margin-top:22px">Unduh</h2>
         <div class="row" style="margin-top:0">
-          <a class="btn" href="/api/reports/scores.csv">Rekap nilai (CSV)</a>
+          <a class="btn" href="/api/reports/scores.csv">Unduh rekap nilai</a>
           ${sess.role === "admin" ? `<a class="btn" href="/api/reports/backup.json">Backup data</a>` : ""}
         </div>
       </div>
@@ -602,268 +779,255 @@ pages.get("/app", async (c) => {
 pages.get("/app/students", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
-
+  const kelas = c.req.query("kelas") ?? "";
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const [classes, students] = await withTenant(
-    sql,
-    { schoolId: sess.sid, role: sess.role, userId: sess.uid },
-    async (tx) => Promise.all([
-      tx`select id, name, grade, year from classes order by year desc, grade nulls last, name`,
-      tx`
-        select s.id, s.name, s.username, s.gender, s.nisn, s.class_id, s.guardian_email,
-               c.name as class_name
-        from students s left join classes c on c.id = s.class_id
-        order by s.name limit 500`,
-    ]),
-  );
-
+  const [classes, students] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => Promise.all([
+    tx`select id, name, grade, year from classes order by year desc, grade nulls last, name`,
+    tx`select s.id, s.name, s.username, s.gender, s.nisn, s.class_id, s.guardian_email
+       from students s order by s.name limit 2000`,
+  ]));
   type Cls = { id: string; name: string; grade: number | null; year: string };
-  type Stu = { id: string; name: string; username: string; gender: "L"|"P"|null; nisn: string|null; class_id: string|null; guardian_email: string|null; class_name: string|null };
-  const classList = classes as unknown as Cls[];
-  const studentList = students as unknown as Stu[];
+  type Stu = { id: string; name: string; username: string; gender: "L" | "P" | null; nisn: string | null; class_id: string | null; guardian_email: string | null };
+  const cl = classes as unknown as Cls[], st = students as unknown as Stu[];
+  const known = new Set(cl.map((x) => x.id));
+  const inClass = (id: string) => st.filter((x) => id === "none" ? !x.class_id || !known.has(x.class_id) : x.class_id === id);
+  const cur = kelas === "none" ? { id: "none", name: "Tanpa kelas", grade: null, year: "" } : cl.find((x) => x.id === kelas);
+  const classOpts = cl.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
+  const hue = (t: string) => [217, 160, 262, 340, 25, 190, 45, 290][[...t].reduce((a, ch) => a + ch.charCodeAt(0), 0) % 8];
+  const folder = (id: string, name: string, sub: string) => `<a class="folder" href="/app/students?kelas=${esc(id)}" style="--h:${hue(name)}"><span class="fi">${esc(name.charAt(0).toUpperCase())}</span><span class="ft"><b>${esc(name)}</b><span>${sub}</span></span><span class="chev">›</span></a>`;
 
-  const classOpts = classList
-    .map((cl) => `<option value="${esc(cl.id)}">${esc(cl.name)}${cl.grade?` (${cl.grade})`:""} · ${esc(cl.year)}</option>`)
-    .join("");
-
-  const classRows = classList
-    .map((cl) => `<div class="lrow">
-      <span class="lt"><b>${esc(cl.name)}</b><span>${cl.grade ? `Kelas ${cl.grade} · ` : ""}${esc(cl.year)}</span></span>
-      <div class="acts"><button type="button" class="ibtn" aria-label="Edit kelas ${esc(cl.name)}" data-edit-class='${esc(JSON.stringify(cl))}'>${ICON_EDIT}</button>
-        <button type="button" class="ibtn del" aria-label="Hapus kelas ${esc(cl.name)}" data-del-class="${esc(cl.id)}">${ICON_DEL}</button></div>
-    </div>`).join("") || `<p class="muted">Belum ada kelas.</p>`;
-
-  const studentRows = studentList.map((s) => `<div class="lrow" data-sid="${esc(s.id)}">
-      <span class="lt"><a href="/app/students/${esc(s.id)}/analytics"><b>${esc(s.name)}</b></a>
-        <span>${esc(s.username)} · ${esc(s.class_name ?? "tanpa kelas")}${s.nisn ? ` · NISN ${esc(s.nisn)}` : ""}</span></span>
-      <div class="acts"><button type="button" class="ibtn" aria-label="Edit ${esc(s.name)}" data-edit-student='${esc(JSON.stringify(s))}'>${ICON_EDIT}</button>
-        <button type="button" class="ibtn del" aria-label="Hapus ${esc(s.name)}" data-del-student="${esc(s.id)}">${ICON_DEL}</button></div>
-    </div>`).join("") || `<p class="muted">Belum ada siswa.</p>`;
-
-  return c.html(base("Siswa & kelas", `
+  const listView = `
     <div class="page-head">
-      <div><h1>Siswa & kelas</h1><p>${studentList.length} siswa di ${classList.length} kelas. Buat kelas dulu, lalu masukkan siswanya.</p></div>
+      <div><h1>Siswa</h1><p>${st.length} siswa di ${cl.length} kelas. Ketuk kelas untuk melihat dan menambah siswanya.</p></div>
+      <div class="row" style="margin:0"><button type="button" id="btnTpl">Template Excel</button><button type="button" class="primary" id="btnImport">Impor dari Excel</button></div>
+    </div>
+    <div class="folders">
+      ${cl.map((x) => folder(x.id, x.name, `${inClass(x.id).length} siswa${x.grade ? ` · Kelas ${x.grade}` : ""} · ${esc(x.year)}`)).join("")}
+      ${inClass("none").length ? folder("none", "Tanpa kelas", `${inClass("none").length} siswa`) : ""}
+      <button type="button" class="folder add" id="newClass"><span class="fi">+</span><span class="ft"><b>Kelas baru</b><span>mis. 7A atau X-IPA-1</span></span></button>
+    </div>
+    <div class="card tip"><b>Cara cepat:</b> unduh <b>Template Excel</b>, isi <b>Nama</b> dan <b>Kelas</b> (NISN boleh kosong), lalu <b>Impor</b>. Kelas dibuat otomatis, username dan PIN dibuat otomatis dan bisa diunduh sebagai kartu login.</div>`;
+
+  const rows = cur ? inClass(cur.id).map((x) => `<div class="lrow">
+      <span class="lt"><a href="/app/students/${esc(x.id)}/analytics"><b>${esc(x.name)}</b></a><span>${esc(x.username)}${x.nisn ? ` · NISN ${esc(x.nisn)}` : ""}</span></span>
+      <div class="acts"><button type="button" class="ibtn" aria-label="Edit ${esc(x.name)}" data-edit-student='${esc(JSON.stringify(x))}'>${ICON_EDIT}</button>
+        <button type="button" class="ibtn del" aria-label="Hapus ${esc(x.name)}" data-del-student="${esc(x.id)}">${ICON_DEL}</button></div>
+    </div>`).join("") : "";
+  const classView = cur ? `
+    <div class="crumb"><a class="btn" href="/app/students" style="min-height:38px;border-radius:999px;padding:6px 12px;font-size:13.5px">‹ Semua kelas</a></div>
+    <div class="page-head">
+      <div><h1>${esc(cur.name)}</h1><p>${inClass(cur.id).length} siswa${cur.grade ? ` · Kelas ${cur.grade}` : ""}${cur.year ? ` · ${esc(cur.year)}` : ""}</p></div>
       <div class="row" style="margin:0">
-        <button type="button" id="btnTpl">Unduh template Excel</button>
-        <button type="button" class="primary" id="btnImport">Impor dari Excel</button>
-        <input type="file" id="fileXls" accept=".xlsx,.xls,.csv" hidden>
+        ${cur.id !== "none" ? `<button type="button" class="ibtn" aria-label="Edit kelas" data-edit-class='${esc(JSON.stringify(cur))}'>${ICON_EDIT}</button>
+        <button type="button" class="ibtn del" aria-label="Hapus kelas" data-del-class="${esc(cur.id)}">${ICON_DEL}</button>` : ""}
+        <button type="button" id="btnImport">Impor Excel</button>
+        <button type="button" class="primary" id="btnAdd">+ Tambah siswa</button>
       </div>
     </div>
+    <div class="card">${rows || `<p class="muted" style="margin:0">Belum ada siswa di kelas ini. Tekan <b>+ Tambah siswa</b> atau <b>Impor Excel</b>.</p>`}<div class="lrows" id="tbstu"></div></div>` : "";
 
-    <div class="card">
-      <div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">Kelas</h2></div>
-      <details class="add" id="dcls" ${classList.length ? "" : "open"}>
-        <summary class="btn primary">+ Tambah kelas</summary>
-        <form id="fcls" class="inline">
-          <input type="hidden" name="cid">
-          <div class="grid">
-            <div><label>Nama kelas</label><input name="name" required placeholder="mis. 7A atau X-IPA-1"></div>
-            <div><label>Tingkat</label><select name="grade"><option value="">—</option>${Array.from({ length: 12 }, (_, i) => i + 1).map((g) => `<option value="${g}">Kelas ${g} · ${g <= 6 ? "SD" : g <= 9 ? "SMP" : "SMA/SMK"}</option>`).join("")}</select></div>
-            <div><label>Tahun ajar</label><input name="year" required value="${schoolYear()}"></div>
-          </div>
-          <div class="row"><button class="primary" type="submit" id="clsSave">Simpan kelas</button><button type="button" id="clsCancel" hidden>Batal edit</button></div>
-          <p class="err" id="errcls" hidden></p>
-        </form>
-      </details>
-      <div class="lrows" id="tbcls">${classRows}</div>
-    </div>
+  return c.html(base("Siswa", `
+    ${cur ? classView : listView}
 
-    <div class="card">
-      <div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">Siswa</h2></div>
-      <details class="add">
-        <summary class="btn primary">+ Tambah siswa</summary>
-        <form id="fstu" class="inline">
-          <div class="grid">
-            <div><label>Nama lengkap</label><input name="name" required placeholder="Andi Saputra"></div>
-            <div><label>Username <span class="muted">(dipakai siswa untuk masuk)</span></label><input name="username" required placeholder="andi.saputra"></div>
-            <div>
-              <label>Kelas</label>
-              <select name="class_id"><option value="">— tidak dipilih —</option>${classOpts}</select>
-            </div>
-            <div>
-              <label>Gender</label>
-              <select name="gender"><option value="">—</option><option value="L">Laki-laki</option><option value="P">Perempuan</option></select>
-            </div>
-            <div><label>NISN</label><input name="nisn" placeholder="opsional"></div>
-            <div><label>PIN awal <span class="muted">(4–8 angka)</span></label><input name="pin" required pattern="\\d{4,8}" inputmode="numeric" placeholder="123456"></div>
-          </div>
-          <div class="row"><button class="primary" type="submit">Simpan siswa</button></div>
-          <p class="muted" style="margin-top:8px">
-            Banyak siswa sekaligus? Unduh <b>template Excel</b> di kanan atas, isi, lalu klik <b>Impor dari Excel</b>.
-          </p>
-          <p class="err" id="errstu" hidden></p>
-        </form>
-      </details>
-      <div class="lrows" id="tbstu">${studentRows}</div>
-    </div>
-
-    <!-- Dialog edit siswa -->
-    <dialog id="dlg">
-      <form id="fedit" method="dialog">
-        <h2>Edit siswa</h2>
-        <input type="hidden" name="id">
-        <label>Nama</label><input name="name" required>
-        <label>Kelas</label>
-        <select name="class_id"><option value="">— tidak dipilih —</option>${classOpts}</select>
-        <label>Gender</label>
-        <select name="gender"><option value="">—</option><option value="L">Laki-laki</option><option value="P">Perempuan</option></select>
-        <label>NISN</label><input name="nisn">
-        <label>Email wali <span class="muted">(untuk rapor otomatis)</span></label>
-        <input name="guardian_email" type="email">
-        <label>PIN baru <span class="muted">(kosongkan jika tidak diganti)</span></label>
-        <input name="pin" pattern="\\d{4,8}">
-        <div class="row">
-          <button class="primary" value="save">Simpan</button>
-          <button type="button" id="sendReport">Kirim rapor ke wali</button>
-          <button value="cancel">Batal</button>
+    <dialog id="dCls" class="sheet" aria-labelledby="dClsT"><form id="fcls" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="sheet-head"><h2 id="dClsT">Kelas baru</h2><button type="button" class="x" data-close aria-label="Tutup">✕</button></div>
+      <div class="sheet-body">
+        <input type="hidden" name="cid">
+        <label>Nama kelas</label><input name="name" required placeholder="mis. 7A atau X-IPA-1">
+        <div class="grid">
+          <div><label>Tingkat</label><select name="grade"><option value="">—</option>${Array.from({ length: 12 }, (_, i) => i + 1).map((g) => `<option value="${g}">Kelas ${g} · ${g <= 6 ? "SD" : g <= 9 ? "SMP" : "SMA/SMK"}</option>`).join("")}</select></div>
+          <div><label>Tahun ajar</label><input name="year" required value="${schoolYear()}"></div>
         </div>
+        <p class="err" id="errcls" hidden></p>
+      </div>
+      <div class="sheet-foot"><button type="button" data-close>Batal</button><span class="spacer"></span><button class="primary" type="submit">Simpan kelas</button></div>
+    </form></dialog>
+
+    <dialog id="dAdd" class="sheet" aria-labelledby="dAddT"><form id="fstu" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="sheet-head"><h2 id="dAddT">Tambah siswa</h2><button type="button" class="x" data-close aria-label="Tutup">✕</button></div>
+      <div class="sheet-body">
+        <label>Nama lengkap</label><input name="name" required placeholder="mis. Andi Saputra">
+        <label>Kelas</label><select name="class_id"><option value="">— tanpa kelas —</option>${classOpts}</select>
+        <label>NISN <span class="muted">(opsional)</span></label><input name="nisn" inputmode="numeric">
+        <details style="margin-top:12px"><summary>Username & PIN <span class="muted">(otomatis bila kosong)</span></summary>
+          <div class="grid"><div><label>Username</label><input name="username" autocapitalize="none" placeholder="otomatis dari nama"></div>
+          <div><label>PIN</label><input name="pin" inputmode="numeric" pattern="\\d{4,8}" placeholder="otomatis 6 angka"></div></div>
+        </details>
+        <p class="err" id="errstu" hidden></p>
+      </div>
+      <div class="sheet-foot"><button type="button" data-close>Batal</button><span class="spacer"></span><button class="primary" type="submit">Simpan siswa</button></div>
+    </form></dialog>
+
+    <dialog id="dlg" class="sheet" aria-labelledby="dlgT"><form id="fedit" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="sheet-head"><h2 id="dlgT">Edit siswa</h2><button type="button" class="x" data-close aria-label="Tutup">✕</button></div>
+      <div class="sheet-body">
+        <input type="hidden" name="sid">
+        <label>Nama</label><input name="name" required>
+        <label>Kelas</label><select name="class_id"><option value="">— tanpa kelas —</option>${classOpts}</select>
+        <div class="grid">
+          <div><label>Jenis kelamin</label><select name="gender"><option value="">—</option><option value="L">Laki-laki</option><option value="P">Perempuan</option></select></div>
+          <div><label>NISN</label><input name="nisn"></div>
+        </div>
+        <label>Email wali <span class="muted">(untuk rapor)</span></label><input name="guardian_email" type="email">
+        <label>PIN baru <span class="muted">(kosongkan jika tidak diganti)</span></label><input name="pin" inputmode="numeric" pattern="\\d{4,8}">
         <p class="err" id="erredit" hidden></p>
-      </form>
+      </div>
+      <div class="sheet-foot"><button type="button" id="sendReport">Kirim rapor</button><span class="spacer"></span><button class="primary" type="submit">Simpan</button></div>
+    </form></dialog>
+
+    <dialog id="dCred" class="sheet" aria-labelledby="dCredT">
+      <div class="sheet-head"><h2 id="dCredT">Akun login siswa</h2><button type="button" class="x" data-close aria-label="Tutup">✕</button></div>
+      <div class="sheet-body">
+        <p class="err" id="credWarn" style="margin-top:4px">Simpan sekarang. PIN hanya tampil sekali ini.</p>
+        <div id="credList"></div>
+      </div>
+      <div class="sheet-foot"><button type="button" data-close>Tutup</button><span class="spacer"></span><button type="button" class="primary" id="credDl">Unduh kartu login (Excel)</button></div>
     </dialog>
+    <input type="file" id="fileXls" accept=".xlsx,.xls,.csv" hidden>
 
+    <style>
+      .tip { background: var(--soft); border-color: transparent; box-shadow: none; font-size: 14.5px; }
+      .cred { width: 100%; font-size: 14px; } .cred td, .cred th { padding: 8px 6px; } .cred td.pin { font: 700 15px ui-monospace, Menlo, monospace; letter-spacing: .08em; }
+      main a.folder { text-decoration: none; }
+    </style>
     <script>
-      const $ = (q, r=document) => r.querySelector(q);
-      const dlg = $('#dlg'), fedit = $('#fedit'), erredit = $('#erredit');
-
+      const $ = (q) => document.querySelector(q);
+      const CUR = ${JSON.stringify(cur ? cur.id : "")};
       async function send(url, method, body) {
-        const r = await fetch(url, {
-          method, credentials: 'same-origin',
-          headers: body ? { 'Content-Type': 'application/json' } : undefined,
-          body: body ? JSON.stringify(body) : undefined,
-        });
-        if (r.ok) return r.status === 204 ? null : r.json();
-        const j = await r.json().catch(() => ({ error: 'HTTP ' + r.status }));
-        throw new Error(j.error || 'HTTP ' + r.status);
+        const r = await fetch(url, { method, credentials: 'same-origin', headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
+        const j = r.status === 204 ? null : await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error((j && j.error) || 'HTTP ' + r.status);
+        return j;
       }
+      document.addEventListener('click', (e) => { const x = e.target.closest('[data-close]'); if (x) x.closest('dialog').close(); });
 
-      $('#fcls').addEventListener('submit', async (e) => {
+      // Kelas
+      const fcls = $('#fcls');
+      $('#newClass')?.addEventListener('click', () => { fcls.reset(); fcls.cid.value = ''; $('#dClsT').textContent = 'Kelas baru'; $('#errcls').hidden = true; $('#dCls').showModal(); });
+      document.querySelector('[data-edit-class]')?.addEventListener('click', (e) => {
+        const c = JSON.parse(e.currentTarget.getAttribute('data-edit-class'));
+        fcls.cid.value = c.id; fcls.name.value = c.name; fcls.grade.value = c.grade ?? ''; fcls.year.value = c.year;
+        $('#dClsT').textContent = 'Edit kelas'; $('#errcls').hidden = true; $('#dCls').showModal();
+      });
+      fcls.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const err = $('#errcls'); err.hidden = true;
-        const d = Object.fromEntries(new FormData(e.target));
-        if (d.grade === '') d.grade = null; else d.grade = +d.grade;
-        const id = d.cid; delete d.cid;
+        const d = Object.fromEntries(new FormData(fcls)); d.grade = d.grade === '' ? null : +d.grade; const id = d.cid; delete d.cid;
         try {
-          await send(id ? '/api/classes/' + id : '/api/classes', id ? 'PATCH' : 'POST', d);
-          toast(id ? 'Kelas diperbarui.' : 'Kelas dibuat. Sekarang tambahkan siswanya.', 'ok'); softReload();
-        }
-        catch (x) { err.textContent = x.message; err.hidden = false; }
+          const r = await send(id ? '/api/classes/' + id : '/api/classes', id ? 'PATCH' : 'POST', d);
+          $('#dCls').close();
+          if (id) { toast('Kelas diperbarui.', 'ok'); softReload(); } else { toast('Kelas dibuat. Tambahkan siswanya.', 'ok'); location.href = '/app/students?kelas=' + r.id; }
+        } catch (x) { $('#errcls').textContent = x.message; $('#errcls').hidden = false; }
+      });
+      document.querySelector('[data-del-class]')?.addEventListener('click', async (e) => {
+        if (!(await ask('Hapus kelas ini? Siswanya tetap ada, tapi jadi tanpa kelas.'))) return;
+        try { await send('/api/classes/' + e.currentTarget.getAttribute('data-del-class'), 'DELETE'); toast('Kelas dihapus.', 'ok'); location.href = '/app/students'; } catch (x) { toast(x.message, 'err'); }
       });
 
-      $('#clsCancel').addEventListener('click', () => { $('#fcls').reset(); $('#fcls').cid.value = ''; $('#clsSave').textContent = 'Simpan kelas'; $('#clsCancel').hidden = true; });
-      $('#tbcls').addEventListener('click', async (e) => {
-        const ed = e.target.closest('[data-edit-class]');
+      // Akun login (username + PIN) yang baru dibuat
+      let creds = [];
+      function showCreds(list) {
+        creds = list;
+        $('#credList').innerHTML = '<table class="cred"><thead><tr><th>Nama</th><th>Username</th><th>PIN</th></tr></thead><tbody>' +
+          list.map((c) => '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.username) + '</td><td class="pin">' + esc(c.pin) + '</td></tr>').join('') + '</tbody></table>';
+        $('#dCred').showModal();
+      }
+      $('#dCred').addEventListener('close', () => softReload());
+      $('#credDl').addEventListener('click', async () => {
+        const X = await loadXlsx();
+        const ws = X.utils.aoa_to_sheet([['Nama', 'Kelas', 'Username', 'PIN', 'Alamat masuk']].concat(creds.map((c) => [c.name, c.class || '', c.username, c.pin, location.host + '/s/login'])));
+        ws['!cols'] = [{ wch: 26 }, { wch: 12 }, { wch: 20 }, { wch: 10 }, { wch: 26 }];
+        const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'Akun siswa'); X.writeFile(wb, 'akun-siswa-cbt-yuk.xlsx');
+      });
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+      // Tambah siswa
+      const fstu = $('#fstu');
+      $('#btnAdd')?.addEventListener('click', () => { fstu.reset(); if (CUR && CUR !== 'none') fstu.class_id.value = CUR; $('#errstu').hidden = true; $('#dAdd').showModal(); fstu.name.focus(); });
+      fstu.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const d = Object.fromEntries(new FormData(fstu));
+        for (const k of ['class_id', 'nisn', 'username', 'pin']) if (d[k] === '') delete d[k];
+        try {
+          const r = await send('/api/students', 'POST', d);
+          $('#dAdd').close();
+          showCreds([{ name: r.name, class: fstu.class_id.selectedOptions[0]?.textContent || '', username: r.username, pin: r.pin }]);
+        } catch (x) { $('#errstu').textContent = x.message; $('#errstu').hidden = false; }
+      });
+
+      // Edit / hapus siswa
+      const fedit = $('#fedit');
+      document.addEventListener('click', async (e) => {
+        const del = e.target.closest('[data-del-student]');
+        if (del) {
+          if (!(await ask('Hapus siswa ini? Riwayat ujiannya ikut terhapus.'))) return;
+          try { await send('/api/students/' + del.getAttribute('data-del-student'), 'DELETE'); toast('Siswa dihapus.', 'ok'); softReload(); } catch (x) { toast(x.message, 'err'); }
+          return;
+        }
+        const ed = e.target.closest('[data-edit-student]');
         if (ed) {
-          const c = JSON.parse(ed.getAttribute('data-edit-class')), f = $('#fcls');
-          f.cid.value = c.id; f.name.value = c.name; f.grade.value = c.grade ?? ''; f.year.value = c.year;
-          $('#dcls').open = true; $('#clsSave').textContent = 'Simpan perubahan'; $('#clsCancel').hidden = false; f.name.focus();
-          return;
-        }
-        const id = e.target.closest('[data-del-class]')?.getAttribute('data-del-class'); if (!id) return;
-        if (!(await ask('Hapus kelas ini? Siswa yang terdaftar akan jadi tidak berkelas.'))) return;
-        try { await send('/api/classes/' + id, 'DELETE'); softReload(); }
-        catch (x) { alert(x.message); }
-      });
-
-      $('#fstu').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const err = $('#errstu'); err.hidden = true;
-        const d = Object.fromEntries(new FormData(e.target));
-        for (const k of ['class_id','gender','nisn']) if (d[k] === '') d[k] = null;
-        try { await send('/api/students', 'POST', d); toast('Siswa ditambahkan.', 'ok'); softReload(); }
-        catch (x) { err.textContent = x.message; err.hidden = false; }
-      });
-
-      $('#tbstu').addEventListener('click', async (e) => {
-        const delId = e.target.closest('[data-del-student]')?.getAttribute('data-del-student');
-        if (delId) {
-          if (!(await ask('Hapus siswa ini?'))) return;
-          try { await send('/api/students/' + delId, 'DELETE'); softReload(); }
-          catch (x) { alert(x.message); }
-          return;
-        }
-        const editJson = e.target.closest('[data-edit-student]')?.getAttribute('data-edit-student');
-        if (editJson) {
-          const s = JSON.parse(editJson);
-          erredit.hidden = true;
-          fedit.id.value = s.id; fedit.name.value = s.name;
-          fedit.class_id.value = s.class_id || ''; fedit.gender.value = s.gender || '';
-          fedit.nisn.value = s.nisn || ''; fedit.pin.value = '';
-          fedit.guardian_email.value = s.guardian_email || '';
-          dlg.showModal();
+          const s = JSON.parse(ed.getAttribute('data-edit-student'));
+          fedit.sid.value = s.id; fedit.name.value = s.name; fedit.class_id.value = s.class_id || ''; fedit.gender.value = s.gender || '';
+          fedit.nisn.value = s.nisn || ''; fedit.guardian_email.value = s.guardian_email || ''; fedit.pin.value = '';
+          $('#erredit').hidden = true; $('#dlg').showModal();
         }
       });
-
-      // Impor Excel: baca di browser (SheetJS), petakan judul kolom bahasa
-      // Indonesia/Inggris ke format yang diterima /api/students/import.
-      const XLSX_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-      const loadXlsx = () => window.XLSX ? Promise.resolve(window.XLSX) : new Promise((ok, no) => {
-        const sc = document.createElement('script'); sc.src = XLSX_SRC; sc.onload = () => ok(window.XLSX); sc.onerror = () => no(new Error('Gagal memuat pembaca Excel. Periksa koneksi.'));
-        document.head.appendChild(sc);
-      });
-      const COLS = { name: ['nama', 'nama lengkap', 'name'], username: ['username', 'user', 'nama pengguna'], class: ['kelas', 'class'],
-        gender: ['jk', 'jenis kelamin', 'gender', 'l/p'], nisn: ['nisn'], pin: ['pin', 'password', 'kata sandi'] };
-      // Muat pembaca Excel di latar belakang supaya tombol langsung bereaksi.
-      (window.requestIdleCallback || ((f) => setTimeout(f, 1500)))(() => loadXlsx().catch(() => {}));
-      $('#btnTpl').addEventListener('click', async (ev) => {
-        const btn = ev.currentTarget, label = btn.textContent; btn.disabled = true; btn.textContent = 'Menyiapkan…';
-        const X = await loadXlsx().finally(() => { btn.disabled = false; btn.textContent = label; });
-        const ws = X.utils.aoa_to_sheet([['Nama', 'Username', 'Kelas', 'JK', 'NISN', 'PIN'],
-          ['Andi Saputra', 'andi.saputra', 'X-IPA-1', 'L', '0012345678', '123456'],
-          ['Siti Aminah', 'siti.aminah', 'X-IPA-1', 'P', '', '654321']]);
-        ws['!cols'] = [{ wch: 24 }, { wch: 18 }, { wch: 12 }, { wch: 5 }, { wch: 14 }, { wch: 10 }];
-        const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'Siswa');
-        X.writeFile(wb, 'template-siswa-cbt-yuk.xlsx');
-      });
-      $('#btnImport').addEventListener('click', () => $('#fileXls').click());
-      $('#fileXls').addEventListener('change', async (e) => {
-        const file = e.target.files[0]; e.target.value = ''; if (!file) return;
-        try {
-          const X = await loadXlsx();
-          const wb = X.read(await file.arrayBuffer(), { type: 'array' });
-          const rows = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
-          if (rows.length < 2) throw new Error('File kosong.');
-          const head = rows[0].map((h) => String(h).trim().toLowerCase());
-          const idx = {}; for (const [k, names] of Object.entries(COLS)) idx[k] = head.findIndex((h) => names.includes(h));
-          if (idx.name < 0 || idx.username < 0 || idx.pin < 0) throw new Error('Kolom wajib: Nama, Username, PIN. Pakai template agar aman.');
-          const q = (v) => '"' + String(v ?? '').trim().replace(/"/g, '""') + '"';
-          const keys = Object.keys(COLS);
-          const csv = [keys.join(',')].concat(rows.slice(1).filter((r) => r.some((v) => String(v).trim()))
-            .map((r) => keys.map((k) => q(idx[k] >= 0 ? r[idx[k]] : '')).join(','))).join('\\n');
-          const r = await fetch('/api/students/import', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'text/csv' }, body: csv });
-          const j = await r.json().catch(() => ({ error: 'HTTP ' + r.status }));
-          if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
-          let msg = j.ok + ' siswa berhasil diimpor.';
-          if (j.fail && j.fail.length) msg += '\\n' + j.fail.length + ' baris gagal:\\n' + j.fail.slice(0, 10).map((x) => '  baris ' + x.row + ': ' + x.error).join('\\n');
-          alert(msg); softReload();
-        } catch (x) { alert('Impor gagal: ' + x.message); }
-      });
-
       fedit.addEventListener('submit', async (e) => {
-        if (fedit.returnValue === 'cancel') return;
         e.preventDefault();
-        erredit.hidden = true;
-        const d = Object.fromEntries(new FormData(fedit));
-        const id = d.id; delete d.id;
-        for (const k of ['class_id','gender','nisn']) if (d[k] === '') d[k] = null;
+        const d = Object.fromEntries(new FormData(fedit)); const id = d.sid; delete d.sid;
+        for (const k of ['class_id', 'gender', 'nisn']) if (d[k] === '') d[k] = null;
         if (!d.pin) delete d.pin;
-        const guardian = d.guardian_email || null;
-        delete d.guardian_email;
+        const guardian = d.guardian_email || null; delete d.guardian_email;
         try {
           await send('/api/students/' + id, 'PATCH', d);
           await send('/api/students/' + id + '/guardian', 'PATCH', { email: guardian });
-          dlg.close(); softReload();
-        } catch (x) { erredit.textContent = x.message; erredit.hidden = false; }
+          $('#dlg').close(); toast('Data siswa tersimpan.', 'ok'); softReload();
+        } catch (x) { $('#erredit').textContent = x.message; $('#erredit').hidden = false; }
       });
-      document.getElementById('sendReport').addEventListener('click', async () => {
-        const id = fedit.id.value;
+      $('#sendReport').addEventListener('click', async () => {
+        try { const r = await send('/api/students/' + fedit.sid.value + '/send-report', 'POST'); toast(r.skipped ? 'Email belum aktif di server.' : 'Rapor dikirim ke ' + r.to, r.skipped ? 'info' : 'ok'); }
+        catch (x) { toast(x.message, 'err'); }
+      });
+
+      // Excel: template (Nama, Kelas, NISN) dan impor
+      const loadXlsx = () => window.XLSX ? Promise.resolve(window.XLSX) : new Promise((ok, no) => {
+        const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        sc.onload = () => ok(window.XLSX); sc.onerror = () => no(new Error('Gagal memuat pembaca Excel. Periksa koneksi.')); document.head.appendChild(sc);
+      });
+      (window.requestIdleCallback || ((f) => setTimeout(f, 1500)))(() => loadXlsx().catch(() => {}));
+      $('#btnTpl')?.addEventListener('click', async () => {
+        const X = await loadXlsx();
+        const ws = X.utils.aoa_to_sheet([['Nama', 'Kelas', 'NISN'], ['Andi Saputra', '7A', ''], ['Siti Aminah', '7A', '0012345678'], ['Budi Hartono', '7B', '']]);
+        ws['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 14 }];
+        const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'Siswa'); X.writeFile(wb, 'template-siswa-cbt-yuk.xlsx');
+      });
+      const COLS = { name: ['nama', 'nama lengkap', 'nama siswa', 'name'], class: ['kelas', 'class', 'rombel'], nisn: ['nisn', 'nis'],
+        username: ['username'], pin: ['pin'], gender: ['jk', 'l/p', 'jenis kelamin', 'gender'] };
+      $('#btnImport')?.addEventListener('click', () => $('#fileXls').click());
+      $('#fileXls').addEventListener('change', async (e) => {
+        const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+        toast('Membaca ' + f.name + '…');
         try {
-          const r = await send('/api/students/' + id + '/send-report', 'POST');
-          alert(r.skipped ? 'Email ter-skip (RESEND_API_KEY belum di-set)' : 'Rapor dikirim ke ' + r.to);
-        } catch (x) { erredit.textContent = x.message; erredit.hidden = false; }
+          const X = await loadXlsx();
+          const wb = X.read(await f.arrayBuffer(), { type: 'array' });
+          const rows = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
+          const head = (rows[0] || []).map((h) => String(h).trim().toLowerCase());
+          const idx = {}; for (const [k, names] of Object.entries(COLS)) idx[k] = head.findIndex((h) => names.includes(h));
+          if (idx.name < 0) throw new Error('Kolom "Nama" tidak ditemukan. Pakai Template Excel.');
+          const curName = CUR && CUR !== 'none' ? document.querySelector('h1').textContent : '';
+          const students = rows.slice(1).filter((r) => String(r[idx.name] || '').trim()).map((r) => {
+            const o = {}; for (const k of Object.keys(COLS)) if (idx[k] >= 0) o[k] = String(r[idx[k]] ?? '').trim();
+            if (!o.class && curName) o.class = curName; return o;
+          });
+          const j = await send('/api/students/import', 'POST', { students });
+          if (j.newClasses.length) toast('Kelas baru dibuat: ' + j.newClasses.join(', '), 'ok');
+          if (j.fail.length) toast(j.fail.length + ' baris gagal: ' + j.fail.slice(0, 4).map((x) => 'baris ' + x.row + ' (' + x.error + ')').join(', '), 'err');
+          if (j.created.length) showCreds(j.created); else softReload();
+        } catch (x) { toast('Impor gagal: ' + x.message, 'err'); }
       });
     </script>
   `, { role: sess.role }));
 });
+
 
 // ===== Pengelolaan ujian =====
 
@@ -1239,6 +1403,14 @@ pages.get("/app/exams/new", async (c) => {
 
       <section class="card wstep" data-s="3" hidden>
         <h2>Pilih soal</h2>
+        <p class="muted" style="margin-top:-6px">Ketuk kartu untuk memakai semua soal di kategori itu. Bisa lebih dari satu.</p>
+        <div class="folders" id="catCards"></div>
+        <div class="wupl">
+          <label class="btn">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}Upload Word/PDF jadi soal<input type="file" id="wDoc" accept=".docx,.pdf" hidden></label>
+          <a class="btn ai" href="${AI_SOAL}" target="_blank" rel="noopener">${icon("M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z")}Buat soal dengan AI</a>
+        </div>
+        <p class="pickcount" id="qCount2"></p>
+        <details id="manual"><summary>Pilih soal satu per satu</summary>
         <div class="wbar">
           <input id="qSearch" type="search" placeholder="Cari soal…" aria-label="Cari soal">
           <select id="qCat" aria-label="Kategori"><option value="">Semua kategori</option></select>
@@ -1249,7 +1421,7 @@ pages.get("/app/exams/new", async (c) => {
           <span class="muted" id="qCount" style="margin-left:auto"></span>
         </div>
         <div class="pick" id="qList"></div>
-        <p class="muted">Belum ada soalnya? <a href="/app/questions" target="_blank" rel="noopener">Tulis di bank soal</a> (tab baru), lalu muat ulang halaman ini.</p>
+        </details>
       </section>
 
       <section class="card wstep" data-s="4" hidden>
@@ -1263,15 +1435,13 @@ pages.get("/app/exams/new", async (c) => {
           <div><label>Mulai</label><input name="starts_at" type="datetime-local"></div>
           <div><label>Berakhir</label><input name="ends_at" type="datetime-local"></div>
         </div>
-        <div class="row" style="margin-top:4px">
-          <label><input type="checkbox" name="shuffle_questions"> Acak urutan soal</label>
-          <label><input type="checkbox" name="shuffle_options"> Acak pilihan jawaban</label>
-        </div>
+        <h3 style="margin:18px 0 0">Aturan ujian</h3>
+        <label class="sw-row"><span><b>Acak urutan soal</b><small>Tiap siswa mendapat urutan berbeda</small></span><input type="checkbox" class="switch" name="shuffle_questions" checked></label>
+        <label class="sw-row"><span><b>Acak pilihan jawaban</b><small>Huruf A–E berbeda tiap siswa</small></span><input type="checkbox" class="switch" name="shuffle_options" checked></label>
+        <label class="sw-row"><span><b>Kunci bila siswa curang</b><small>Setelah <input name="lock_after_violations" type="number" min="1" max="20" value="3" style="width:64px;min-height:36px;padding:4px 8px;display:inline-block"> kali keluar layar/pindah aplikasi, siswa minta kode buka ke pengawas</small></span><input type="checkbox" class="switch" id="acSw" checked></label>
+        <input type="hidden" name="anticheat_level" value="warn">
         <details style="margin-top:12px"><summary>Pengaturan lanjutan</summary>
           <div class="grid">
-            <div><label>Anti-curang</label>
-              <select name="anticheat_level"><option value="log">Catat saja</option><option value="warn" selected>Beri peringatan</option><option value="lock">Kunci otomatis</option></select></div>
-            <div><label>Kunci setelah <span class="muted">(pelanggaran)</span></label><input name="lock_after_violations" type="number" min="1" value="3"></div>
             <div><label>Soal per siswa <span class="muted">(0 = semua)</span></label><input name="questions_per_session" type="number" min="0" value="0"></div>
             <div><label>Penalti salah <span class="muted">(0–1)</span></label><input name="wrong_penalty" type="number" min="0" max="1" step="0.05" value="0"></div>
             <div><label>Rangkaian <span class="muted">(opsional)</span></label><select name="group_id"><option value="">— tanpa rangkaian —</option></select></div>
@@ -1309,6 +1479,16 @@ pages.get("/app/exams/new", async (c) => {
       .cls:has(input:checked) { border-color:var(--ink); background:color-mix(in srgb, var(--pencil) 14%, transparent); }
       .cls small { margin-left:auto; color:var(--mut); font-weight:400; }
       .wnav { justify-content:space-between; }
+      .wupl { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0 10px; }
+      .wupl .btn { min-height: 48px; gap: 8px; white-space: normal; line-height: 1.2; text-align: center; margin: 0; font-weight: 600; }
+      .wupl svg { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .wupl .ai { background: linear-gradient(135deg, #A855F7, #EC4899); color: #fff; border-color: transparent; }
+      main .wupl a.ai { color: #fff; text-decoration: none; }
+      .pickcount { font-weight: 700; color: var(--brand); margin: 4px 0 8px; }
+      .folder.on { border-color: var(--brand); background: var(--soft); box-shadow: 0 0 0 2px var(--brand); }
+      .folder .tick { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); flex: 0 0 auto; display:grid; place-items:center; font-size: 14px; font-weight: 800; color: #fff; }
+      .folder.on .tick { background: var(--brand); border-color: var(--brand); }
+      .folder.part .tick { background: color-mix(in srgb, var(--brand) 45%, transparent); border-color: var(--brand); }
       .kchips { display:flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       .kchips button { min-height: 38px; padding: 6px 14px; border-radius: 999px; font-size: 13.5px; }
       .kchips button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
@@ -1343,8 +1523,53 @@ pages.get("/app/exams/new", async (c) => {
         qList.innerHTML = v.map((q) => '<label class="qpick"><input type="checkbox" value="' + esc(q.id) + '"' + (pickedQ.has(q.id) ? ' checked' : '') + '><span>' + esc(q.text || '(tanpa teks)') + '<br><span class="muted">' + esc(TYPE[q.type] || q.type) + ' · ' + q.points + ' poin</span></span></label>').join('')
           || '<p class="muted" style="padding:12px">' + (D.questions.length ? 'Tidak ada soal yang cocok.' : 'Bank soal masih kosong.') + '</p>';
         document.getElementById('qCount').textContent = pickedQ.size + ' soal dipilih';
+        if (typeof drawCards === 'function') drawCards();
       }
       qList.addEventListener('change', (e) => { const i = e.target; i.checked ? pickedQ.add(i.value) : pickedQ.delete(i.value); drawQ(); });
+      const L = 'ABCDEF'; let lastText = [];
+      ${DOC_PARSER_JS}
+      const cardsEl = document.getElementById('catCards');
+      function groupsOf() {
+        const known = new Set(D.cats.map((c) => c.id));
+        const g = D.cats.map((c) => ({ id: c.id, name: c.name, qs: D.questions.filter((q) => q.category_id === c.id) })).filter((x) => x.qs.length);
+        const none = D.questions.filter((q) => !q.category_id || !known.has(q.category_id));
+        if (none.length) g.push({ id: '__none', name: 'Tanpa kategori', qs: none });
+        return g;
+      }
+      function drawCards() {
+        const g = groupsOf();
+        cardsEl.innerHTML = g.length ? g.map((x) => {
+          const n = x.qs.filter((q) => pickedQ.has(q.id)).length, all = n === x.qs.length;
+          return '<button type="button" class="folder ' + (all ? 'on' : n ? 'part' : '') + '" data-g="' + x.id + '"><span class="tick">' + (all ? '✓' : n ? '–' : '') + '</span><span class="ft"><b>' + esc(x.name) + '</b><span>' + (n && !all ? n + ' dari ' : '') + x.qs.length + ' soal</span></span></button>';
+        }).join('') : '<p class="muted">Bank soal masih kosong. Upload naskah Word/PDF di bawah, atau <a href="/app/questions" target="_blank" rel="noopener">isi bank soal</a>.</p>';
+        document.getElementById('qCount2').textContent = pickedQ.size ? pickedQ.size + ' soal dipilih' : '';
+      }
+      cardsEl.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-g]'); if (!b) return;
+        const x = groupsOf().find((y) => y.id === b.dataset.g); if (!x) return;
+        const all = x.qs.every((q) => pickedQ.has(q.id));
+        x.qs.forEach((q) => all ? pickedQ.delete(q.id) : pickedQ.add(q.id)); drawQ();
+      });
+      document.getElementById('wDoc').addEventListener('change', async (e) => {
+        const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+        toast('Membaca ' + file.name + '…');
+        try {
+          const buf = await file.arrayBuffer();
+          const lines = /\\.pdf$/i.test(file.name) ? await pdfLines(buf) : await docxLines(buf);
+          const parsed = parseLines(lines); const good = parsed.filter(([, err]) => !err).map(([q]) => q);
+          if (!good.length) { toast('Tidak ada soal yang dikenali. Pastikan soal bernomor (1. 2. 3.) dan pilihan diawali A. B. C.', 'err'); return; }
+          const cat = (f.title.value.trim() || file.name.replace(/\\.[^.]+$/, '')).slice(0, 60);
+          const r = await fetch('/api/questions/bulk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ questions: good.map((q) => ({ ...q, category_name: cat })) }) });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+          const [qs, cats] = await Promise.all([fetch('/api/questions', { credentials: 'same-origin' }).then((x) => x.json()), fetch('/api/categories', { credentials: 'same-origin' }).then((x) => x.json())]);
+          D.questions = qs.map((q) => ({ id: q.id, type: q.type, text: (q.content && q.content.text || '').slice(0, 140), points: q.points, category_id: q.category_id }));
+          D.cats = cats; (j.ids || []).forEach((id) => pickedQ.add(id)); drawQ();
+          toast(j.ok + ' soal dari ' + file.name + ' masuk ke bank soal dan sudah dipilih.' + (parsed.length > good.length ? ' ' + (parsed.length - good.length) + ' soal dilewati (kunci belum ada).' : ''), 'ok');
+        } catch (x) { toast('Gagal membaca file: ' + x.message, 'err'); }
+      });
+      document.getElementById('acSw').addEventListener('change', (e) => { f.anticheat_level.value = e.target.checked ? 'warn' : 'log'; });
       qSearch.addEventListener('input', drawQ); qCat.addEventListener('change', drawQ);
       document.getElementById('qAll').onclick = () => { visible().forEach((q) => pickedQ.add(q.id)); drawQ(); };
       document.getElementById('qNone').onclick = () => { pickedQ.clear(); drawQ(); };
@@ -2716,7 +2941,7 @@ pages.get("/app/exams/:id/live", async (c) => {
             return '<tr><td><b>' + escapeHtml(r.student_name) + '</b><br><span class="muted">' + escapeHtml(r.class_name || '-') + '</span></td>'
               + '<td>' + escapeHtml(r.status) + '</td>'
               + '<td>' + r.answered + '/' + r.total + ' (' + pct + '%)' + bar + '</td>'
-              + '<td>' + vio + '</td>'
+              + '<td>' + vio + (r.unlock_code ? '<br><b style="color:var(--danger)">Kode buka: <span style="font-family:ui-monospace,monospace;letter-spacing:.15em">' + escapeHtml(r.unlock_code) + '</span></b>' : '') + '</td>'
               + '<td>' + dot(r.last_seen_at) + ' ' + timeAgo(r.last_seen_at) + '</td>'
               + '<td><button data-act="chat" data-sid="' + escapeHtml(r.session_id) + '" data-name="' + escapeHtml(r.student_name) + '" style="padding:4px 8px">Chat</button>'
               + (r.status === "active" ? ' <button data-act="extend" data-sid="' + escapeHtml(r.session_id) + '" style="padding:4px 8px" title="Tambah 5 menit">+5 mnt</button> <button data-act="pause" data-sid="' + escapeHtml(r.session_id) + '" style="padding:4px 8px" title="Jeda atau lanjutkan">Jeda</button> <button data-act="submit" data-sid="' + escapeHtml(r.session_id) + '" style="padding:4px 8px" title="Kumpulkan paksa">Kumpulkan</button>' : "")
@@ -2948,10 +3173,16 @@ pages.get("/app/questions", async (c) => {
   return c.html(base("Bank soal", `
     <div class="page-head">
       <div><h1>Bank soal</h1><p id="qsum">Semua soal sekolah Anda. Pakai ulang di ujian mana pun.</p></div>
-      <div class="row" style="margin:0">
-        <button type="button" id="btnUp">Upload soal</button>
-        <button type="button" class="primary" id="btnNew">+ Tulis soal</button>
-      </div>
+    </div>
+    <div class="howbank">
+      <ol><li><b>Kumpulkan soal di sini</b>, dikelompokkan per kategori (mis. IPA Kelas 7).</li>
+        <li><b>Buat ujian</b>, lalu pilih kategori atau soal dari bank ini.</li>
+        <li>Siswa mengerjakan, <b>nilai keluar otomatis</b>.</li></ol>
+    </div>
+    <div class="bankact">
+      <button type="button" class="primary" id="btnNew">${icon("M4 20h4L19 9l-4-4L4 16zM14 6l4 4")}Tulis soal</button>
+      <button type="button" id="btnUp">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}Upload Word/PDF</button>
+      <a class="btn ai" href="${AI_SOAL}" target="_blank" rel="noopener">${icon("M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z")}Buat soal dengan AI</a>
     </div>
     <div class="tabs" role="tablist">
       <button type="button" role="tab" data-tab="mine" aria-selected="true">Soal saya <b id="nMine"></b></button>
@@ -3037,6 +3268,14 @@ Jawaban: B
     </dialog>
 
     <style>
+      .howbank { background: var(--soft); border-radius: 16px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
+      .howbank ol { margin: 0; padding-left: 20px; } .howbank li { margin: 3px 0; }
+      .bankact { display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+      .bankact > * { min-height: 48px; gap: 8px; white-space: normal; text-align:center; line-height: 1.2; }
+      .bankact svg { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .bankact .ai { background: linear-gradient(135deg, #A855F7, #EC4899); color: #fff; border-color: transparent; }
+      main .bankact a.ai { color: #fff; text-decoration: none; }
+      @media (max-width: 480px) { .bankact { grid-template-columns: 1fr 1fr; } .bankact .ai { grid-column: 1 / -1; } }
       .tabs { display:flex; gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 14px; }
       .tabs button { flex: 1; border: none; box-shadow: none; background: transparent; border-radius: 10px; min-height: 42px; color: var(--mut); }
       .tabs button[aria-selected="true"] { background: var(--soft); color: var(--brand); }
@@ -3051,17 +3290,6 @@ Jawaban: B
       @media (max-width: 480px) { .qbar { grid-template-columns: minmax(0, 1fr) 130px; } }
       .qc, .qc p, .qc li span { overflow-wrap: anywhere; }
       .qc .katex-display { overflow-x: auto; overflow-y: hidden; }
-      .folders { display:grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-bottom: 18px; }
-      .folder { display:flex; align-items:center; gap: 14px; text-align:left; padding: 14px; min-height: 76px; border-radius: 18px; width: 100%;
-                background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--fg); font-weight: 400; white-space: normal; justify-content:flex-start; }
-      .folder:hover { border-color: hsl(var(--h, 217) 70% 55%); }
-      .folder .fi { width: 46px; height: 46px; border-radius: 14px; flex: 0 0 auto; display:grid; place-items:center; font-weight: 800; font-size: 19px;
-                    background: hsl(var(--h, 217) 85% 95%); color: hsl(var(--h, 217) 65% 40%); }
-      :root[data-theme="dark"] .folder .fi { background: hsl(var(--h, 217) 40% 20%); color: hsl(var(--h, 217) 80% 75%); }
-      .folder .ft { flex: 1; min-width: 0; display:flex; flex-direction:column; } .folder .ft b { font-size: 15.5px; } .folder .ft span { color: var(--mut); font-size: 13px; }
-      .folder .chev { color: var(--mut); font-size: 22px; }
-      .folder.add { border-style: dashed; box-shadow: none; } .folder.add .fi { background: var(--soft); color: var(--brand); }
-      .folder.pack button { min-height: 38px; padding: 6px 14px; font-size: 13.5px; flex: 0 0 auto; }
       h3.sec { margin: 6px 0 8px; font-size: 16px; }
       .crumb { display:flex; align-items:center; gap: 10px; margin: 0 0 12px; }
       .crumb button { min-height: 38px; padding: 6px 12px; font-size: 13.5px; border-radius: 999px; }
@@ -3321,6 +3549,7 @@ Jawaban: B
         ed.showModal(); $('eText').focus();
       }
       $('btnNew').onclick = () => openEd(null);
+      { const qp = new URLSearchParams(location.search); if (qp.has('tulis')) openEd(null); if (qp.has('upload')) setTimeout(() => $('btnUp').click(), 0); }
       $('qlist').addEventListener('click', async (e) => {
         if (e.target.dataset.ed) openEd(e.target.dataset.ed);
         if (e.target.dataset.del) {
@@ -3367,107 +3596,7 @@ Jawaban: B
       const up = $('up'); let rows = []; let lastText = [];
       $('btnUp').onclick = () => { $('upPrev').innerHTML = ''; $('upGo').disabled = true; up.showModal(); };
       ['upX', 'upCancel'].forEach((id) => $(id).onclick = () => up.close());
-      // ===== Word / PDF: ambil teks, lalu kenali pola "1. soal / A. pilihan / Jawaban: B" =====
-      const loadJs = (src, test) => test() ? Promise.resolve() : new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('Gagal memuat pembaca file. Periksa koneksi.')); document.head.appendChild(s); });
-      // .docx dibaca langsung (zip + XML) supaya penomoran otomatis Word ikut terbaca:
-      // level 1 jadi "1.", "2.", level berhuruf jadi "A.", "B.".
-      async function docxLines(buf) {
-        await loadJs('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', () => window.JSZip);
-        const zip = await window.JSZip.loadAsync(buf);
-        const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-        const xml = async (name) => { const f = zip.file(name); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
-        const all = (el, tag) => [...el.getElementsByTagNameNS(W, tag)];
-        const at = (el, a) => el ? el.getAttributeNS(W, a) || el.getAttribute('w:' + a) : null;
-        const docX = await xml('word/document.xml'); if (!docX) throw new Error('Bukan file Word (.docx) yang valid.');
-        const numX = await xml('word/numbering.xml'), stX = await xml('word/styles.xml');
-        const fmt = {};
-        if (numX) {
-          const abs = {};
-          all(numX, 'abstractNum').forEach((a) => { const m = {}; all(a, 'lvl').forEach((l) => { m[at(l, 'ilvl')] = at(all(l, 'numFmt')[0], 'val'); }); abs[at(a, 'abstractNumId')] = m; });
-          all(numX, 'num').forEach((n) => { fmt[at(n, 'numId')] = abs[at(all(n, 'abstractNumId')[0], 'val')] || {}; });
-        }
-        const styleNum = {};
-        if (stX) all(stX, 'style').forEach((st) => { const np = all(st, 'numPr')[0]; if (np) styleNum[at(st, 'styleId')] = [at(all(np, 'numId')[0], 'val'), at(all(np, 'ilvl')[0], 'val') || '0']; });
-        const cnt = {}, out = [];
-        for (const p of all(docX, 'p')) {
-          const text = all(p, 't').map((t) => t.textContent).join('');
-          let numId = null, ilvl = '0';
-          const np = all(p, 'numPr')[0];
-          if (np) { numId = at(all(np, 'numId')[0], 'val'); ilvl = at(all(np, 'ilvl')[0], 'val') || '0'; }
-          if (!numId) { const ps = all(p, 'pStyle')[0]; const sn = ps && styleNum[at(ps, 'val')]; if (sn) { numId = sn[0]; if (!np) ilvl = sn[1]; } }
-          let pre = '';
-          if (numId && numId !== '0' && text.trim()) {
-            const c = cnt[numId] = cnt[numId] || {}; c[ilvl] = (c[ilvl] || 0) + 1;
-            Object.keys(c).forEach((k) => { if (+k > +ilvl) c[k] = 0; });
-            const f = (fmt[numId] || {})[ilvl] || (ilvl === '0' ? 'decimal' : 'lowerLetter');
-            pre = /letter/i.test(f) ? L[(c[ilvl] - 1) % 6] + '. ' : f === 'bullet' || f === 'none' ? '' : c[ilvl] + '. ';
-          }
-          out.push(pre + text);
-        }
-        return out;
-      }
-      async function pdfLines(buf) {
-        const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
-        await loadJs(base + 'pdf.min.js', () => window.pdfjsLib);
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = base + 'pdf.worker.min.js';
-        const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
-        const out = [];
-        for (let n = 1; n <= pdf.numPages; n++) {
-          const items = (await (await pdf.getPage(n)).getTextContent()).items.filter((it) => it.str.trim());
-          let y = null, line = '';
-          for (const it of items) {
-            const iy = Math.round(it.transform[5]);
-            if (y !== null && Math.abs(iy - y) > 3) { out.push(line); line = ''; }
-            line += (line && !line.endsWith(' ') && !it.str.startsWith(' ') ? ' ' : '') + it.str; y = iy;
-          }
-          if (line) out.push(line);
-        }
-        return out;
-      }
-      function parseLines(raw) {
-        let lines = raw.join('\\n').replace(/[\\r\\u200b\\ufeff]/g, '').split('\\n').map((l) => l.replace(/\\s+/g, ' ').trim()).filter(Boolean);
-        lastText = lines;
-        // Pilihan sebaris ("A. 3  B. 4  C. 5", juga menempel di baris soal) dipecah per baris.
-        lines = lines.flatMap((l) => {
-          const lower = /^\\(?[a-e]\\s*[.)]\\s/.test(l) && /\\s\\(?[b-e]\\s*[.)]\\s/.test(l);
-          const upper = (l.match(/(^|\\s)\\(?[A-E]\\s*[.)]\\s/g) || []).length >= 2;
-          return lower ? l.split(/\\s+(?=\\(?[b-e]\\s*[.)]\\s)/) : upper ? l.split(/\\s+(?=\\(?[A-E]\\s*[.)]\\s)/) : [l];
-        });
-        // Kunci jawaban di akhir dokumen: "Kunci Jawaban" lalu "1. B 2. C ...".
-        const keyMap = {};
-        const ki = lines.findIndex((l) => /^kunci(\\s+jawaban)?\\s*:?\\s*$/i.test(l) || /^kunci(\\s+jawaban)?\\s*:?\\s*1\\s*[.)\\-:]/i.test(l));
-        if (ki >= 0) {
-          const tail = lines.splice(ki).join(' ').replace(/^kunci(\\s+jawaban)?\\s*:?/i, ' ');
-          for (const m of tail.matchAll(/(\\d+)\\s*[.)\\-:=]?\\s*([A-Ea-e](?:\\s*,\\s*[A-Ea-e])*|benar|salah)\\b/gi)) keyMap[+m[1]] = m[2];
-        }
-        const qs = []; let cur = null;
-        for (const l of lines) {
-          let m;
-          if ((m = l.match(/^(?:no\\.?|nomor|soal)?\\s*(\\d{1,3})\\s*[.):\\-](?:\\s+(.*)|$)/i))) {
-            m[2] = m[2] || '';
-            cur = { no: +m[1], text: m[2], opts: [], ans: '' }; qs.push(cur); continue;
-          }
-          if (!cur) continue;
-          if ((m = l.match(/^\\(?([A-Ea-e])\\s*[.):]\\s+(.+)$/))) { cur.opts.push(m[2]); continue; }
-          if ((m = l.match(/^(jawaban|kunci|jawab|jwb|ans)\\s*[:=]\\s*(.+)$/i))) { cur.ans = m[2].trim(); continue; }
-          if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text = (cur.text + ' ' + l).trim();
-        }
-        return qs.map((c, j) => {
-          const ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').trim();
-          const q = { row: j + 1, text: c.text.trim(), points: 1 };
-          if (c.opts.length >= 2) {
-            const letters = ans.toUpperCase().split(/[\\s,;]+/).filter((x) => /^[A-E]$/.test(x)).map((x) => L.indexOf(x));
-            q.options = c.opts;
-            if (!letters.length) { q.type = 'pg'; return [q, 'Kunci jawaban belum ada']; }
-            if (letters.some((x) => x >= c.opts.length)) { q.type = 'pg'; return [q, 'Kunci di luar pilihan']; }
-            if (letters.length > 1) { q.type = 'pgk_centang'; q.correct_indexes = letters; } else { q.type = 'pg'; q.correct = letters[0]; }
-            return [q, ''];
-          }
-          if (/^(benar|salah)$/i.test(ans)) { q.type = 'benar_salah'; q.correct = /^benar$/i.test(ans); return [q, '']; }
-          if (ans) { q.type = 'isian'; q.accepted = ans.split('|').map((x) => x.trim()).filter(Boolean); return [q, '']; }
-          q.type = 'uraian'; return [q, ''];
-        });
-      }
+${DOC_PARSER_JS}
       function showParsed(parsed, unit) {
         rows = parsed.filter(([, err]) => !err).map(([q]) => q);
         const bad = parsed.filter(([, err]) => err);
