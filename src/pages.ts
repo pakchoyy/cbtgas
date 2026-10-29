@@ -5,43 +5,30 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, APP_NAME, BRAND_COLORS } from "./ui";
+import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, APP_NAME, BRAND_COLORS, kindLabel } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
 // Navigasi staf dikelompokkan per pekerjaan. Grup "Admin" hanya untuk admin;
 // halamannya tetap menjaga hak akses sendiri.
+// Navigasi staf. "Utama" = yang paling sering dipakai (juga jadi navbar bawah
+// di HP); sisanya di "Lainnya". Grup admin hanya untuk admin.
 const NAV_GROUPS: Array<{ title: string; admin?: boolean; items: Array<[string, string, string]> }> = [
-  { title: "", items: [["/app", "Beranda", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"]] },
-  { title: "Ujian", items: [
-    ["/app/exams", "Ujian", "M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"],
-    ["/app/exam-groups", "Rangkaian", "M4 6h16M4 12h16M4 18h10"],
-  ] },
-  { title: "Soal", items: [
-    ["/app/questions", "Bank soal", "M5 4h11l3 3v13H5zM9 10h6M9 14h6"],
-    ["/app/passages", "Bacaan", "M4 5h7a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H4zM20 5h-7"],
-    ["/app/categories", "Kategori", "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"],
-  ] },
-  { title: "Siswa", items: [
-    ["/app/students", "Siswa & kelas", "M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 11a3 3 0 1 0 0-6M22 21v-1a5 5 0 0 0-4-4.9"],
-    ["/app/pin-resets", "Reset PIN", "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4"],
-  ] },
-  { title: "Admin", admin: true, items: [
-    ["/app/users", "Staf", "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"],
-    ["/app/shared-banks", "Bank publik", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"],
-    ["/app/bulk", "Operasi massal", "M4 7h16M4 12h16M4 17h16"],
-    ["/app/audit", "Audit log", "M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"],
-    ["/app/restore", "Backup & pulihkan", "M4 12a8 8 0 1 0 3-6.2M4 4v4h4"],
-    ["/app/settings", "Pengaturan", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"],
-  ] },
+  { title: "", items: [["/app", "Beranda", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"], ["/app/exams", "Ujian", "M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"], ["/app/questions", "Bank soal", "M5 4h11l3 3v13H5zM9 10h6M9 14h6"], ["/app/students", "Siswa", "M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 11a3 3 0 1 0 0-6M22 21v-1a5 5 0 0 0-4-4.9"]] },
+  { title: "Lainnya", items: [["/app/pin-resets", "Reset PIN", "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4"], ["/app/exam-groups", "Rangkaian", "M4 6h16M4 12h16M4 18h10"], ["/app/categories", "Kategori", "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"], ["/app/passages", "Bacaan", "M4 5h7a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H4zM20 5h-7"]] },
+  { title: "Admin", admin: true, items: [["/app/settings", "Pengaturan", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"], ["/app/users", "Staf", "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"], ["/app/restore", "Backup & pulihkan", "M4 12a8 8 0 1 0 3-6.2M4 4v4h4"], ["/app/audit", "Audit log", "M12 8v4l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"], ["/app/bulk", "Operasi massal", "M4 7h16M4 12h16M4 17h16"], ["/app/shared-banks", "Bank publik", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"]] },
 ];
 const icon = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 
 const sidebar = (role: string) => `
 <header class="mbar">
-  <button type="button" class="ghost" id="navOpen" aria-label="Buka menu" aria-controls="side" aria-expanded="false">${icon("M4 7h16M4 12h16M4 17h16")}</button>
   <a class="brand" href="/app">${LOGO}</a>
+  <button type="button" class="ghost" id="navOpen" aria-label="Buka menu" aria-controls="side" aria-expanded="false">${icon("M4 7h16M4 12h16M4 17h16")}</button>
 </header>
+<nav class="bnav" aria-label="Menu cepat">
+  ${NAV_GROUPS[0].items.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span>${label}</span></a>`).join("")}
+  <button type="button" id="navMore">${icon("M5 12h.01M12 12h.01M19 12h.01")}<span>Lainnya</span></button>
+</nav>
 <aside class="side" id="side">
   <a class="brand" href="/app" aria-label="CBT Yuk, beranda">${LOGO}</a>
   <nav class="nav" aria-label="Utama">
@@ -117,13 +104,13 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
   .nav-h { margin: 18px 10px 6px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); }
   .nav a, .side-foot .ghost { display:flex; align-items:center; gap:12px; min-height:42px; padding: 8px 10px; border-radius: 10px;
           color: var(--mut); text-decoration:none; font-size:14px; font-weight:600; width:100%; justify-content:flex-start; }
-  .nav svg, .side-foot svg, .mbar svg { width:19px; height:19px; flex:0 0 auto; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .nav svg, .side-foot svg, .mbar .ghost svg, .bnav svg { width:19px; height:19px; flex:0 0 auto; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   .nav a:hover, .side-foot .ghost:hover { color: var(--fg); background: var(--paper); }
   .nav a[aria-current="page"] { color: var(--brand); background: var(--soft); }
   .side-foot { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 16px; display:flex; flex-direction:column; gap:2px; }
   .side-foot form { margin:0; }
   .side-foot .ghost { border: none; background: transparent; box-shadow:none; }
-  .mbar { display:none; }
+  .mbar, .bnav { display:none; }
   .scrim { position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 55; }
   .app-foot { color:var(--mut); font-size:12px; text-align:center; margin-top:40px; }
   .app-foot a { color: var(--mut); }
@@ -162,7 +149,18 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
     .mbar { display:flex; align-items:center; gap:6px; position: sticky; top:0; z-index: 40; background: color-mix(in srgb, var(--surface) 88%, transparent);
             backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); padding: 6px 10px; min-height: 58px; }
     .mbar .ghost { color: var(--fg); background:transparent; border:none; min-width:44px; min-height:44px; padding:0; box-shadow:none; }
-    .side { transform: translateX(-100%); transition: transform .2s; box-shadow: 0 0 40px rgba(0,0,0,.3); }
+    .mbar { justify-content: space-between; }
+    .side { inset: 0 0 0 auto; border-right: none; border-left: 1px solid var(--line); transform: translateX(100%); transition: transform .2s; box-shadow: 0 0 40px rgba(0,0,0,.3); }
+    .bnav { display:grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
+            background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border-top: 1px solid var(--line); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); }
+    .bnav a, .bnav button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap: 3px; min-height: 52px; padding: 4px 2px;
+            border: none; background: transparent; box-shadow: none; border-radius: 12px; color: var(--mut); font-size: 11.5px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+    .bnav svg { width: 22px; height: 22px; }
+    .bnav a[aria-current="page"] { color: var(--brand); }
+    .bnav a[aria-current="page"] svg { background: var(--soft); border-radius: 999px; padding: 3px 12px; width: 48px; height: 28px; box-sizing: border-box; }
+    body.app main { padding-bottom: 96px; }
+    body.app .install { bottom: 84px; }
     body.nav-open .side { transform: none; }
     main { padding: 20px 16px 56px; }
     body.public main { padding: 0 16px; }
@@ -184,15 +182,16 @@ ${INSTALL_SHEET}
   (function () {
     const p = location.pathname;
     let best = null;
-    document.querySelectorAll('.nav a').forEach((a) => {
+    document.querySelectorAll('.nav a, .bnav a').forEach((a) => {
       const h = a.getAttribute('href');
       if (p === h || (h !== '/app' && p.startsWith(h))) { if (!best || h.length > best.getAttribute('href').length) best = a; }
     });
-    if (best) best.setAttribute('aria-current', 'page');
+    if (best) document.querySelectorAll('.nav a, .bnav a').forEach((a) => { if (a.getAttribute('href') === best.getAttribute('href')) a.setAttribute('aria-current', 'page'); });
     // Menu laci di HP.
     const openBtn = document.getElementById('navOpen'), scrim = document.getElementById('scrim');
     const setNav = (on) => { document.body.classList.toggle('nav-open', on); if (scrim) scrim.hidden = !on; openBtn?.setAttribute('aria-expanded', String(on)); };
     openBtn?.addEventListener('click', () => setNav(true));
+    document.getElementById('navMore')?.addEventListener('click', () => setNav(true));
     scrim?.addEventListener('click', () => setNav(false));
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setNav(false); });
   })();
@@ -274,6 +273,18 @@ pages.get("/", async (c) => {
       .mock { padding: 26px 0; }
       .mock .chip.c1 { left: -18px; bottom: 4px; } .mock .chip.c2 { right: -14px; top: 4px; }
       .dotg { width:9px; height:9px; border-radius:50%; background: var(--ok); }
+      .lpop { position: relative; }
+      .lpop summary { list-style: none; min-height: 42px; border-radius: 999px; padding: 8px 18px; gap: 8px; }
+      .lpop summary::-webkit-details-marker { display:none; }
+      .lpop summary svg { width: 18px; height: 18px; fill:none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .lpop-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; width: 270px; background: var(--surface); border: 1px solid var(--line);
+                   border-radius: 18px; padding: 8px; box-shadow: 0 20px 50px rgba(15,23,42,.18); }
+      .lpop-menu a { display:flex; gap: 12px; align-items:center; padding: 10px; border-radius: 12px; text-decoration: none; color: var(--fg); }
+      main .lpop-menu a { color: var(--fg); }
+      .lpop-menu a:hover { background: var(--soft); }
+      .lpop-menu .li { width: 40px; height: 40px; border-radius: 12px; background: var(--soft); color: var(--brand); display:grid; place-items:center; flex: 0 0 auto; }
+      .lpop-menu .li svg { width: 22px; height: 22px; fill:none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .lpop-menu b { display:block; font-size: 15px; } .lpop-menu small { color: var(--mut); font-size: 13px; }
       .login { padding: 0 0 36px; }
       .login h2 { font-size: 20px; margin: 0 0 14px; }
       .roles { display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -294,7 +305,14 @@ pages.get("/", async (c) => {
       @media (max-width: 860px) { .hero { grid-template-columns: 1fr; gap: 36px; padding-top: 16px; } .feats { grid-template-columns: 1fr 1fr; } .mock .chip.c1 { left: 8px; } .mock .chip.c2 { right: 8px; } }
       @media (max-width: 480px) { .feats { grid-template-columns: 1fr; } }
     </style>
-    <div class="top"><a class="brand" href="/">${LOGO}</a><a class="btn" href="#masuk" style="min-height:40px">Masuk</a></div>
+    <div class="top"><a class="brand" href="/">${LOGO}</a>
+      <details class="lpop">
+        <summary class="btn primary"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h4v16h-4M10 8l4 4-4 4M14 12H3"/></svg>Masuk</summary>
+        <div class="lpop-menu">
+          <a href="/s/login"><span class="li"><svg viewBox="0 0 24 24"><path d="M12 3L2 8l10 5 10-5zM6 10v5c0 2 3 4 6 4s6-2 6-4v-5"/></svg></span><span><b>Siswa</b><small>Username &amp; PIN dari guru</small></span></a>
+          <a href="/auth/google/start?mode=login"><span class="li"><svg viewBox="0 0 24 24"><path d="M3 5h18v12H3zM8 21h8M12 17v4"/></svg></span><span><b>Guru / admin</b><small>Pakai akun Google</small></span></a>
+        </div>
+      </details></div>
     <section class="hero">
       <div>
         <span class="eyebrow">Gratis dicoba · tanpa instal</span>
@@ -930,7 +948,7 @@ pages.get("/app/exams", async (c) => {
   type Ex = { id: string; title: string; kind: string; duration_minutes: number; status: string; qc: number; cc: number };
   const list = (exams as unknown as Ex[]).map((e) => `<tr>
     <td><a href="/app/exams/${esc(e.id)}">${esc(e.title)}</a></td>
-    <td>${esc(e.kind)}</td>
+    <td>${esc(kindLabel(e.kind))}</td>
     <td>${e.duration_minutes} mnt</td>
     <td>${e.qc} soal</td>
     <td>${e.cc} kelas</td>
@@ -1160,8 +1178,9 @@ pages.get("/app/exams/new", async (c) => {
         <h2>Ujian apa ini?</h2>
         <label>Judul ujian</label><input name="title" placeholder="mis. Ulangan Harian Matematika Bab 3" required>
         <div class="grid">
-          <div><label>Jenis</label>
-            <select name="kind"><option value="harian">Ulangan harian</option><option value="pts_pas">PTS / PAS</option><option value="sumatif">Sumatif</option><option value="tryout">Tryout</option></select></div>
+          <div><label>Jenis ujian <span class="muted">(pilih atau ketik sendiri)</span></label>
+            <input name="kind" list="kinds" value="Ulangan harian" maxlength="60" required>
+            <datalist id="kinds"><option value="Ulangan harian"><option value="Kuis"><option value="PTS"><option value="PAS"><option value="Sumatif"><option value="Asesmen formatif"><option value="Tryout"><option value="Remedial"><option value="Ujian sekolah"></datalist></div>
           <div><label>Durasi pengerjaan <span class="muted">(menit)</span></label><input name="duration_minutes" type="number" min="5" value="60" required></div>
         </div>
       </section>
@@ -1300,7 +1319,7 @@ pages.get("/app/exams/new", async (c) => {
       }
       f.addEventListener('change', () => { if (step === 4) show(4); });
       function check() {
-        if (step === 1) { if (!f.title.value.trim()) return 'Isi judul ujian.'; if (!(+f.duration_minutes.value >= 5)) return 'Durasi minimal 5 menit.'; }
+        if (step === 1) { if (!f.title.value.trim()) return 'Isi judul ujian.'; if (!f.kind.value.trim()) return 'Isi jenis ujian.'; if (!(+f.duration_minutes.value >= 5)) return 'Durasi minimal 5 menit.'; }
         if (step === 2 && chosenClasses().length === 0) return 'Pilih minimal satu kelas.';
         if (step === 3 && pickedQ.size === 0) return 'Pilih minimal satu soal.';
         if (step === 4 && whenVal() === 'sched') {
@@ -1321,7 +1340,7 @@ pages.get("/app/exams/new", async (c) => {
           const when = whenVal(), pen = parseFloat(f.wrong_penalty.value || '0');
           const iso = (v) => v ? new Date(v).toISOString() : null;
           const ex = await call('/api/exams', 'POST', {
-            title: f.title.value.trim(), kind: f.kind.value, duration_minutes: +f.duration_minutes.value,
+            title: f.title.value.trim(), kind: f.kind.value.trim(), duration_minutes: +f.duration_minutes.value,
             starts_at: when === 'sched' ? iso(f.starts_at.value) : null, ends_at: when === 'sched' ? iso(f.ends_at.value) : null,
             shuffle_questions: f.shuffle_questions.checked, shuffle_options: f.shuffle_options.checked,
             anticheat_level: f.anticheat_level.value, lock_after_violations: f.lock_after_violations.value ? +f.lock_after_violations.value : null,
@@ -2855,316 +2874,332 @@ pages.get("/app/questions", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const catFilter = c.req.query("category") ?? "";
-  const [qs, cats, passages] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
-    const qsRows = catFilter
-      ? await tx`select q.id, q.type, q.content - 'image' - 'audio' as content, q.content ? 'image' as has_image, q.points, q.category_id, k.answer_key, k.rubric,
-                        cat.name as category_name
-                 from questions q left join question_keys k on k.question_id = q.id
-                 left join categories cat on cat.id = q.category_id
-                 where q.category_id = ${catFilter}
-                 order by q.created_at desc`
-      : await tx`select q.id, q.type, q.content - 'image' - 'audio' as content, q.content ? 'image' as has_image, q.points, q.category_id, k.answer_key, k.rubric,
-                        cat.name as category_name
-                 from questions q left join question_keys k on k.question_id = q.id
-                 left join categories cat on cat.id = q.category_id
-                 order by q.created_at desc`;
-    const catsRows = await tx`select id, name from categories order by name`;
-    const passagesRows = await tx`select id, title from passages order by title nulls last`;
-    return [qsRows, catsRows, passagesRows] as const;
-  });
-  type Q = {
-    id: string; type: string; points: string;
-    content: { text: string; options?: string[] }; has_image: boolean;
-    answer_key: { index?: number; accepted?: string[]; manual?: boolean } | null;
-    rubric: string | null; category_name: string | null;
-  };
-  type Cat = { id: string; name: string };
-  const catList = cats as unknown as Cat[];
-  const catOpts = catList.map((cl) => `<option value="${esc(cl.id)}" ${cl.id === catFilter ? "selected" : ""}>${esc(cl.name)}</option>`).join("");
-  const catOptsForm = catList.map((cl) => `<option value="${esc(cl.id)}">${esc(cl.name)}</option>`).join("");
-  type Pass = { id: string; title: string | null };
-  const passList = passages as unknown as Pass[];
-  const passOptsForm = passList.map((p) => `<option value="${esc(p.id)}">${esc(p.title ?? "(tanpa judul)")}</option>`).join("");
-  const typeLabel: Record<string, string> = {
-    pg: "Pil. ganda", benar_salah: "Benar/Salah", isian: "Isian", uraian: "Uraian",
-    pgk_centang: "PGK (centang)", menjodohkan: "Menjodohkan",
-  };
-  const list = (qs as unknown as Q[]).map((q) => {
-    let keyInfo = "";
-    if (q.type === "pg" && q.content.options) {
-      keyInfo = `<ol type="A" style="margin:4px 0 0 20px; color:var(--mut); font-size:13px">` +
-        q.content.options.map((o, i) =>
-          `<li ${i === q.answer_key?.index ? "style=font-weight:600" : ""}>${esc(o)}</li>`).join("") + `</ol>`;
-    } else if (q.type === "benar_salah") {
-      keyInfo = `<span class="muted" style="font-size:13px">Jawaban: ${q.answer_key?.index === 0 ? "Benar" : "Salah"}</span>`;
-    } else if (q.type === "isian") {
-      keyInfo = `<span class="muted" style="font-size:13px">Jawaban diterima: ${esc((q.answer_key?.accepted ?? []).join(" | "))}</span>`;
-    } else if (q.type === "uraian") {
-      keyInfo = `<span class="muted" style="font-size:13px">Rubrik: ${esc(q.rubric ?? "(—)")}</span>`;
-    }
-    const catTag = q.category_name ? `<span class="pill" style="background:#2563eb1a;border-color:#2563eb;color:#2563eb">${esc(q.category_name)}</span> ` : "";
-    const img = q.has_image ? ` 🖼` : "";
-    return `<tr>
-      <td>${catTag}<span class="pill">${esc(typeLabel[q.type] ?? q.type)}</span> ${esc(q.content.text)}${img}<br>${keyInfo}</td>
-      <td>${q.points}</td>
-      <td style="text-align:right"><button class="danger" data-del="${esc(q.id)}">Hapus</button></td>
-    </tr>`;
-  }).join("") || `<tr><td colspan="3" class="muted">Bank soal kosong.</td></tr>`;
+  const [qs, cats] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => [
+    await tx`select q.id, q.type, q.content - 'image' - 'audio' - 'html' as content, q.content ? 'image' as has_image,
+                    q.points, q.category_id, k.answer_key
+             from questions q left join question_keys k on k.question_id = q.id
+             order by q.created_at desc limit 1000`,
+    await tx`select id, name from categories order by name`,
+  ] as const);
+  const data = JSON.stringify({ qs, cats, canDelete: sess.role === "admin" }).replace(/</g, "\\u003c");
   return c.html(base("Bank soal", `
-    <div class="card">
-      <h1>Bank soal</h1>
-      <p class="sub"><a href="/app/exams">Ujian</a> · <a href="/app/categories">Kategori</a> · <a href="/app/passages">Bacaan</a></p>
-      <form id="fq">
-        <label>Kategori <span class="muted">(opsional, kelola di /app/categories)</span></label>
-        <select name="category_id"><option value="">— tanpa kategori —</option>${catOptsForm}</select>
-        <label>Bacaan <span class="muted">(opsional; untuk reading comprehension)</span></label>
-        <select name="passage_id"><option value="">— tanpa bacaan —</option>${passOptsForm}</select>
-        <label>Tipe soal</label>
-        <select name="type" id="qtype">
-          <option value="pg">Pilihan ganda</option>
-          <option value="benar_salah">Benar / Salah</option>
-          <option value="isian">Isian singkat</option>
-          <option value="uraian">Uraian (dinilai guru)</option>
-          <option value="pgk_centang">Pilihan Ganda Kompleks (centang beberapa)</option>
-          <option value="menjodohkan">Menjodohkan</option>
-          <option value="simulasi">Simulasi interaktif (HTML+JS)</option>
-          <option value="dinamis_hitung">Hitungan dinamis (nilai acak per siswa)</option>
-        </select>
-        <label>Teks soal <span class="muted">(dukung **tebal**, *miring*, \`kode\`, dan matematika $x^2$ atau $$\\int_0^1 x\\,dx$$)</span></label>
-        <textarea name="text" required rows="3" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
-        <div id="qPreview" style="margin:6px 0 0; padding:8px 10px; border:1px dashed var(--bd); border-radius:6px; font-size:13px; min-height:28px"></div>
-
-        <div id="box_pg">
-          <label>Pilihan (centang jawaban benar)</label>
-          <div class="optrow"><input type="radio" name="correct" value="0"><input name="opt" placeholder="Pilihan A"></div>
-          <div class="optrow"><input type="radio" name="correct" value="1"><input name="opt" placeholder="Pilihan B"></div>
-          <div class="optrow"><input type="radio" name="correct" value="2"><input name="opt" placeholder="Pilihan C (opsional)"></div>
-          <div class="optrow"><input type="radio" name="correct" value="3"><input name="opt" placeholder="Pilihan D (opsional)"></div>
-        </div>
-        <div id="box_bs" hidden>
-          <label>Jawaban benar</label>
-          <select name="bs_correct"><option value="true">Benar</option><option value="false">Salah</option></select>
-        </div>
-        <div id="box_isian" hidden>
-          <label>Jawaban yang diterima <span class="muted">(pisah dengan baris baru; case-insensitive)</span></label>
-          <textarea name="accepted" rows="3" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit" placeholder="Contoh:&#10;jakarta&#10;dki jakarta"></textarea>
-        </div>
-        <div id="box_uraian" hidden>
-          <label>Rubrik <span class="muted">(opsional, dilihat guru saat menilai)</span></label>
-          <textarea name="rubric" rows="3" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
-        </div>
-        <div id="box_pgkc" hidden>
-          <label>Pilihan (centang semua yang benar)</label>
-          <div class="optrow"><input type="checkbox" name="pgkc_correct" value="0"><input name="pgkc_opt" placeholder="Pilihan A"></div>
-          <div class="optrow"><input type="checkbox" name="pgkc_correct" value="1"><input name="pgkc_opt" placeholder="Pilihan B"></div>
-          <div class="optrow"><input type="checkbox" name="pgkc_correct" value="2"><input name="pgkc_opt" placeholder="Pilihan C"></div>
-          <div class="optrow"><input type="checkbox" name="pgkc_correct" value="3"><input name="pgkc_opt" placeholder="Pilihan D"></div>
-          <div class="optrow"><input type="checkbox" name="pgkc_correct" value="4"><input name="pgkc_opt" placeholder="Pilihan E (opsional)"></div>
-        </div>
-        <div id="box_dinamis" hidden>
-          <label>Operator</label>
-          <select name="dyn_op"><option value="+">+ Penjumlahan</option><option value="-">− Pengurangan</option><option value="*">× Perkalian</option><option value="/">÷ Pembagian</option></select>
-          <div class="grid">
-            <div><label>a min</label><input name="dyn_a_min" type="number" value="1"></div>
-            <div><label>a max</label><input name="dyn_a_max" type="number" value="20"></div>
-            <div><label>b min</label><input name="dyn_b_min" type="number" value="1"></div>
-            <div><label>b max</label><input name="dyn_b_max" type="number" value="20"></div>
-          </div>
-          <label>Template <span class="muted">(opsional; <code>{a}</code>, <code>{b}</code>, <code>{op}</code>)</span></label>
-          <input name="dyn_tpl" placeholder="{a} {op} {b} = ?">
-        </div>
-        <div id="box_sim" hidden>
-          <label>HTML + JS simulasi <span class="muted">(dijalankan di iframe sandbox; panggil <code>window.sendAnswer(nilai)</code> untuk simpan jawaban)</span></label>
-          <textarea name="sim_html" rows="6" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font: 12px monospace" placeholder="&lt;button onclick=&quot;sendAnswer('hasil')&quot;&gt;Jalankan&lt;/button&gt;"></textarea>
-          <label>Rubrik penilaian (opsional)</label>
-          <textarea name="sim_rubric" rows="2" style="width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit"></textarea>
-        </div>
-        <div id="box_mjd" hidden>
-          <label>Pasangan <span class="muted">(kiri ↔ kanan; urutan yang Anda tulis = jawaban benar)</span></label>
-          <div class="optrow"><input name="mjd_left" placeholder="Kiri 1"><span class="muted">↔</span><input name="mjd_right" placeholder="Kanan 1"></div>
-          <div class="optrow"><input name="mjd_left" placeholder="Kiri 2"><span class="muted">↔</span><input name="mjd_right" placeholder="Kanan 2"></div>
-          <div class="optrow"><input name="mjd_left" placeholder="Kiri 3"><span class="muted">↔</span><input name="mjd_right" placeholder="Kanan 3"></div>
-          <div class="optrow"><input name="mjd_left" placeholder="Kiri 4 (opsional)"><span class="muted">↔</span><input name="mjd_right" placeholder="Kanan 4 (opsional)"></div>
-          <p class="muted" style="margin-top:4px">Siswa melihat kiri & kanan dalam urutan ini juga, tapi mereka harus memilih pasangan yang benar dari dropdown.</p>
-        </div>
-
-        <label>Gambar <span class="muted">(opsional, max 400 KB; JPG/PNG/WebP)</span></label>
-        <input type="file" id="imgFile" accept="image/*">
-        <div id="imgPrev" style="margin:8px 0"></div>
-
-        <label>Audio <span class="muted">(opsional, max 600 KB; MP3/OGG/WAV)</span></label>
-        <input type="file" id="audFile" accept="audio/*">
-        <div id="audPrev" style="margin:8px 0"></div>
-
-        <label>Branching <span class="muted">(opsional; untuk pg/benar_salah. Format JSON: <code>{"0":"&lt;question_id&gt;"}</code> — jika siswa pilih opsi 0, lompat ke soal itu)</span></label>
-        <input name="branches_json" placeholder='{"0":"qid-tujuan","1":"qid-lain"}'>
-
-        <label>Hint <span class="muted">(opsional; siswa yang pakai hint kehilangan 50% poin soal ini)</span></label>
-        <input name="hint" placeholder="Petunjuk singkat">
-
-        <label>Poin</label>
-        <input name="points" type="number" step="0.5" min="0.5" value="1" required>
-        <div class="row">
-          <button class="primary" type="submit">Tambah soal</button>
-          <button type="button" id="btnImportQ">Import CSV</button>
-          <input type="file" id="fileCsvQ" accept=".csv,text/csv" hidden>
-          <a class="btn" href="/api/questions/export.csv">Export CSV</a>
-        </div>
-        <p class="muted" style="margin-top:8px">
-          CSV: header <code>type,text,options,correct,accepted,rubric,points,category</code>.
-          Pisah pilihan/jawaban dengan <code>|</code>. Tipe: pg, benar_salah, isian, uraian.
-        </p>
-        <p class="err" id="errq" hidden></p>
-      </form>
-    </div>
-    <div class="card">
-      <h2>Daftar</h2>
-      <div class="row" style="margin-bottom:8px">
-        <select id="filterCat" style="max-width:260px">
-          <option value="">Semua kategori</option>
-          ${catOpts}
-        </select>
+    <div class="page-head">
+      <div><h1>Bank soal</h1><p id="qsum">Semua soal sekolah Anda. Pakai ulang di ujian mana pun.</p></div>
+      <div class="row" style="margin:0">
+        <button type="button" id="btnUp">Upload Excel</button>
+        <button type="button" class="primary" id="btnNew">+ Tulis soal</button>
       </div>
-      <table><thead><tr><th>Soal</th><th>Poin</th><th></th></tr></thead>
-        <tbody id="tb">${list}</tbody></table>
     </div>
+    <div class="qbar">
+      <input type="search" id="fq" placeholder="Cari teks soal…" aria-label="Cari soal">
+      <select id="ft" aria-label="Tipe"><option value="">Semua tipe</option></select>
+      <select id="fc" aria-label="Kategori"><option value="">Semua kategori</option></select>
+    </div>
+    <div id="qlist"></div>
+
+    <dialog id="ed" class="sheet" aria-labelledby="edTitle">
+      <form id="ef" method="dialog">
+        <div class="sheet-head"><h2 id="edTitle">Tulis soal</h2><button type="button" class="x" id="edX" aria-label="Tutup">✕</button></div>
+        <div class="sheet-body">
+          <p class="err" id="edWarn" hidden></p>
+          <label>Tipe soal</label>
+          <div class="seg" id="seg"></div>
+          <label for="eText">Pertanyaan</label>
+          <textarea id="eText" rows="4" placeholder="Tulis pertanyaan. Rumus matematika ditulis di antara tanda $, mis. $\\frac{1}{2}$"></textarea>
+          <div class="imgrow">
+            <label class="btn" style="margin:0">Tambah gambar<input type="file" id="eImg" accept="image/*" hidden></label>
+            <img id="eImgPrev" alt="" hidden><button type="button" class="danger" id="eImgDel" hidden>Hapus gambar</button>
+          </div>
+          <div id="eBody"></div>
+          <div class="grid" style="margin-top:4px">
+            <div><label for="ePts">Poin</label><input id="ePts" type="number" min="0" step="0.5" value="1"></div>
+            <div><label for="eCat">Kategori / mapel</label><input id="eCat" list="catList" placeholder="mis. Matematika"><datalist id="catList"></datalist></div>
+          </div>
+        </div>
+        <div class="sheet-foot"><button type="button" id="edCancel">Batal</button><span class="spacer"></span><button type="submit" class="primary" id="edSave">Simpan soal</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="up" class="sheet" aria-labelledby="upTitle">
+      <div class="sheet-head"><h2 id="upTitle">Upload soal dari Excel</h2><button type="button" class="x" id="upX" aria-label="Tutup">✕</button></div>
+      <div class="sheet-body">
+        <ol class="howto">
+          <li><b>Unduh template</b>, isi satu soal per baris.</li>
+          <li>Kolom <b>Tipe</b>: PG, PGK, Benar-Salah, Isian, Uraian, atau Menjodohkan.</li>
+          <li>Kolom <b>Jawaban</b>: huruf untuk PG (B), beberapa huruf untuk PGK (A,C), Benar/Salah, jawaban isian dipisah | , atau pedoman untuk uraian. Menjodohkan: isi A–E dengan "kiri = kanan".</li>
+          <li>Pilih file, lalu periksa pratinjau sebelum disimpan.</li>
+        </ol>
+        <div class="row"><button type="button" id="upTpl">Unduh template</button><label class="btn primary" style="margin:0">Pilih file Excel<input type="file" id="upFile" accept=".xlsx,.xls,.csv" hidden></label></div>
+        <div id="upPrev"></div>
+      </div>
+      <div class="sheet-foot"><button type="button" id="upCancel">Batal</button><span class="spacer"></span><button type="button" class="primary" id="upGo" disabled>Simpan soal</button></div>
+    </dialog>
+
+    <style>
+      .qbar { display:grid; grid-template-columns: 1fr 180px 200px; gap: 8px; margin-bottom: 14px; }
+      @media (max-width: 640px) { .qbar { grid-template-columns: 1fr 1fr; } .qbar input { grid-column: 1 / -1; } }
+      .qc { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; margin-bottom: 10px; box-shadow: var(--shadow); }
+      .qc-top { display:flex; gap: 8px; align-items:center; flex-wrap: wrap; margin-bottom: 8px; }
+      .qc-top .sp { flex: 1; }
+      .qc-top button { min-height: 36px; padding: 4px 12px; font-size: 13px; }
+      .qc p { margin: 0 0 8px; }
+      .qc ul { list-style:none; padding: 0; margin: 0; display:grid; gap: 4px; }
+      .qc li { font-size: 14px; color: var(--mut); display:flex; gap: 8px; }
+      .qc li b { width: 20px; flex: 0 0 auto; }
+      .qc li.ok { color: var(--ok); font-weight: 600; }
+      .tpill { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--soft); color: var(--brand); }
+      .empty-q { text-align:center; padding: 40px 16px; color: var(--mut); background: var(--surface); border: 1.5px dashed var(--line); border-radius: 18px; }
+      dialog.sheet { max-width: 680px; width: calc(100% - 16px); padding: 0; max-height: calc(100dvh - 24px); }
+      dialog.sheet[open] { display:flex; flex-direction:column; }
+      dialog.sheet form { display:flex; flex-direction:column; min-height: 0; flex: 1; }
+      .sheet-head { display:flex; justify-content:space-between; align-items:center; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+      .sheet-head h2 { margin: 0; }
+      .sheet-head .x { min-height: 40px; min-width: 40px; padding: 0; border: none; box-shadow:none; }
+      .sheet-body { padding: 8px 20px 18px; overflow-y: auto; flex: 1; }
+      .sheet-foot { display:flex; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--surface); }
+      .sheet-foot .spacer { flex: 1; }
+      .seg { display:flex; flex-wrap: wrap; gap: 6px; }
+      .seg button { min-height: 38px; padding: 6px 12px; font-size: 13.5px; border-radius: 999px; }
+      .seg button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+      .imgrow { display:flex; gap: 10px; align-items:center; margin-top: 8px; flex-wrap: wrap; }
+      .imgrow img { max-height: 80px; border-radius: 10px; border: 1px solid var(--line); }
+      .orow { display:grid; grid-template-columns: 40px 1fr 40px; gap: 8px; align-items:center; margin: 8px 0; }
+      .orow .mark { width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--line); display:grid; place-items:center; font-weight: 800; cursor:pointer; background: var(--surface); padding: 0; min-height: 0; }
+      .orow .mark[aria-pressed="true"] { background: var(--ok); border-color: var(--ok); color: #fff; }
+      .orow.pgk .mark { border-radius: 10px; }
+      .orow .rm, .mrow .rm { min-height: 40px; padding: 0; border: none; box-shadow: none; color: var(--mut); }
+      .mrow { display:grid; grid-template-columns: 1fr 24px 1fr 40px; gap: 8px; align-items:center; margin: 8px 0; }
+      .hint { font-size: 13px; color: var(--mut); margin: 4px 0 0; }
+      .howto { padding-left: 20px; color: var(--mut); font-size: 14px; } .howto li { margin: 6px 0; }
+      .uprev { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 12px; margin-top: 14px; }
+      .uprev table { margin: 0; font-size: 13px; } .uprev td.bad { color: var(--danger); }
+    </style>
     <script>
-      const $$ = (q) => document.querySelector(q);
-      function showBox() {
-        const t = $$('#qtype').value;
-        const map = { benar_salah: 'bs', pgk_centang: 'pgkc', menjodohkan: 'mjd', simulasi: 'sim', dinamis_hitung: 'dinamis' };
-        const show = map[t] || t;
-        for (const name of ['pg','bs','isian','uraian','pgkc','mjd','sim','dinamis']) $$('#box_'+name).hidden = (name !== show);
+      const D = ${data};
+      const TYPES = [['pg','Pilihan ganda'],['pgk_centang','PG kompleks'],['benar_salah','Benar / Salah'],['isian','Isian singkat'],['uraian','Uraian'],['menjodohkan','Menjodohkan']];
+      const TL = Object.fromEntries(TYPES.concat([['simulasi','Simulasi'],['dinamis_hitung','Hitung dinamis'],['pgk_kategori','Kategori']]));
+      const CAT = Object.fromEntries(D.cats.map((c) => [c.id, c.name]));
+      const L = 'ABCDEF';
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+      const $ = (id) => document.getElementById(id);
+      const math = (el) => { if (window.renderMathInElement) renderMathInElement(el, { delimiters: [{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}], throwOnError: false }); };
+      TYPES.forEach(([k, v]) => $('ft').insertAdjacentHTML('beforeend', '<option value="' + k + '">' + v + '</option>'));
+      D.cats.forEach((c) => { $('fc').insertAdjacentHTML('beforeend', '<option value="' + c.id + '">' + esc(c.name) + '</option>'); $('catList').insertAdjacentHTML('beforeend', '<option value="' + esc(c.name) + '">'); });
+
+      function keyView(q) {
+        const k = q.answer_key || {}, o = q.content.options || [];
+        if (q.type === 'pg' || q.type === 'benar_salah') return '<ul>' + o.map((x, j) => '<li class="' + (k.index === j ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + esc(x) + '</span></li>').join('') + '</ul>';
+        if (q.type === 'pgk_centang') return '<ul>' + o.map((x, j) => '<li class="' + ((k.correct || []).includes(j) ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + esc(x) + '</span></li>').join('') + '</ul>';
+        if (q.type === 'isian') return '<ul><li class="ok"><b>✓</b><span>' + esc((k.accepted || []).join(' / ')) + '</span></li></ul>';
+        if (q.type === 'menjodohkan') return '<ul>' + (k.pairs || []).map(([a, b]) => '<li><b>' + (a + 1) + '.</b><span>' + esc(q.content.left[a]) + ' → ' + esc(q.content.right[b]) + '</span></li>').join('') + '</ul>';
+        if (q.type === 'uraian') return '<p class="hint">Dinilai manual oleh guru.</p>';
+        return '';
       }
-      $$('#qtype').addEventListener('change', showBox); showBox();
-      // Live preview teks soal.
-      const prevEl = $$('#qPreview');
-      const txtEl = document.querySelector('textarea[name=text]');
-      function esc(s){return (s||'').replace(/[&<>\"']/g,(ch)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]);}
-      function md(s){let t=esc(s);t=t.replace(/\\*\\*([^*]+)\\*\\*/g,'<b>$1</b>');t=t.replace(/\\*([^*]+)\\*/g,'<i>$1</i>');t=t.replace(/\`([^\`]+)\`/g,'<code>$1</code>');return t.replace(/\\n/g,'<br>');}
-      function refreshPreview(){
-        prevEl.innerHTML = md(txtEl.value);
-        if (window.renderMathInElement) renderMathInElement(prevEl, {
-          delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
-          throwOnError: false,
-        });
+      function draw() {
+        const t = $('fq').value.trim().toLowerCase(), ty = $('ft').value, ca = $('fc').value;
+        const v = D.qs.filter((q) => (!ty || q.type === ty) && (!ca || q.category_id === ca) && (!t || (q.content.text || '').toLowerCase().includes(t)));
+        $('qsum').textContent = D.qs.length + ' soal' + (v.length !== D.qs.length ? ' · ' + v.length + ' tampil' : '') + '. Pakai ulang di ujian mana pun.';
+        $('qlist').innerHTML = v.length ? v.map((q) =>
+          '<article class="qc"><div class="qc-top"><span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + (+q.points) + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
+          (TYPES.some(([k]) => k === q.type) ? '<button type="button" data-ed="' + q.id + '">Edit</button>' : '') +
+          (D.canDelete ? '<button type="button" class="danger" data-del="' + q.id + '">Hapus</button>' : '') + '</div>' +
+          '<p>' + esc(q.content.text || '(tanpa teks)') + '</p>' + keyView(q) + '</article>').join('')
+          : '<div class="empty-q">' + (D.qs.length ? 'Tidak ada soal yang cocok.' : '<b>Bank soal masih kosong.</b><br>Mulai dengan <b>+ Tulis soal</b> atau <b>Upload Excel</b>.') + '</div>';
+        math($('qlist'));
       }
-      txtEl.addEventListener('input', refreshPreview);
-      setTimeout(refreshPreview, 300);
-      document.getElementById('tb').addEventListener('click', async (e) => {
-        const id = e.target.dataset.del; if (!id) return;
-        if (!confirm('Hapus soal ini?')) return;
-        const r = await fetch('/api/questions/' + id, { method: 'DELETE', credentials: 'same-origin' });
-        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+      ['fq','ft','fc'].forEach((id) => $(id).addEventListener('input', draw));
+      draw();
+
+      // ===== Editor =====
+      const ed = $('ed'); let cur = null; let img = undefined;
+      function seg(type) {
+        $('seg').innerHTML = TYPES.map(([k, v]) => '<button type="button" data-t="' + k + '" aria-pressed="' + (k === type) + '">' + v + '</button>').join('');
+      }
+      function optRows(opts, marks, multi) {
+        return '<label>Pilihan jawaban <span class="muted">(ketuk huruf untuk menandai yang benar)</span></label><div id="opts">' +
+          opts.map((o, j) => '<div class="orow' + (multi ? ' pgk' : '') + '"><button type="button" class="mark" aria-pressed="' + marks.includes(j) + '" aria-label="Tandai benar">' + L[j] + '</button><input value="' + esc(o) + '" placeholder="Pilihan ' + L[j] + '"><button type="button" class="rm" aria-label="Hapus pilihan">✕</button></div>').join('') +
+          '</div>' + (opts.length < 6 ? '<button type="button" id="addOpt" style="margin-top:4px">+ Tambah pilihan</button>' : '');
+      }
+      function body(type, k, ct) {
+        const b = $('eBody'); k = k || {}; ct = ct || {};
+        if (type === 'pg') b.innerHTML = optRows(ct.options || ['', '', '', ''], typeof k.index === 'number' ? [k.index] : [], false);
+        else if (type === 'pgk_centang') b.innerHTML = optRows(ct.options || ['', '', '', ''], k.correct || [], true);
+        else if (type === 'benar_salah') b.innerHTML = '<label>Jawaban benar</label><div class="seg" id="bs"><button type="button" data-v="1" aria-pressed="' + (k.index !== 1) + '">Benar</button><button type="button" data-v="0" aria-pressed="' + (k.index === 1) + '">Salah</button></div>';
+        else if (type === 'isian') b.innerHTML = '<label for="eAcc">Jawaban yang diterima</label><input id="eAcc" value="' + esc((k.accepted || []).join(' | ')) + '" placeholder="mis. Surabaya | Kota Surabaya"><p class="hint">Pisahkan dengan | bila ada beberapa jawaban benar. Huruf besar/kecil tidak berpengaruh.</p>';
+        else if (type === 'uraian') b.innerHTML = '<label for="eRub">Pedoman penilaian <span class="muted">(opsional)</span></label><textarea id="eRub" rows="3" placeholder="Poin penting yang harus ada di jawaban">' + esc(cur && cur.rubric || '') + '</textarea>';
+        else if (type === 'menjodohkan') {
+          const L2 = ct.left || ['', '', ''], pairs = k.pairs || [];
+          const rows = L2.map((l, j) => { const p = pairs.find((x) => x[0] === j); return [l, p && ct.right ? ct.right[p[1]] : (ct.right || [])[j] || '']; });
+          b.innerHTML = '<label>Pasangan yang benar <span class="muted">(kolom kanan diacak otomatis untuk siswa)</span></label><div id="prs">' +
+            rows.map(([l, r]) => '<div class="mrow"><input value="' + esc(l) + '" placeholder="Kiri"><span class="muted">→</span><input value="' + esc(r) + '" placeholder="Kanan"><button type="button" class="rm" aria-label="Hapus pasangan">✕</button></div>').join('') +
+            '</div><button type="button" id="addPr" style="margin-top:4px">+ Tambah pasangan</button>';
+        }
+      }
+      function collect(type) {
+        const ct = {};
+        if (type === 'pg' || type === 'pgk_centang') {
+          const rows = [...document.querySelectorAll('#opts .orow')];
+          ct.options = rows.map((r) => r.querySelector('input').value.trim());
+          ct.marks = rows.map((r, j) => r.querySelector('.mark').getAttribute('aria-pressed') === 'true' ? j : -1).filter((j) => j >= 0);
+        }
+        if (type === 'menjodohkan') {
+          const rows = [...document.querySelectorAll('#prs .mrow')].map((r) => [...r.querySelectorAll('input')].map((x) => x.value.trim()));
+          ct.left = rows.map((r) => r[0]); ct.right = rows.map((r) => r[1]);
+        }
+        return ct;
+      }
+      $('eBody').addEventListener('click', (e) => {
+        const t = e.target, type = $('seg').querySelector('[aria-pressed="true"]').dataset.t;
+        if (t.classList.contains('mark')) {
+          if (type === 'pg') document.querySelectorAll('#opts .mark').forEach((m) => m.setAttribute('aria-pressed', String(m === t)));
+          else t.setAttribute('aria-pressed', String(t.getAttribute('aria-pressed') !== 'true'));
+        } else if (t.id === 'addOpt' || (t.classList.contains('rm') && t.closest('.orow'))) {
+          const c = collect(type);
+          if (t.id === 'addOpt') c.options.push('');
+          else { const j = [...document.querySelectorAll('#opts .orow')].indexOf(t.closest('.orow')); if (c.options.length <= 2) return; c.options.splice(j, 1); c.marks = c.marks.filter((m) => m !== j).map((m) => m > j ? m - 1 : m); }
+          $('eBody').innerHTML = optRows(c.options, c.marks, type === 'pgk_centang');
+        } else if (t.id === 'addPr') {
+          $('prs').insertAdjacentHTML('beforeend', '<div class="mrow"><input placeholder="Kiri"><span class="muted">→</span><input placeholder="Kanan"><button type="button" class="rm" aria-label="Hapus pasangan">✕</button></div>');
+        } else if (t.classList.contains('rm') && t.closest('.mrow')) {
+          if (document.querySelectorAll('#prs .mrow').length > 2) t.closest('.mrow').remove();
+        } else if (t.dataset.v !== undefined && t.closest('#bs')) {
+          document.querySelectorAll('#bs button').forEach((m) => m.setAttribute('aria-pressed', String(m === t)));
+        }
       });
-      // Image & Audio: convert ke data URI, preview, simpan di state.
-      let imageData = null, audioData = null;
-      $$('#imgFile').addEventListener('change', async (e) => {
-        const f = e.target.files[0]; if (!f) { imageData = null; $$('#imgPrev').innerHTML = ''; return; }
-        if (f.size > 400_000) { alert('Gambar > 400 KB; kompres dulu.'); e.target.value = ''; return; }
-        const buf = await f.arrayBuffer();
-        const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-        imageData = 'data:' + f.type + ';base64,' + b64;
-        $$('#imgPrev').innerHTML = '<img src="' + imageData + '" style="max-width:200px;max-height:200px;border-radius:8px;border:1px solid var(--bd)">';
+      $('seg').addEventListener('click', (e) => {
+        const t = e.target.dataset.t; if (!t) return;
+        const prevType = $('seg').querySelector('[aria-pressed="true"]').dataset.t, prev = collect(prevType);
+        seg(t);
+        const keep = (t === 'pg' || t === 'pgk_centang') && prev.options ? { options: prev.options } : {};
+        body(t, {}, keep);
       });
-      $$('#audFile').addEventListener('change', async (e) => {
-        const f = e.target.files[0]; if (!f) { audioData = null; $$('#audPrev').innerHTML = ''; return; }
-        if (f.size > 600_000) { alert('Audio > 600 KB; kompres atau potong dulu.'); e.target.value = ''; return; }
-        const buf = await f.arrayBuffer();
-        const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-        audioData = 'data:' + f.type + ';base64,' + b64;
-        $$('#audPrev').innerHTML = '<audio controls src="' + audioData + '" style="width:100%"></audio>';
+      function showImg(src) { const p = $('eImgPrev'); p.hidden = !src; $('eImgDel').hidden = !src; if (src) p.src = src; }
+      $('eImg').addEventListener('change', (e) => {
+        const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+        if (f.size > 290000) { alert('Gambar terlalu besar. Maksimal sekitar 290 KB.'); return; }
+        const rd = new FileReader(); rd.onload = () => { img = rd.result; showImg(img); }; rd.readAsDataURL(f);
       });
-      // Filter kategori navigasi
-      $$('#filterCat').addEventListener('change', (e) => {
-        const v = e.target.value;
-        location.href = '/app/questions' + (v ? '?category=' + v : '');
+      $('eImgDel').onclick = () => { img = ''; showImg(''); };
+      async function openEd(id) {
+        $('edWarn').hidden = true; img = undefined; cur = null;
+        let q = { type: 'pg', content: { text: '' }, answer_key: {}, points: 1, category_id: null };
+        if (id) {
+          const r = await fetch('/api/questions/' + id, { credentials: 'same-origin' });
+          if (!r.ok) { alert('Gagal memuat soal.'); return; }
+          q = cur = await r.json();
+          if (q.live_exams) { $('edWarn').textContent = 'Soal ini dipakai ' + q.live_exams + ' ujian yang sedang dibuka/terjadwal. Perubahan langsung berlaku di ujian tersebut.'; $('edWarn').hidden = false; }
+        }
+        $('edTitle').textContent = id ? 'Edit soal' : 'Tulis soal';
+        seg(q.type); body(q.type, q.answer_key, q.content);
+        $('eText').value = q.content.text || ''; $('ePts').value = +q.points || 1;
+        $('eCat').value = q.category_id && CAT[q.category_id] ? CAT[q.category_id] : '';
+        showImg(q.content.image || '');
+        ed.showModal(); $('eText').focus();
+      }
+      $('btnNew').onclick = () => openEd(null);
+      $('qlist').addEventListener('click', async (e) => {
+        if (e.target.dataset.ed) openEd(e.target.dataset.ed);
+        if (e.target.dataset.del) {
+          if (!confirm('Hapus soal ini? Soal juga hilang dari ujian yang memakainya.')) return;
+          const r = await fetch('/api/questions/' + e.target.dataset.del, { method: 'DELETE', credentials: 'same-origin' });
+          if (r.ok) { D.qs = D.qs.filter((q) => q.id !== e.target.dataset.del); draw(); } else alert('Gagal menghapus.');
+        }
       });
-      // CSV import
-      $$('#btnImportQ').addEventListener('click', () => $$('#fileCsvQ').click());
-      $$('#fileCsvQ').addEventListener('change', async (e) => {
-        const f = e.target.files[0]; if (!f) return;
-        const text = await f.text();
-        const r = await fetch('/api/questions/import', { method:'POST', credentials:'same-origin',
-          headers: { 'Content-Type': 'text/csv' }, body: text });
-        const j = await r.json().catch(() => ({ error: 'HTTP '+r.status }));
-        if (!r.ok) { alert('Import gagal: ' + (j.error || r.status)); return; }
-        let msg = j.ok + ' soal diimport.';
-        if (j.fail?.length) msg += '\\n' + j.fail.length + ' gagal:\\n' + j.fail.slice(0,10).map(x => '  baris ' + x.row + ': ' + x.error).join('\\n');
-        alert(msg); location.reload();
+      ['edX', 'edCancel'].forEach((id) => $(id).onclick = () => ed.close());
+      async function catId(name) {
+        name = name.trim(); if (!name) return null;
+        const hit = D.cats.find((c) => c.name.toLowerCase() === name.toLowerCase()); if (hit) return hit.id;
+        const r = await fetch('/api/categories', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+        const j = await r.json().catch(() => ({})); if (!r.ok || !j.id) throw new Error(j.error || 'Gagal membuat kategori');
+        D.cats.push({ id: j.id, name }); CAT[j.id] = name; return j.id;
+      }
+      $('ef').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const type = $('seg').querySelector('[aria-pressed="true"]').dataset.t, c = collect(type);
+        const b = { type, text: $('eText').value.trim(), points: +$('ePts').value || 1 };
+        if (img !== undefined) b.image = img;
+        if (type === 'pg' || type === 'pgk_centang') {
+          const keep = c.options.map((o, j) => [o, j]).filter(([o]) => o);
+          b.options = keep.map(([o]) => o);
+          const idx = c.marks.map((m) => keep.findIndex(([, j]) => j === m)).filter((m) => m >= 0);
+          if (type === 'pg') b.correct = idx[0]; else b.correct_indexes = idx;
+          if (!idx.length) { alert('Tandai jawaban yang benar (ketuk huruf di kiri pilihan).'); return; }
+        }
+        if (type === 'benar_salah') b.correct = document.querySelector('#bs [aria-pressed="true"]').dataset.v === '1';
+        if (type === 'isian') b.accepted = $('eAcc').value.split('|').map((x) => x.trim()).filter(Boolean);
+        if (type === 'uraian') b.rubric = $('eRub').value.trim();
+        if (type === 'menjodohkan') { const rows = c.left.map((l, j) => [l, c.right[j]]).filter(([l, r]) => l && r); b.left = rows.map((r) => r[0]); b.right = rows.map((r) => r[1]); }
+        const btn = $('edSave'); btn.disabled = true;
+        try {
+          b.category_id = await catId($('eCat').value);
+          const r = await fetch(cur ? '/api/questions/' + cur.id : '/api/questions', { method: cur ? 'PATCH' : 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+          location.reload();
+        } catch (x) { alert('Gagal menyimpan: ' + x.message); btn.disabled = false; }
       });
 
-      document.getElementById('fq').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const err = document.getElementById('errq'); err.hidden = true;
-        const text = e.target.text.value.trim();
-        const type = $$('#qtype').value;
-        const points = +e.target.points.value;
-        const category_id = e.target.category_id.value || null;
-        const passage_id = e.target.passage_id.value || null;
-        const payload = { type, text, points, category_id, passage_id };
-        if (imageData) payload.image = imageData;
-        if (audioData) payload.audio = audioData;
-        const hint = e.target.hint.value.trim();
-        if (hint) payload.hint = hint;
-        // Branching JSON (opsional).
-        const bRaw = e.target.branches_json ? e.target.branches_json.value.trim() : '';
-        if (bRaw) {
-          try { payload.branches = JSON.parse(bRaw); }
-          catch (_) { err.textContent = 'Branching JSON tidak valid.'; err.hidden = false; return; }
-        }
-        if (type === 'pg') {
-          const opts = [...e.target.querySelectorAll('input[name=opt]')].map((x) => x.value.trim()).filter(Boolean);
-          const correctEl = e.target.querySelector('input[name=correct]:checked');
-          if (!correctEl) { err.textContent = 'Pilih jawaban benar.'; err.hidden = false; return; }
-          payload.options = opts; payload.correct = +correctEl.value;
-        } else if (type === 'benar_salah') {
-          payload.correct = e.target.bs_correct.value === 'true';
-        } else if (type === 'isian') {
-          payload.accepted = e.target.accepted.value.split(/\\n/).map((s) => s.trim()).filter(Boolean);
-          if (!payload.accepted.length) { err.textContent = 'Isi minimal satu jawaban yang diterima.'; err.hidden = false; return; }
-        } else if (type === 'uraian') {
-          payload.rubric = e.target.rubric.value.trim() || null;
-        } else if (type === 'pgk_centang') {
-          const opts = [...e.target.querySelectorAll('input[name=pgkc_opt]')].map((x) => x.value.trim());
-          const correct = [...e.target.querySelectorAll('input[name=pgkc_correct]:checked')].map((x) => +x.value);
-          // Filter opsi kosong & remap correct indices supaya tetap konsisten.
-          const filteredOpts = []; const idxMap = {};
-          opts.forEach((o, i) => { if (o) { idxMap[i] = filteredOpts.length; filteredOpts.push(o); } });
-          const remapped = correct.map((i) => idxMap[i]).filter((v) => v !== undefined);
-          if (filteredOpts.length < 2 || remapped.length === 0) {
-            err.textContent = 'Butuh ≥2 opsi dan minimal 1 jawaban benar.'; err.hidden = false; return;
-          }
-          payload.options = filteredOpts; payload.correct_indexes = remapped;
-        } else if (type === 'simulasi') {
-          const html = e.target.sim_html.value;
-          if (!html.trim()) { err.textContent = 'HTML simulasi kosong.'; err.hidden = false; return; }
-          payload.html = html;
-          payload.rubric = e.target.sim_rubric.value.trim() || null;
-        } else if (type === 'dinamis_hitung') {
-          payload.op = e.target.dyn_op.value;
-          payload.a = { min: +e.target.dyn_a_min.value, max: +e.target.dyn_a_max.value };
-          payload.b = { min: +e.target.dyn_b_min.value, max: +e.target.dyn_b_max.value };
-          const tpl = e.target.dyn_tpl.value.trim();
-          if (tpl) payload.tpl = tpl;
-        } else if (type === 'menjodohkan') {
-          const lefts = [...e.target.querySelectorAll('input[name=mjd_left]')].map((x) => x.value.trim());
-          const rights = [...e.target.querySelectorAll('input[name=mjd_right]')].map((x) => x.value.trim());
-          // Pasangkan baris-per-baris; buang baris kosong.
-          const left = [], right = [];
-          lefts.forEach((l, i) => { if (l && rights[i]) { left.push(l); right.push(rights[i]); } });
-          if (left.length < 2) { err.textContent = 'Butuh minimal 2 pasangan.'; err.hidden = false; return; }
-          payload.left = left; payload.right = right;
-        }
-        const r = await fetch('/api/questions', { method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (r.ok) location.reload();
-        else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
+      // ===== Upload Excel =====
+      const up = $('up'); let rows = [];
+      const loadX = () => window.XLSX ? Promise.resolve(window.XLSX) : new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload = () => ok(window.XLSX); s.onerror = () => no(new Error('Gagal memuat pembaca Excel.')); document.head.appendChild(s); });
+      $('btnUp').onclick = () => { $('upPrev').innerHTML = ''; $('upGo').disabled = true; up.showModal(); };
+      ['upX', 'upCancel'].forEach((id) => $(id).onclick = () => up.close());
+      $('upTpl').onclick = async () => {
+        const X = await loadX();
+        const ws = X.utils.aoa_to_sheet([
+          ['Tipe', 'Soal', 'A', 'B', 'C', 'D', 'E', 'Jawaban', 'Poin', 'Kategori'],
+          ['PG', 'Ibu kota Indonesia adalah …', 'Bandung', 'Jakarta', 'Surabaya', 'Medan', '', 'B', 1, 'IPS'],
+          ['PGK', 'Pilih bilangan prima.', '2', '4', '5', '9', '11', 'A,C,E', 2, 'Matematika'],
+          ['Benar-Salah', 'Air mendidih pada 100 °C.', '', '', '', '', '', 'Benar', 1, 'IPA'],
+          ['Isian', 'Planet terdekat dari Matahari adalah …', '', '', '', '', '', 'Merkurius | Merkurius.', 1, 'IPA'],
+          ['Uraian', 'Jelaskan proses fotosintesis.', '', '', '', '', '', 'Menyebut cahaya, klorofil, CO2, air, glukosa', 5, 'IPA'],
+          ['Menjodohkan', 'Jodohkan negara dengan ibu kotanya.', 'Jepang = Tokyo', 'Prancis = Paris', 'Mesir = Kairo', '', '', '', 3, 'IPS']]);
+        ws['!cols'] = [{ wch: 13 }, { wch: 44 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 30 }, { wch: 6 }, { wch: 14 }];
+        const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'Soal'); X.writeFile(wb, 'template-soal-cbt-yuk.xlsx');
+      };
+      const TMAP = { pg: 'pg', 'pilihan ganda': 'pg', pgk: 'pgk_centang', 'pg kompleks': 'pgk_centang', 'benar-salah': 'benar_salah', 'benar salah': 'benar_salah', bs: 'benar_salah', isian: 'isian', uraian: 'uraian', esai: 'uraian', menjodohkan: 'menjodohkan' };
+      function parseRow(r, n) {
+        const g = (k) => String(r[k] ?? '').trim();
+        const type = TMAP[g('tipe').toLowerCase()], text = g('soal'), ans = g('jawaban');
+        const opts = ['a', 'b', 'c', 'd', 'e'].map(g).filter(Boolean);
+        const q = { row: n, type, text, points: +g('poin') || 1, category_name: g('kategori') };
+        if (!type) return [q, 'Tipe tidak dikenal'];
+        if (!text) return [q, 'Soal kosong'];
+        if (type === 'pg') { q.options = opts; q.correct = L.indexOf(ans.toUpperCase()); if (q.correct < 0 || q.correct >= opts.length) return [q, 'Jawaban harus huruf pilihan']; }
+        if (type === 'pgk_centang') { q.options = opts; q.correct_indexes = ans.toUpperCase().split(/[ ,;]+/).filter(Boolean).map((x) => L.indexOf(x)); if (!q.correct_indexes.length || q.correct_indexes.some((x) => x < 0 || x >= opts.length)) return [q, 'Jawaban harus huruf, mis. A,C']; }
+        if (type === 'benar_salah') { const v = ans.toLowerCase(); if (v !== 'benar' && v !== 'salah') return [q, 'Jawaban harus Benar atau Salah']; q.correct = v === 'benar'; }
+        if (type === 'isian') { q.accepted = ans.split('|').map((x) => x.trim()).filter(Boolean); if (!q.accepted.length) return [q, 'Jawaban kosong']; }
+        if (type === 'uraian') q.rubric = ans;
+        if (type === 'menjodohkan') { const pr = opts.map((x) => x.split('=').map((y) => y.trim())); if (pr.length < 2 || pr.some((p) => p.length !== 2 || !p[0] || !p[1])) return [q, 'Isi A–E dengan "kiri = kanan"']; q.left = pr.map((p) => p[0]); q.right = pr.map((p) => p[1]); }
+        return [q, ''];
+      }
+      $('upFile').addEventListener('change', async (e) => {
+        const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+        try {
+          const X = await loadX(); const wb = X.read(await f.arrayBuffer(), { type: 'array' });
+          const raw = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
+          const norm = raw.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.trim().toLowerCase(), v])));
+          const parsed = norm.map((r, j) => parseRow(r, j + 2)).filter(([q]) => q.text || q.type);
+          rows = parsed.filter(([, err]) => !err).map(([q]) => q);
+          const bad = parsed.filter(([, err]) => err);
+          $('upPrev').innerHTML = '<p style="margin:14px 0 0"><b>' + rows.length + ' soal siap disimpan</b>' + (bad.length ? ' · <span class="err" style="margin:0">' + bad.length + ' baris bermasalah (dilewati)</span>' : '') + '</p>' +
+            '<div class="uprev"><table><thead><tr><th>Baris</th><th>Tipe</th><th>Soal</th><th>Status</th></tr></thead><tbody>' +
+            parsed.map(([q, err]) => '<tr><td>' + q.row + '</td><td>' + esc(TL[q.type] || '?') + '</td><td>' + esc(q.text.slice(0, 60)) + '</td><td class="' + (err ? 'bad' : '') + '">' + (err ? esc(err) : '✓') + '</td></tr>').join('') + '</tbody></table></div>';
+          $('upGo').disabled = !rows.length;
+        } catch (x) { alert('Gagal membaca file: ' + x.message); }
       });
+      $('upGo').onclick = async () => {
+        $('upGo').disabled = true;
+        const r = await fetch('/api/questions/bulk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: rows }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { alert('Gagal: ' + (j.error || r.status)); $('upGo').disabled = false; return; }
+        alert(j.ok + ' soal tersimpan.' + (j.fail && j.fail.length ? '\\n' + j.fail.length + ' gagal: ' + j.fail.slice(0, 5).map((x) => 'baris ' + x.row + ' (' + x.error + ')').join(', ') : ''));
+        location.reload();
+      };
     </script>
   `, { role: sess.role }));
 });
+
 
 pages.get("/demo", (c) => {
   const on = c.env.DEMO_LOGIN === "1";

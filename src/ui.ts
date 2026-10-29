@@ -15,6 +15,10 @@ export const brandHex = (key: string | null | undefined) => (BRAND_COLORS[key ??
 
 export const APP_NAME = "CBT Yuk";
 
+// Jenis ujian lama disimpan sebagai kode; yang baru berupa teks bebas.
+const KIND_LABELS: Record<string, string> = { harian: "Ulangan harian", pts_pas: "PTS / PAS", sumatif: "Sumatif", tryout: "Tryout" };
+export const kindLabel = (k: string) => KIND_LABELS[k] ?? k;
+
 // Logo kecil (ikut warna merek sekolah lewat var(--brand)).
 export const LOGO_MARK = `<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="var(--brand)"/><circle cx="16" cy="16" r="9.6" fill="#fff"/><path d="M11.8 16.4l3 3 5.6-6.2" fill="none" stroke="var(--brand)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 export const LOGO = `${LOGO_MARK}<span>CBT <b>Yuk</b></span>`;

@@ -9,7 +9,7 @@ import {
 } from "./session";
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
-import { SHARED_CSS, LOGO } from "./ui";
+import { SHARED_CSS, LOGO, kindLabel } from "./ui";
 import { createSession, finalizeSession } from "./scoring";
 
 type Bindings = {
@@ -91,15 +91,30 @@ const page = (title: string, body: string) => `<!doctype html>
   .nav button.cur { border: 2.5px solid var(--fg); }
   .nav button.ans.cur { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--brand); }
 
-  .timer { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 18px; letter-spacing: .02em;
-           padding: 6px 14px; border-radius: 999px; background: var(--soft); color: var(--brand); }
-  .timer.warn { background: var(--danger); color: #fff; }
-  .exam-head { position: sticky; top: 0; z-index: 30; background: color-mix(in srgb, var(--paper) 92%, transparent);
-               backdrop-filter: blur(8px); margin: -24px -16px 18px; padding: 12px 16px; border-bottom: 1px solid var(--line);
-               display:flex; align-items:center; justify-content:space-between; gap: 10px; flex-wrap: wrap; }
-  .exam-head h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; }
-  .exam-head .tools-row { display:flex; gap:6px; align-items:center; flex-wrap: wrap; }
-  .exam-head button { min-height: 40px; padding: 6px 12px; font-size: 13px; }
+  .timer { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 18px; letter-spacing: .02em; flex: 0 0 auto;
+           padding: 6px 14px; border-radius: 999px; background: #fff; color: var(--brand); }
+  .timer.warn { background: #FEE2E2; color: #B91C1C; }
+  /* Kepala ujian: pita warna merek, isi putih. Melebar penuh di layar kecil. */
+  .exam-head { position: sticky; top: 0; z-index: 30; margin: -24px -16px 18px; padding: 12px 16px 0; color: #fff;
+               background: linear-gradient(135deg, var(--brand), color-mix(in srgb, var(--brand) 70%, #0F172A)); border-radius: 0 0 20px 20px;
+               box-shadow: 0 8px 24px color-mix(in srgb, var(--brand) 25%, transparent); }
+  .eh-row { display:flex; align-items:center; justify-content:space-between; gap: 10px; margin-bottom: 10px; }
+  .exam-head h1 { font-size: 16.5px; margin: 0; letter-spacing: -.01em; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .eh-btn { min-height: 40px; padding: 6px 12px; font-size: 13.5px; gap: 8px; color: #fff; background: rgba(255,255,255,.14);
+            border: 1px solid rgba(255,255,255,.22); box-shadow: none; }
+  .eh-btn:hover { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.3); }
+  .eh-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linejoin: round; }
+  .eh-btn b { background: #fff; color: var(--brand); border-radius: 999px; padding: 1px 8px; font-size: 12.5px; }
+  .eh-note { font-size: 12px; opacity: .85; flex: 1; text-align: center; }
+  .prog { height: 4px; margin: 0 -16px; background: rgba(255,255,255,.18); border-radius: 0 0 20px 20px; overflow: hidden; }
+  .prog i { display:block; height: 100%; width: 0; background: #fff; transition: width .3s; }
+  dialog.qsheet { max-width: 520px; width: calc(100% - 20px); }
+  .qs-head { display:flex; justify-content:space-between; align-items:center; margin-bottom: 14px; }
+  .qs-head h2 { margin: 0; } .qs-head button { min-height: 40px; min-width: 40px; padding: 0; border: none; box-shadow: none; }
+  .qsheet .legend { margin: 6px 0 0; }
+  .q.flagged { background: #FFFBEB; border-color: #F59E0B; box-shadow: 0 0 0 1px #F59E0B, var(--shadow); }
+  .flagtag { display:inline-flex; align-items:center; gap: 6px; font-size: 12px; font-weight: 700; color: #B45309; background: #FEF3C7; padding: 3px 10px; border-radius: 999px; margin-left: 8px; vertical-align: 1px; }
+  :root[data-theme="dark"] .q.flagged { background: #2A2210; }
   .exam-foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: var(--surface); border-top: 1px solid var(--line);
                padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
   .exam-foot .in { max-width: 760px; margin: 0 auto; display:flex; gap: 8px; align-items:center; }
@@ -117,6 +132,26 @@ const page = (title: string, body: string) => `<!doctype html>
   .keys button { min-height: 48px; font-size: 17px; }
   .chat-box { flex: 1; overflow-y: auto; min-height: 140px; max-height: 300px; padding: 6px; border: 1.5px solid var(--line);
               border-radius: 12px; background: var(--paper); font-size: 14px; }
+  /* Pita warna merek di atas halaman siswa (portal, login, konfirmasi). */
+  .band { margin: -24px -16px 0; padding: 22px 20px 64px; color: #fff; border-radius: 0 0 28px 28px;
+          background: radial-gradient(500px 220px at 90% 0%, rgba(255,255,255,.18), transparent 60%),
+                      linear-gradient(140deg, var(--brand), color-mix(in srgb, var(--brand) 62%, #0F172A)); }
+  .band .brand, .band .brand b { color: #fff; }
+  .band .brand .logo rect { fill: #fff; } .band .brand .logo circle { fill: var(--brand); } .band .brand .logo path { stroke: #fff; }
+  .band h1 { color: #fff; font-size: clamp(24px, 6vw, 30px); margin: 18px 0 4px; }
+  .band p { color: rgba(255,255,255,.85); margin: 0; }
+  .band-top { display:flex; justify-content:space-between; align-items:center; gap: 10px; }
+  .chip { font-size: 12.5px; font-weight: 700; padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.25); }
+  .band .ghostbtn { min-height: 38px; padding: 6px 12px; font-size: 13px; color: #fff; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.25); box-shadow: none; }
+  .lift { margin-top: -44px; position: relative; }
+  .avatar { width: 52px; height: 52px; border-radius: 16px; background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.3); display:grid; place-items:center; font-weight: 800; font-size: 20px; color: #fff; flex: 0 0 auto; }
+  .who { display:flex; gap: 14px; align-items:center; margin-top: 18px; }
+  .who h1 { margin: 0; }
+  .exam-item { display:flex; align-items:center; gap: 14px; padding: 14px 0; border-top: 1px solid var(--line); }
+  .exam-item:first-of-type { border-top: none; }
+  .exam-item .ei { width: 44px; height: 44px; border-radius: 12px; background: var(--soft); color: var(--brand); display:grid; place-items:center; flex: 0 0 auto; }
+  .exam-item .ei svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .exam-item .et { flex: 1; min-width: 0; } .exam-item .et b { display:block; }
   .nav button.flag { background: #F59E0B; border-color: #F59E0B; color: #fff; }
   .legend { display:flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--mut); margin: -8px 0 16px; }
   .legend i { display:inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; border: 1.5px solid var(--line); }
@@ -169,40 +204,38 @@ student.get("/s", async (c) => {
   const me = data.me as { name: string; class_name: string|null; class_id: string|null } | undefined;
   const list = (data.exams as unknown as Ex[]).map((e) => {
     const action = e.session_status === "submitted"
-      ? `<span class="muted">Sudah dikumpulkan</span>`
+      ? `<span class="pill submitted">Selesai</span>`
       : e.session_status === "expired"
-      ? `<span class="muted">Waktu habis</span>`
-      : e.session_id
-        ? `<form method="post" action="/s/exams/${esc(e.id)}/start" style="margin:0"><button class="primary">Lanjutkan</button></form>`
-        : `<form method="post" action="/s/exams/${esc(e.id)}/start" style="margin:0"><button class="primary">Mulai</button></form>`;
-    return `<tr>
-      <td><b>${esc(e.title)}</b><br><span class="muted">${esc(e.kind)} · ${e.duration_minutes} menit</span></td>
-      <td style="text-align:right">${action}</td>
-    </tr>`;
-  }).join("") || `<tr><td colspan="2" class="muted">Belum ada ujian yang dibuka untuk kelas Anda.</td></tr>`;
+      ? `<span class="pill expired">Waktu habis</span>`
+      : `<form method="post" action="/s/exams/${esc(e.id)}/start" style="margin:0"><button class="primary">${e.session_id ? "Lanjutkan" : "Mulai"}</button></form>`;
+    return `<div class="exam-item">
+      <span class="ei"><svg viewBox="0 0 24 24"><path d="M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"/></svg></span>
+      <span class="et"><b>${esc(e.title)}</b><span class="muted">${esc(kindLabel(e.kind))} · ${e.duration_minutes} menit</span></span>
+      ${action}
+    </div>`;
+  }).join("") || `<p class="muted" style="text-align:center;padding:18px 0;margin:0">Belum ada ujian yang dibuka untuk kelas Anda.</p>`;
+  const initials = (me?.name ?? "S").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 
   return c.html(page("Portal Siswa", `
-    ${c.req.query("selesai") ? `<div class="card" role="status" style="border-color:var(--ok);display:flex;gap:14px;align-items:center">
-      <span style="width:40px;height:40px;border-radius:50%;background:var(--ok);color:#fff;display:grid;place-items:center;font-weight:800;flex:0 0 auto">✓</span>
-      <span><b>Ujian berhasil dikumpulkan.</b><br><span class="muted">Lihat nilainya di <a href="/s/history">riwayat ujian</a>.</span></span></div>` : ""}
-    <div class="card">
-      <h1>Halo, ${esc(me?.name ?? "siswa")}</h1>
-      <p class="sub">Kelas: ${esc(me?.class_name ?? "- (belum terdaftar di kelas)")}</p>
-      <div class="row">
-        <form method="post" action="/s/logout" style="margin:0"><button type="submit">Keluar</button></form>
-        <a class="btn" href="/s/me">Ganti PIN</a>
+    <section class="band">
+      <div class="band-top"><span class="brand">${LOGO}</span>
+        <div class="row" style="margin:0"><a class="btn ghostbtn" href="/s/me">Ganti PIN</a>
+        <form method="post" action="/s/logout" style="margin:0"><button type="submit" class="ghostbtn">Keluar</button></form></div></div>
+      <div class="who"><span class="avatar">${esc(initials)}</span>
+        <div><h1>Halo, ${esc(me?.name ?? "siswa")}</h1><p>${esc(me?.class_name ? "Kelas " + me.class_name : "Belum terdaftar di kelas")}</p></div></div>
+    </section>
+    <div class="lift">
+      ${c.req.query("selesai") ? `<div class="card" role="status" style="border-color:var(--ok);display:flex;gap:14px;align-items:center">
+        <span style="width:40px;height:40px;border-radius:50%;background:var(--ok);color:#fff;display:grid;place-items:center;font-weight:800;flex:0 0 auto">✓</span>
+        <span><b>Ujian berhasil dikumpulkan.</b><br><span class="muted">Lihat nilainya di <a href="/s/history">riwayat ujian</a>.</span></span></div>` : ""}
+      <div class="card">
+        <h2>Ujian untuk Anda</h2>
+        ${list}
       </div>
-    </div>
-    <div class="card">
-      <h2>Ujian tersedia</h2>
-      <table style="width:100%; border-collapse:collapse">
-        <tbody>${list}</tbody>
-      </table>
-    </div>
-    <div class="card">
-      <h2>Riwayat & rekomendasi</h2>
-      <p class="muted"><a href="/s/history">Lihat semua ujian yang pernah saya kerjakan</a></p>
-      <p class="muted"><a href="/s/rekomendasi">Rekomendasi belajar untuk kategori lemah</a></p>
+      <div class="card">
+        <h2>Riwayat & belajar</h2>
+        <div class="row" style="margin-top:0"><a class="btn" href="/s/history">Riwayat nilai</a><a class="btn" href="/s/rekomendasi">Rekomendasi belajar</a></div>
+      </div>
     </div>
   `));
 });
@@ -416,11 +449,13 @@ student.get("/s/history/:sid", async (c) => {
 });
 
 student.get("/s/login", (c) => c.html(page("Masuk siswa", `
-  <div style="max-width:420px;margin:6vh auto 0">
-    <a class="brand" href="/" style="margin-bottom:22px">${LOGO}</a>
-    <div class="card" style="padding:26px">
-      <h1>Masuk siswa</h1>
-      <p class="sub">Pakai username dan PIN dari guru.</p>
+  <section class="band" style="padding-bottom:72px">
+    <div class="band-top"><a class="brand" href="/">${LOGO}</a><a class="chip" href="/" style="text-decoration:none">Bukan siswa?</a></div>
+    <h1>Masuk siswa</h1>
+    <p>Pakai username dan PIN yang diberikan guru.</p>
+  </section>
+  <div class="lift" style="max-width:440px;margin-left:auto;margin-right:auto">
+    <div class="card" style="padding:24px">
       <form id="f">
         <label for="u">Username</label><input id="u" name="username" required autocomplete="username" autocapitalize="none" placeholder="mis. andi.saputra">
         <label for="p">PIN</label><input id="p" name="pin" type="password" inputmode="numeric" autocomplete="current-password" required pattern="\\d{4,8}" placeholder="4–8 angka">
@@ -691,11 +726,13 @@ student.get("/demo/konfirmasi", async (c) => {
       .token { font: 800 26px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .3em; text-align:center; text-transform: uppercase; min-height: 60px; }
       .steps-mini { margin: 0; padding-left: 18px; color: var(--mut); font-size: 14px; } .steps-mini li { margin: 6px 0; }
     </style>
-    <div class="tka-top"><span class="brand">${LOGO}</span><span class="tka-tag">Mode demo</span></div>
-    <div class="tka-grid">
+    <section class="band">
+      <div class="band-top"><span class="brand">${LOGO}</span><span class="chip">Mode demo</span></div>
+      <div class="who"><span class="avatar">${esc(me.name.split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase())}</span>
+        <div><h1>Konfirmasi data peserta</h1><p>Periksa data Anda, lalu tekan <b>Mulai ujian</b>.</p></div></div>
+    </section>
+    <div class="tka-grid lift">
       <div class="card">
-        <h1 style="font-size:22px">Konfirmasi data peserta</h1>
-        <p class="sub" style="margin-bottom:6px">Periksa data Anda. Jika sudah benar, masukkan token dari pengawas lalu tekan <b>Mulai</b>.</p>
         <dl style="margin:0">
           <div class="tka-row"><dt>No. peserta</dt><dd>${esc(me.username.toUpperCase())}</dd></div>
           <div class="tka-row"><dt>Nama peserta</dt><dd>${esc(me.name)}</dd></div>
@@ -713,7 +750,7 @@ student.get("/demo/konfirmasi", async (c) => {
         <h3 style="margin:22px 0 8px">Yang akan Anda coba</h3>
         <ol class="steps-mini">
           <li>Soal pilihan ganda, benar/salah, pilihan kompleks, menjodohkan, isian, dan uraian.</li>
-          <li>Ragu-ragu, nomor soal, timer, kalkulator, dan chat ke pengawas.</li>
+          <li>Mode layar penuh, tombol ragu-ragu, daftar nomor soal, timer, dan chat ke pengawas.</li>
           <li>Jawaban tersimpan otomatis. Nilai keluar setelah dikumpulkan.</li>
         </ol>
       </form>
@@ -876,39 +913,27 @@ student.get("/s/take/:sid", async (c) => {
       </div>
     </dialog>
     <header class="exam-head">
-      <h1>${esc(data.title!)}</h1>
-      <div class="tools-row">
-        <span id="qbadge" class="muted"></span>
-        <button type="button" id="chatBtn">Chat pengawas<span id="chatBadge" class="badge" hidden>baru</span></button>
-        <button type="button" id="calcBtn">Kalkulator</button>
+      <div class="eh-row">
+        <h1>${esc(data.title!)}</h1>
         <span class="timer" id="t" aria-live="off">--:--</span>
       </div>
-    </header>
-    <section id="calc" class="panel" hidden aria-label="Kalkulator">
-      <div class="panel-head"><b>Kalkulator</b><button type="button" id="calcClose" aria-label="Tutup kalkulator">Tutup</button></div>
-      <input id="calcDisp" readonly aria-label="Tampilan kalkulator" style="font: 600 20px/1 ui-monospace, monospace; text-align:right; margin-bottom:8px">
-      <div class="keys">
-        <button type="button" data-k="C" class="danger">C</button>
-        <button type="button" data-k="(">(</button>
-        <button type="button" data-k=")">)</button>
-        <button type="button" data-k="/">÷</button>
-        <button type="button" data-k="7">7</button>
-        <button type="button" data-k="8">8</button>
-        <button type="button" data-k="9">9</button>
-        <button type="button" data-k="*">×</button>
-        <button type="button" data-k="4">4</button>
-        <button type="button" data-k="5">5</button>
-        <button type="button" data-k="6">6</button>
-        <button type="button" data-k="-">−</button>
-        <button type="button" data-k="1">1</button>
-        <button type="button" data-k="2">2</button>
-        <button type="button" data-k="3">3</button>
-        <button type="button" data-k="+">+</button>
-        <button type="button" data-k="0" style="grid-column: span 2">0</button>
-        <button type="button" data-k=".">.</button>
-        <button type="button" data-k="=" class="primary">=</button>
+      <div class="eh-row">
+        <button type="button" id="gridBtn" class="eh-btn" aria-haspopup="dialog">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
+          <span>Daftar soal</span><b id="progTxt">0/0</b>
+        </button>
+        <span id="qbadge" class="eh-note"></span>
+        <button type="button" id="chatBtn" class="eh-btn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg><span>Pengawas</span><span id="chatBadge" class="badge" hidden>baru</span>
+        </button>
       </div>
-    </section>
+      <div class="prog" aria-hidden="true"><i id="progBar"></i></div>
+    </header>
+    <dialog id="grid" class="qsheet" aria-labelledby="gridH">
+      <div class="qs-head"><h2 id="gridH">Daftar soal</h2><button type="button" id="gridX" aria-label="Tutup">✕</button></div>
+      <div class="nav" id="nav" aria-label="Nomor soal"></div>
+      <div class="legend" aria-hidden="true"><span><i class="a"></i>Dijawab</span><span><i class="f"></i>Ragu-ragu</span><span><i></i>Belum dijawab</span></div>
+    </dialog>
     <section id="chat" class="panel" hidden aria-label="Chat pengawas">
       <div class="panel-head"><b>Chat pengawas</b><button type="button" id="chatClose" aria-label="Tutup chat">Tutup</button></div>
       <div id="chatBox" class="chat-box"></div>
@@ -917,8 +942,7 @@ student.get("/s/take/:sid", async (c) => {
         <button class="primary" type="submit">Kirim</button>
       </form>
     </section>
-    <div class="nav" id="nav" aria-label="Nomor soal"></div>
-    <div class="legend" aria-hidden="true"><span><i class="a"></i>Dijawab</span><span><i class="f"></i>Ragu-ragu</span><span><i></i>Belum dijawab</span></div>
+
     <div id="qbox"></div>
     <p class="muted" style="margin-top:18px">Jawaban tersimpan otomatis setiap kali Anda memilih atau mengetik.</p>
     <div class="exam-foot"><div class="in">
@@ -972,7 +996,8 @@ student.get("/s/take/:sid", async (c) => {
             (q.passage.title ? '<p style="margin:0 0 6px"><b>' + escapeHtml(q.passage.title) + '</b></p>' : '') +
             '<p style="margin:0;white-space:pre-wrap">' + escapeHtml(q.passage.body) + '</p></div>';
         }
-        el.innerHTML = head + '<p><b>Soal ' + (i+1) + ' / ' + Q.length + '</b>' + tag + '</p><p>' + mdRender(q.content.text) + '</p>';
+        if (F.has(q.id)) el.classList.add('flagged');
+        el.innerHTML = head + '<p><b>Soal ' + (i+1) + ' / ' + Q.length + '</b>' + tag + (F.has(q.id) ? '<span class="flagtag">Ragu-ragu</span>' : '') + '</p><p>' + mdRender(q.content.text) + '</p>';
         if (q.content.image) {
           const img = document.createElement('img');
           img.src = q.content.image;
@@ -1104,6 +1129,9 @@ student.get("/s/take/:sid", async (c) => {
         }
         qbox.appendChild(el);
         renderMath(el);
+        const nAns = Q.filter((qq) => hasAnswer(qq.id)).length;
+        document.getElementById('progTxt').textContent = nAns + '/' + Q.length;
+        document.getElementById('progBar').style.width = (nAns / Q.length * 100) + '%';
         const rg = document.getElementById('ragu'); rg.setAttribute('aria-pressed', String(F.has(q.id)));
         document.getElementById('prev').disabled = i === 0;
         document.getElementById('next').textContent = i === Q.length - 1 ? 'Selesai' : 'Berikutnya ›';
@@ -1112,7 +1140,7 @@ student.get("/s/take/:sid", async (c) => {
           const b = document.createElement('button'); b.textContent = k+1;
           if (F.has(qq.id)) b.className = 'flag'; else if (hasAnswer(qq.id)) b.className = 'ans';
           if (k === i) b.className = (b.className + ' cur').trim();
-          b.addEventListener('click', () => { i = k; render(); });
+          b.addEventListener('click', () => { i = k; document.getElementById('grid').close(); render(); window.scrollTo(0, 0); });
           nav.appendChild(b);
         });
       }
@@ -1170,6 +1198,8 @@ student.get("/s/take/:sid", async (c) => {
       }
       window.addEventListener('online', flushQueue);
       updateBadge(); if (navigator.onLine) flushQueue();
+      document.getElementById('gridBtn').onclick = () => document.getElementById('grid').showModal();
+      document.getElementById('gridX').onclick = () => document.getElementById('grid').close();
       document.getElementById('prev').onclick = () => { if (i > 0) { i--; render(); window.scrollTo(0, 0); } };
       document.getElementById('next').onclick = () => {
         if (i < Q.length - 1) { i++; render(); window.scrollTo(0, 0); } else openFinish();
@@ -1247,37 +1277,6 @@ student.get("/s/take/:sid", async (c) => {
           toast('Pelanggaran tercatat: ' + (KIND[kind] || kind) + ' (' + violations + 'x' + (remain !== null ? ', sisa ' + remain : '') + ')');
         }
       }
-      // Kalkulator sederhana (parser dua stack, bukan eval).
-      const calc = document.getElementById('calc');
-      const calcDisp = document.getElementById('calcDisp');
-      document.getElementById('calcBtn').onclick = () => { calc.hidden = !calc.hidden; };
-      document.getElementById('calcClose').onclick = () => { calc.hidden = true; };
-      function compute(expr) {
-        // Shunting-yard infix postfix lalu evaluasi.
-        const tokens = expr.match(/\\d+(?:\\.\\d+)?|[+\\-*/()]/g); if (!tokens) return '0';
-        const prec = { '+':1,'-':1,'*':2,'/':2 };
-        const out = []; const ops = [];
-        for (const t of tokens) {
-          if (/\\d/.test(t)) out.push(parseFloat(t));
-          else if (t === '(') ops.push(t);
-          else if (t === ')') { while (ops.length && ops[ops.length-1] !== '(') out.push(ops.pop()); ops.pop(); }
-          else { while (ops.length && ops[ops.length-1] !== '(' && prec[ops[ops.length-1]] >= prec[t]) out.push(ops.pop()); ops.push(t); }
-        }
-        while (ops.length) out.push(ops.pop());
-        const st = [];
-        for (const t of out) {
-          if (typeof t === 'number') st.push(t);
-          else { const b = st.pop(), a = st.pop(); st.push(t==='+'?a+b:t==='-'?a-b:t==='*'?a*b:b===0?NaN:a/b); }
-        }
-        const r = st[0]; return isFinite(r) ? +r.toFixed(4) + '' : 'ERR';
-      }
-      calc.addEventListener('click', (e) => {
-        const k = e.target.dataset.k; if (!k) return;
-        if (k === 'C') { calcDisp.value = ''; return; }
-        if (k === '=') { calcDisp.value = compute(calcDisp.value); return; }
-        calcDisp.value += k;
-      });
-
       // Simulasi: terima postMessage dari iframe sandbox dan simpan sebagai
       // text (digabung dengan note bila ada).
       window.addEventListener('message', (ev) => {

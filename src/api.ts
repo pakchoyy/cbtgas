@@ -447,11 +447,10 @@ api.get("/api/questions", async (c) => {
 //   benar_salah : {text, correct:boolean}
 //   isian       : {text, accepted:string[]}  (dicocokkan case-insensitive, trim)
 //   uraian      : {text, rubric?}            (manual grade only)
-api.post("/api/questions", async (c) => {
-  const s = getSess(c);
-  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const body = await c.req.json().catch(() => null) as null | Record<string, unknown>;
-  if (!body) return c.json({ error: "bad body" }, 400);
+// Validasi + susun isi soal dari body editor (dipakai tambah & ubah soal).
+type BuiltQuestion = { type: string; content: Record<string, unknown>; answer_key: unknown; rubric: string | null;
+  points: number; categoryId: string | null; passageId: string | null; image: string | null; audio: string | null };
+function buildQuestion(body: Record<string, unknown>): BuiltQuestion | { error: string; status: 400 | 413 } {
   const type = String(body.type || "pg");
   const text = String(body.text || "").trim();
   const points = typeof body.points === "number" ? body.points : 1;
@@ -461,14 +460,14 @@ api.post("/api/questions", async (c) => {
   const image = body.image ? String(body.image) : null;
   // Audio opsional (MP3/OGG/WAV/WebM), data URI, cap 600KB.
   const audio = body.audio ? String(body.audio) : null;
-  if (!text && !image && !audio) return c.json({ error: "teks soal kosong" }, 400);
+  if (!text && !image && !audio) return { error: "teks soal kosong", status: 400 };
   if (image) {
-    if (!image.startsWith("data:image/")) return c.json({ error: "image harus data URI gambar" }, 400);
-    if (image.length > 400_000) return c.json({ error: "ukuran gambar > 400KB" }, 413);
+    if (!image.startsWith("data:image/")) return { error: "image harus data URI gambar", status: 400 };
+    if (image.length > 400_000) return { error: "ukuran gambar > 400KB", status: 413 };
   }
   if (audio) {
-    if (!audio.startsWith("data:audio/")) return c.json({ error: "audio harus data URI audio" }, 400);
-    if (audio.length > 600_000) return c.json({ error: "ukuran audio > 600KB" }, 413);
+    if (!audio.startsWith("data:audio/")) return { error: "audio harus data URI audio", status: 400 };
+    if (audio.length > 600_000) return { error: "ukuran audio > 600KB", status: 413 };
   }
 
   let content: Record<string, unknown>; let answer_key: unknown; let rubric: string | null = null;
@@ -476,17 +475,17 @@ api.post("/api/questions", async (c) => {
     const options = Array.isArray(body.options) ? (body.options as string[]) : [];
     const correct = Number(body.correct);
     if (options.length < 2 || !Number.isInteger(correct) || correct < 0 || correct >= options.length) {
-      return c.json({ error: "data pilihan ganda tidak valid" }, 400);
+      return { error: "data pilihan ganda tidak valid", status: 400 };
     }
     content = { text, options }; answer_key = { index: correct };
   } else if (type === "benar_salah") {
-    if (typeof body.correct !== "boolean") return c.json({ error: "'correct' harus boolean" }, 400);
+    if (typeof body.correct !== "boolean") return { error: "'correct' harus boolean", status: 400 };
     content = { text, options: ["Benar", "Salah"] };
     answer_key = { index: body.correct ? 0 : 1 };
   } else if (type === "isian") {
     const accepted = Array.isArray(body.accepted) ? (body.accepted as string[])
       .map((x) => x.trim()).filter(Boolean) : [];
-    if (accepted.length === 0) return c.json({ error: "jawaban yang diterima kosong" }, 400);
+    if (accepted.length === 0) return { error: "jawaban yang diterima kosong", status: 400 };
     content = { text }; answer_key = { accepted };
   } else if (type === "uraian") {
     content = { text }; answer_key = { manual: true };
@@ -497,7 +496,7 @@ api.post("/api/questions", async (c) => {
     const correctIdx = Array.isArray(body.correct_indexes)
       ? (body.correct_indexes as number[]).filter((n) => Number.isInteger(n) && n >= 0 && n < options.length) : [];
     if (options.length < 2 || correctIdx.length === 0) {
-      return c.json({ error: "pgk_centang: butuh ≥2 opsi dan minimal 1 jawaban benar" }, 400);
+      return { error: "pgk_centang: butuh ≥2 opsi dan minimal 1 jawaban benar", status: 400 };
     }
     content = { text, options };
     answer_key = { correct: Array.from(new Set(correctIdx)).sort((a, b) => a - b) };
@@ -512,7 +511,7 @@ api.post("/api/questions", async (c) => {
         !Number.isInteger(a.min) || !Number.isInteger(a.max) ||
         !Number.isInteger(bRange.min) || !Number.isInteger(bRange.max) ||
         a.min > a.max || bRange.min > bRange.max) {
-      return c.json({ error: "dinamis_hitung: a {min,max} + b {min,max} + op (+-*/) wajib" }, 400);
+      return { error: "dinamis_hitung: a {min,max} + b {min,max} + op (+-*/) wajib", status: 400 };
     }
     const tpl = String(body.tpl ?? "{a} " + op + " {b} = ?");
     content = { text, tpl, a, b: bRange, op };
@@ -521,8 +520,8 @@ api.post("/api/questions", async (c) => {
     // Simulasi: guru menulis HTML+JS yang dirender di iframe sandbox,
     // siswa menyimpan jawaban via postMessage. Scoring manual (uraian-like).
     const html = String(body.html ?? "").trim();
-    if (!html) return c.json({ error: "html simulasi kosong" }, 400);
-    if (html.length > 20_000) return c.json({ error: "html terlalu besar (>20KB)" }, 413);
+    if (!html) return { error: "html simulasi kosong", status: 400 };
+    if (html.length > 20_000) return { error: "html terlalu besar (>20KB)", status: 413 };
     content = { text, html };
     answer_key = { manual: true };
     rubric = body.rubric ? String(body.rubric) : null;
@@ -531,13 +530,15 @@ api.post("/api/questions", async (c) => {
     const left = Array.isArray(body.left) ? (body.left as string[]).filter(Boolean) : [];
     const right = Array.isArray(body.right) ? (body.right as string[]).filter(Boolean) : [];
     if (left.length < 2 || right.length < left.length) {
-      return c.json({ error: "menjodohkan: butuh minimal 2 pasangan dan right ≥ left" }, 400);
+      return { error: "menjodohkan: butuh minimal 2 pasangan dan right ≥ left", status: 400 };
     }
-    // Default canonical pairing: left[i] ↔ right[i]
-    content = { text, left, right };
-    answer_key = { pairs: left.map((_, i) => [i, i] as [number, number]) };
+    // Kolom kanan diacak supaya pasangan tidak sejajar; kunci menyimpan posisi barunya.
+    const order = right.map((_, i) => i);
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    content = { text, left, right: order.map((k) => right[k]) };
+    answer_key = { pairs: left.map((_, i) => [i, order.indexOf(i)] as [number, number]) };
   } else {
-    return c.json({ error: `tipe '${type}' belum didukung` }, 400);
+    return { error: `tipe '${type}' belum didukung`, status: 400 };
   }
   if (image) content.image = image;
   if (audio) content.audio = audio;
@@ -554,6 +555,18 @@ api.post("/api/questions", async (c) => {
     }
     if (Object.keys(b).length) content.branches = b;
   }
+
+  return { type, content, answer_key, rubric, points, categoryId, passageId, image, audio };
+}
+
+api.post("/api/questions", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null) as null | Record<string, unknown>;
+  if (!body) return c.json({ error: "bad body" }, 400);
+  const q = buildQuestion(body);
+  if ("error" in q) return c.json({ error: q.error }, q.status);
+  const { type, content, answer_key, rubric, points, categoryId, passageId } = q;
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
@@ -1102,6 +1115,92 @@ api.post("/api/questions/import", async (c) => {
   return c.json(result);
 });
 
+// Unggah banyak soal sekaligus (dari Excel yang dibaca di browser). Setiap
+// baris memakai aturan yang sama dengan editor; kategori dibuat bila belum ada.
+api.post("/api/questions/bulk", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null) as null | { questions: Array<Record<string, unknown>> };
+  if (!body || !Array.isArray(body.questions) || body.questions.length === 0) return c.json({ error: "tidak ada soal" }, 400);
+  if (body.questions.length > 500) return c.json({ error: "maksimal 500 soal sekali unggah" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const cats = new Map<string, string>();
+    for (const r of await tx`select id, name from categories` as unknown as Array<{ id: string; name: string }>) cats.set(r.name.toLowerCase(), r.id);
+    let ok = 0; const fail: Array<{ row: number; error: string }> = [];
+    for (let i = 0; i < body.questions.length; i++) {
+      const row = { ...body.questions[i] };
+      const cname = typeof row.category_name === "string" ? row.category_name.trim() : "";
+      if (cname) {
+        let cid = cats.get(cname.toLowerCase());
+        if (!cid) {
+          const ins = await tx`insert into categories (school_id, name) values (${s.sid}, ${cname}) returning id`;
+          cid = (ins[0] as { id: string }).id; cats.set(cname.toLowerCase(), cid);
+        }
+        row.category_id = cid;
+      }
+      const q = buildQuestion(row);
+      if ("error" in q) { fail.push({ row: Number(row.row ?? i + 2), error: q.error }); continue; }
+      const ins = await tx`insert into questions (school_id, author_id, type, content, points, category_id)
+        values (${s.sid}, ${s.uid}, ${q.type}, ${q.content as unknown as string}, ${q.points}, ${q.categoryId}) returning id`;
+      await tx`insert into question_keys (question_id, school_id, answer_key, rubric)
+        values (${(ins[0] as { id: string }).id}, ${s.sid}, ${q.answer_key as unknown as string}, ${q.rubric})`;
+      ok++;
+    }
+    await audit(tx, actorFromSession(s), "question.bulk", "question", null, { ok, fail: fail.length });
+    return { ok, fail };
+  });
+  return c.json(result);
+});
+
+// Satu soal lengkap (dengan gambar/audio & kunci) untuk editor.
+api.get("/api/questions/:id", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select q.id, q.type, q.content, q.points, q.category_id, q.passage_id, k.answer_key, k.rubric,
+              (select count(*) from exam_questions eq join exams e on e.id = eq.exam_id
+               where eq.question_id = q.id and e.status in ('open','scheduled'))::int as live_exams
+       from questions q left join question_keys k on k.question_id = q.id where q.id = ${c.req.param("id")}`);
+  if (r.length === 0) return c.json({ error: "soal tidak ditemukan" }, 404);
+  return c.json(r[0]);
+});
+
+// Ubah soal. Gambar/audio lama dipertahankan bila body tidak menyertakannya
+// (image: "" untuk menghapus).
+api.patch("/api/questions/:id", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as null | Record<string, unknown>;
+  if (!body) return c.json({ error: "bad body" }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const old = await tx`select content, passage_id from questions where id = ${id}`;
+    if (old.length === 0) return { error: "soal tidak ditemukan", status: 404 as const };
+    const prev = (old[0] as { content: Record<string, unknown>; passage_id: string | null });
+    const merged = { ...body };
+    if (merged.image === undefined && prev.content.image) merged.image = prev.content.image;
+    if (merged.audio === undefined && prev.content.audio) merged.audio = prev.content.audio;
+    if (merged.image === "") delete merged.image;
+    if (merged.audio === "") delete merged.audio;
+    if (merged.passage_id === undefined) merged.passage_id = prev.passage_id;
+    if (merged.hint === undefined && prev.content.hint) merged.hint = prev.content.hint;
+    const q = buildQuestion(merged);
+    if ("error" in q) return q;
+    await tx`update questions set type = ${q.type}, content = ${q.content as unknown as string}, points = ${q.points},
+               category_id = ${q.categoryId}, passage_id = ${q.passageId}, updated_at = now() where id = ${id}`;
+    await tx`insert into question_keys (question_id, school_id, answer_key, rubric)
+             values (${id}, ${s.sid}, ${q.answer_key as unknown as string}, ${q.rubric})
+             on conflict (question_id) do update set answer_key = excluded.answer_key, rubric = excluded.rubric`;
+    await audit(tx, actorFromSession(s), "question.update", "question", id);
+    return { ok: true, id };
+  });
+  if ("error" in r) return c.json({ error: r.error }, r.status);
+  return c.json(r);
+});
+
 api.delete("/api/questions/:id", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
@@ -1214,7 +1313,7 @@ api.post("/api/exams", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const body = await c.req.json().catch(() => null) as null | {
-    title: string; kind: "harian"|"pts_pas"|"sumatif"|"tryout"; duration_minutes: number;
+    title: string; kind: string; duration_minutes: number;
     starts_at?: string | null; ends_at?: string | null;
     shuffle_questions?: boolean; shuffle_options?: boolean;
     anticheat_level?: "log"|"warn"|"lock"; lock_after_violations?: number | null;
@@ -1222,7 +1321,8 @@ api.post("/api/exams", async (c) => {
     scoring_config?: { wrong_penalty?: number; category_weights?: Record<string, number> };
     group_id?: string | null; group_position?: number | null;
   };
-  if (!body?.title || !body.kind || !body.duration_minutes) return c.json({ error: "data ujian kurang" }, 400);
+  if (!body?.title || !body.kind?.trim() || !body.duration_minutes) return c.json({ error: "data ujian kurang" }, 400);
+  body.kind = body.kind.trim().slice(0, 60);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`insert into exams (school_id, creator_id, title, kind, duration_minutes,
