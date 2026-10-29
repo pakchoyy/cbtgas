@@ -63,6 +63,13 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
 <script>
+  // Catat listener yang dipasang script halaman di document/window/body, supaya
+  // softReload() bisa melepasnya sebelum menjalankan ulang script halaman.
+  window.__gl = []; window.__rec = true;
+  (function () { const add = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function (t, f, o) {
+      if (window.__rec && (this === document || this === window || this === document.body)) window.__gl.push([this, t, f, o]);
+      return add.call(this, t, f, o); }; })();
   // Terapkan tema sebelum render agar tidak flash.
   (function(){ try { var t = localStorage.getItem('theme');
     if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
@@ -187,6 +194,27 @@ ${opts.nav === false ? "" : `<footer class="app-foot">${APP_NAME} · <a href="/p
 ${opts.nav === false ? SITE_FOOTER : ""}
 ${INSTALL_SHEET}
 <script>
+  window.__rec = false;
+  // Perbarui isi halaman tanpa memuat ulang penuh (dipakai setelah simpan/hapus).
+  window.softReload = async () => {
+    try {
+      const r = await fetch(location.href, { credentials: 'same-origin', cache: 'no-store' });
+      if (!r.ok || r.redirected) throw new Error('reload');
+      const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+      const nm = doc.querySelector('main'), om = document.querySelector('main');
+      if (!nm || !om) throw new Error('reload');
+      const y = scrollY;
+      const code = [...nm.querySelectorAll('script')].map((sc) => { sc.remove(); return sc.src ? '' : sc.textContent; }).join('\\n;\\n');
+      window.__gl.forEach(([t, ty, f, o]) => t.removeEventListener(ty, f, o)); window.__gl.length = 0;
+      om.replaceWith(document.adoptNode(nm));
+      window.__rec = true;
+      const run = document.createElement('script'); run.textContent = '(function () {\\n' + code + '\\n})();';
+      document.body.appendChild(run); run.remove();
+      window.__rec = false;
+      if (window.renderMathInElement) renderMathInElement(nm, { delimiters: [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }], throwOnError: false });
+      scrollTo(0, y);
+    } catch (_) { window.__rec = false; location.reload(); }
+  };
   // Tandai menu aktif.
   (function () {
     const p = location.pathname;
@@ -716,7 +744,7 @@ pages.get("/app/students", async (c) => {
         const id = d.cid; delete d.cid;
         try {
           await send(id ? '/api/classes/' + id : '/api/classes', id ? 'PATCH' : 'POST', d);
-          toast(id ? 'Kelas diperbarui.' : 'Kelas dibuat. Sekarang tambahkan siswanya.', 'ok'); location.reload();
+          toast(id ? 'Kelas diperbarui.' : 'Kelas dibuat. Sekarang tambahkan siswanya.', 'ok'); softReload();
         }
         catch (x) { err.textContent = x.message; err.hidden = false; }
       });
@@ -732,7 +760,7 @@ pages.get("/app/students", async (c) => {
         }
         const id = e.target.closest('[data-del-class]')?.getAttribute('data-del-class'); if (!id) return;
         if (!(await ask('Hapus kelas ini? Siswa yang terdaftar akan jadi tidak berkelas.'))) return;
-        try { await send('/api/classes/' + id, 'DELETE'); location.reload(); }
+        try { await send('/api/classes/' + id, 'DELETE'); softReload(); }
         catch (x) { alert(x.message); }
       });
 
@@ -741,7 +769,7 @@ pages.get("/app/students", async (c) => {
         const err = $('#errstu'); err.hidden = true;
         const d = Object.fromEntries(new FormData(e.target));
         for (const k of ['class_id','gender','nisn']) if (d[k] === '') d[k] = null;
-        try { await send('/api/students', 'POST', d); toast('Siswa ditambahkan.', 'ok'); location.reload(); }
+        try { await send('/api/students', 'POST', d); toast('Siswa ditambahkan.', 'ok'); softReload(); }
         catch (x) { err.textContent = x.message; err.hidden = false; }
       });
 
@@ -749,7 +777,7 @@ pages.get("/app/students", async (c) => {
         const delId = e.target.closest('[data-del-student]')?.getAttribute('data-del-student');
         if (delId) {
           if (!(await ask('Hapus siswa ini?'))) return;
-          try { await send('/api/students/' + delId, 'DELETE'); location.reload(); }
+          try { await send('/api/students/' + delId, 'DELETE'); softReload(); }
           catch (x) { alert(x.message); }
           return;
         }
@@ -806,7 +834,7 @@ pages.get("/app/students", async (c) => {
           if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
           let msg = j.ok + ' siswa berhasil diimpor.';
           if (j.fail && j.fail.length) msg += '\\n' + j.fail.length + ' baris gagal:\\n' + j.fail.slice(0, 10).map((x) => '  baris ' + x.row + ': ' + x.error).join('\\n');
-          alert(msg); location.reload();
+          alert(msg); softReload();
         } catch (x) { alert('Impor gagal: ' + x.message); }
       });
 
@@ -823,7 +851,7 @@ pages.get("/app/students", async (c) => {
         try {
           await send('/api/students/' + id, 'PATCH', d);
           await send('/api/students/' + id + '/guardian', 'PATCH', { email: guardian });
-          dlg.close(); location.reload();
+          dlg.close(); softReload();
         } catch (x) { erredit.textContent = x.message; erredit.hidden = false; }
       });
       document.getElementById('sendReport').addEventListener('click', async () => {
@@ -891,13 +919,13 @@ pages.get("/app/exam-groups", async (c) => {
         d.strict_order = fd.has('strict_order');
         const r = await fetch('/api/exam-groups', { method:'POST', credentials:'same-origin',
           headers: { 'Content-Type':'application/json' }, body: JSON.stringify(d) });
-        if (r.ok) location.reload(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
+        if (r.ok) softReload(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
       });
       document.body.addEventListener('click', async (e) => {
         const id = e.target.dataset.del; if (!id) return;
         if (!(await ask('Hapus grup? Ujian anggotanya tetap ada (group_id = null).'))) return;
         const r = await fetch('/api/exam-groups/' + id, { method:'DELETE', credentials:'same-origin' });
-        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+        if (r.ok) softReload(); else alert('Gagal: ' + r.status);
       });
     </script>
   `, { role: sess.role }));
@@ -1536,13 +1564,13 @@ pages.get("/app/exams/:id", async (c) => {
         e.preventDefault();
         if (!(await ask('Buka kembali sesi ini? Siswa dapat lanjut mengerjakan 15 menit.'))) return;
         const r = await fetch('/api/sessions/' + sid + '/unlock', { method: 'POST', credentials: 'same-origin' });
-        if (r.ok) location.reload(); else { const j = await r.json().catch(() => ({})); alert(j.error || 'HTTP ' + r.status); }
+        if (r.ok) softReload(); else { const j = await r.json().catch(() => ({})); alert(j.error || 'HTTP ' + r.status); }
       });
       document.querySelectorAll('[data-status]').forEach((b) => b.addEventListener('click', async () => {
         const status = b.dataset.status;
         const r = await fetch('/api/exams/' + EID, { method: 'PATCH', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
-        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+        if (r.ok) softReload(); else alert('Gagal: ' + r.status);
       }));
       document.getElementById('fq').addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -1613,7 +1641,7 @@ pages.get("/app/pin-resets", async (c) => {
         if (action === 'reject' && !(await ask('Tolak permintaan ini?'))) return;
         const r = await fetch('/api/pin-resets/' + id + '/' + action, { method:'POST', credentials:'same-origin' });
         if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || r.status); return; }
-        location.reload();
+        softReload();
       });
     </script>
   `, { role: sess.role }));
@@ -2251,7 +2279,7 @@ pages.get("/app/users", async (c) => {
         const d = Object.fromEntries(new FormData(e.target));
         const r = await fetch('/api/users', { method:'POST', credentials:'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
-        if (r.ok) location.reload();
+        if (r.ok) softReload();
         else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
       document.getElementById('tb').addEventListener('click', async (e) => {
@@ -2261,14 +2289,14 @@ pages.get("/app/users", async (c) => {
         if (action === 'delete') {
           if (!(await ask('Hapus staf ini?'))) return;
           const r = await fetch('/api/users/' + uid, { method:'DELETE', credentials:'same-origin' });
-          if (r.ok) location.reload(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
+          if (r.ok) softReload(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
           return;
         }
         if (action === 'toggle') {
           const active = e.target.textContent === 'Aktifkan';
           const r = await fetch('/api/users/' + uid, { method:'PATCH', credentials:'same-origin',
             headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ active }) });
-          if (r.ok) location.reload(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
+          if (r.ok) softReload(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
         }
       });
       document.getElementById('tb').addEventListener('change', async (e) => {
@@ -2276,7 +2304,7 @@ pages.get("/app/users", async (c) => {
         const tr = sel.closest('tr'); const uid = tr.dataset.uid;
         const r = await fetch('/api/users/' + uid, { method:'PATCH', credentials:'same-origin',
           headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ role: sel.value }) });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || r.status); location.reload(); }
+        if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || r.status); softReload(); }
       });
     </script>
   `, { role: sess.role }));
@@ -2339,14 +2367,14 @@ pages.get("/app/shared-banks", async (c) => {
         d.category_id = d.category_id || null;
         const r = await fetch('/api/shared-banks', { method:'POST', credentials:'same-origin',
           headers: { 'Content-Type':'application/json' }, body: JSON.stringify(d) });
-        if (r.ok) location.reload();
+        if (r.ok) softReload();
         else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP '+r.status; err.hidden = false; }
       });
       document.getElementById('tb').addEventListener('click', async (e) => {
         const id = e.target.dataset.del; if (!id) return;
         if (!(await ask('Hapus bank publik ini?'))) return;
         const r = await fetch('/api/shared-banks/' + id, { method:'DELETE', credentials:'same-origin' });
-        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+        if (r.ok) softReload(); else alert('Gagal: ' + r.status);
       });
     </script>
   `, { role: sess.role }));
@@ -2391,14 +2419,14 @@ pages.get("/app/passages", async (c) => {
         const d = Object.fromEntries(new FormData(e.target));
         const r = await fetch('/api/passages', { method:'POST', credentials:'same-origin',
           headers: { 'Content-Type':'application/json' }, body: JSON.stringify(d) });
-        if (r.ok) location.reload();
+        if (r.ok) softReload();
         else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP '+r.status; err.hidden = false; }
       });
       document.getElementById('tb').addEventListener('click', async (e) => {
         const id = e.target.dataset.del; if (!id) return;
         if (!(await ask('Hapus bacaan? Soal yang pakai bacaan ini akan jadi tanpa bacaan.'))) return;
         const r = await fetch('/api/passages/' + id, { method:'DELETE', credentials:'same-origin' });
-        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+        if (r.ok) softReload(); else alert('Gagal: ' + r.status);
       });
     </script>
   `, { role: sess.role }));
@@ -2472,7 +2500,7 @@ pages.get("/app/exams/:id/lab", async (c) => {
           headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ student_ids: ids }),
         });
         const j = await r.json().catch(() => ({}));
-        if (r.ok) { alert(j.created + ' sesi dibuat, ' + j.skipped + ' dilewati (sudah ada).'); location.reload(); }
+        if (r.ok) { alert(j.created + ' sesi dibuat, ' + j.skipped + ' dilewati (sudah ada).'); softReload(); }
         else { err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
     </script>
@@ -2803,14 +2831,14 @@ pages.get("/app/categories", async (c) => {
         const d = Object.fromEntries(new FormData(e.target));
         const r = await fetch('/api/categories', { method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
-        if (r.ok) location.reload();
+        if (r.ok) softReload();
         else { const j = await r.json().catch(() => ({})); err.textContent = j.error || 'HTTP ' + r.status; err.hidden = false; }
       });
       document.getElementById('tb').addEventListener('click', async (e) => {
         const id = e.target.dataset.del; if (!id) return;
         if (!(await ask('Hapus kategori? Soal yang pakai kategori ini akan jadi tanpa kategori.'))) return;
         const r = await fetch('/api/categories/' + id, { method: 'DELETE', credentials: 'same-origin' });
-        if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
+        if (r.ok) softReload(); else alert('Gagal: ' + r.status);
       });
     </script>
   `, { role: sess.role }));
@@ -3102,7 +3130,7 @@ Jawaban: B
           const r = await fetch('/api/public-banks/' + sm.dataset.sample + '/save', { method: 'POST', credentials: 'same-origin' });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) { toast('Gagal: ' + (j.error || r.status), 'err'); sm.disabled = false; sm.textContent = 'Tambahkan'; return; }
-          toast(j.ok + ' soal contoh ditambahkan ke "' + j.category + '".', 'ok'); location.reload();
+          toast(j.ok + ' soal contoh ditambahkan ke "' + j.category + '".', 'ok'); softReload();
         }
       });
       $('crumb').addEventListener('click', (e) => { if (e.target.closest('#back')) { catSel = null; $('fq').value = ''; $('ft').value = ''; draw(); } });
@@ -3165,7 +3193,7 @@ Jawaban: B
           const r = await fetch('/api/public-banks/' + b.dataset.save + '/save', { method: 'POST', credentials: 'same-origin' });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) { alert('Gagal: ' + (j.error || r.status)); b.disabled = false; b.textContent = 'Simpan ke bank saya'; return; }
-          alert(j.ok + ' soal disimpan ke kategori "' + j.category + '".'); location.reload();
+          alert(j.ok + ' soal disimpan ke kategori "' + j.category + '".'); softReload();
         }
         if (b.dataset.pv) {
           const r = await fetch('/public/banks/' + b.dataset.pv); const j = await r.json().catch(() => null);
@@ -3315,7 +3343,7 @@ Jawaban: B
           const r = await fetch(cur ? '/api/questions/' + cur.id : '/api/questions', { method: cur ? 'PATCH' : 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
-          location.reload();
+          softReload();
         } catch (x) { alert('Gagal menyimpan: ' + x.message); btn.disabled = false; }
       });
 
@@ -3450,7 +3478,7 @@ Jawaban: B
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { alert('Gagal: ' + (j.error || r.status)); $('upGo').disabled = false; return; }
         alert(j.ok + ' soal tersimpan.' + (j.fail && j.fail.length ? '\\n' + j.fail.length + ' gagal: ' + j.fail.slice(0, 5).map((x) => 'baris ' + x.row + ' (' + x.error + ')').join(', ') : ''));
-        location.reload();
+        softReload();
       };
     </script>
   `, { role: sess.role }));
