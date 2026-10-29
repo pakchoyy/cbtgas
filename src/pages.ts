@@ -5,7 +5,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA } from "./ui";
+import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, UI_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -14,7 +14,7 @@ export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>(
 // Navigasi staf: lima tujuan utama (juga navbar bawah di HP). Halaman lain
 // dijangkau dari Pengaturan supaya menu tetap pendek.
 const NAV: Array<[string, string, string]> = [
-  ["/app", "Beranda", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"], ["/app/questions", "Bank soal", "M5 4h11l3 3v13H5zM9 10h6M9 14h6"], ["/app/exams", "Ujian", "M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"], ["/app/students", "Siswa", "M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 11a3 3 0 1 0 0-6M22 21v-1a5 5 0 0 0-4-4.9"], ["/app/settings", "Pengaturan", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"],
+  ["/app", "Dashboard", "M4 4h7v9H4zM13 4h7v5h-7zM13 11h7v9h-7zM4 15h7v5H4z"], ["/app/questions", "Bank soal", "M5 4h11l3 3v13H5zM9 10h6M9 14h6"], ["/app/exams", "Ujian", "M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"], ["/app/students", "Siswa", "M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 11a3 3 0 1 0 0-6M22 21v-1a5 5 0 0 0-4-4.9"], ["/app/settings", "Pengaturan", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"],
 ];
 const MOON = "M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z";
 const icon = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
@@ -36,10 +36,12 @@ const sidebar = (role: string) => `
     <div class="nav-main">${NAV.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span data-i18n-src="${label}">${label}</span></a>`).join("")}</div>
   </nav>
   <div class="side-foot">
+    <button type="button" class="ghost" data-install>${icon("M12 3v12M7 10l5 5 5-5M5 21h14")}<span>Pasang aplikasi</span></button>
+    <a class="ghost" href="/tentang">${icon("M12 8h.01M11 12h1v5h1M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z")}<span>Tentang</span></a>
+    <a class="ghost" href="/tentang#kontak">${icon("M4 5h16v14H4zM4 7l8 6 8-6")}<span>Kontak</span></a>
     <a class="ghost fb" href="${FEEDBACK_WA}" target="_blank" rel="noopener">${icon("M4 5h16v11H8l-4 4zM8 9h8M8 12h5")}<span>Kritik &amp; saran</span></a>
-    <button type="button" class="ghost" data-theme-toggle>${icon(MOON)}<span>Terang / gelap</span></button>
-    <button type="button" class="ghost" id="toggleLang">${icon("M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18")}<span>ID / EN</span></button>
-    <form method="post" action="/auth/logout"><button type="submit" class="ghost">${icon("M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10")}<span data-i18n-src="Keluar">Keluar</span></button></form>
+    <button type="button" class="ghost desk-only" data-theme-toggle>${icon(MOON)}<span>Terang / gelap</span></button>
+    <form method="post" action="/auth/logout"><button type="submit" class="ghost">${icon("M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10")}<span>Keluar</span></button></form>
   </div>
 </aside>
 <div class="scrim" id="scrim" hidden></div>`;
@@ -153,7 +155,12 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
     .mbar { justify-content: space-between; }
     .side .nav-main { display: none; }
     .mbar-act { display:flex; gap: 2px; }
-    .side { inset: 0 0 0 auto; border-right: none; border-left: 1px solid var(--line); transform: translateX(100%); transition: transform .2s; box-shadow: 0 0 40px rgba(0,0,0,.3); }
+    /* Di HP menu muncul sebagai panel dari atas, di bawah bar. */
+    .side { inset: 66px 10px auto 10px; width: auto; max-height: calc(100dvh - 160px); border: 1px solid var(--line); border-radius: 20px; padding: 8px;
+            box-shadow: 0 24px 60px rgba(15,23,42,.25); opacity: 0; visibility: hidden; transform: translateY(-8px); transition: opacity .18s, transform .18s, visibility .18s; }
+    body.nav-open .side { opacity: 1; visibility: visible; transform: none; }
+    .side > .brand, .side .desk-only { display: none; }
+    .side-foot { border-top: none; margin-top: 0; padding-top: 0; }
     .bnav { display:grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
             background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
             border-top: 1px solid var(--line); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); }
@@ -164,7 +171,6 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
     .bnav a[aria-current="page"] svg { background: var(--soft); border-radius: 999px; padding: 3px 12px; width: 48px; height: 28px; box-sizing: border-box; }
     body.app main { padding-bottom: 96px; }
     body.app .install { bottom: 84px; }
-    body.nav-open .side { transform: none; }
     main { padding: 20px 16px 56px; }
     body.public main { padding: 0 16px; }
     .two { grid-template-columns: 1fr; }
@@ -212,25 +218,16 @@ ${INSTALL_SHEET}
     applyI18n(next);
   });
   try { applyI18n(localStorage.getItem('lang') || 'id'); } catch (_) {}
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-  let deferred;
-  window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault(); deferred = e;
-    try { if (localStorage.getItem('install_dismissed')) return; } catch(_) {}
-    const card = document.getElementById('installCard'); if (card) card.hidden = false;
-  });
-  document.getElementById('installBtn')?.addEventListener('click', async () => {
-    if (!deferred) return; deferred.prompt(); await deferred.userChoice;
-    document.getElementById('installCard').hidden = true; deferred = null;
-  });
-  document.getElementById('installClose')?.addEventListener('click', () => {
-    document.getElementById('installCard').hidden = true;
-    try { localStorage.setItem('install_dismissed', '1'); } catch(_){}
-  });
 </script>
+${UI_JS}
 </body>
 </html>`;
 
+// Tahun ajar berjalan (Juli–Juni), mis. "2026/2027".
+const schoolYear = () => {
+  const d = new Date(Date.now() + 7 * 3600_000), y = d.getUTCFullYear();
+  return d.getUTCMonth() >= 6 ? `${y}/${y + 1}` : `${y - 1}/${y}`;
+};
 const googleIcon = `<svg class="g" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.6 32.9 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.1-11.3-7.5l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.6l6.2 5.2C41.1 36 44 30.5 44 24c0-1.3-.1-2.3-.4-3.5z"/></svg>`;
 const googleBtn = (mode: "login" | "register", label: string) => `
 <a class="btn primary" href="/auth/google/start?mode=${mode}">
@@ -408,6 +405,24 @@ pages.get("/syarat", (c) => c.html(legalPage("Syarat Layanan", `
   <p><a href="mailto:${CONTACT}">${CONTACT}</a></p>
 `)));
 
+// Tentang & kontak (publik).
+pages.get("/tentang", (c) => c.html(base("Tentang", `
+  <div style="padding:20px 0"><a class="brand" href="/">${LOGO}</a></div>
+  <article class="card" style="max-width:720px;margin:8px auto 16px;padding:28px">
+    <h1>Tentang CBT Yuk</h1>
+    <p>CBT Yuk adalah aplikasi ujian berbasis komputer untuk SD, SMP, dan SMA. Guru menulis atau mengunggah soal, membuat ujian, mengawasi siswa secara langsung, dan nilai keluar otomatis. Siswa cukup membuka browser di HP atau komputer lab, tanpa instal.</p>
+    <p>Dibuat untuk sekolah Indonesia, dengan tampilan sederhana supaya guru dan siswa tidak bingung.</p>
+  </article>
+  <section class="card" id="kontak" style="max-width:720px;margin:0 auto;padding:28px;scroll-margin-top:20px">
+    <h2>Kontak</h2>
+    <p class="muted" style="margin-top:0">Ada pertanyaan, kendala, atau ide? Hubungi kami.</p>
+    <div class="row">
+      <a class="btn primary" href="${FEEDBACK_WA}" target="_blank" rel="noopener">WhatsApp 0895-3071-3597</a>
+      <a class="btn" href="mailto:admin@bantuguruyuk.web.id">admin@bantuguruyuk.web.id</a>
+    </div>
+  </section>
+`, { nav: false })));
+
 pages.get("/register", (c) => {
   // Butuh cookie pending_registration (diset oleh /auth/google/callback mode=register).
   const hasPending = (c.req.header("Cookie") ?? "").includes("pending_registration=");
@@ -517,7 +532,7 @@ pages.get("/app", async (c) => {
     <a class="btn" href="/app/exams/${esc(e.id)}">Atur</a></div>`).join("");
 
   const owner = await isOwner(sql, sess.email);
-  return c.html(base("Beranda", `
+  return c.html(base("Dashboard", `
     ${owner ? `<a class="card" href="/owner" style="display:flex;justify-content:space-between;align-items:center;text-decoration:none;color:inherit;padding:14px 20px"><span><b>Pemantauan layanan</b> <span class="muted">· lihat semua sekolah uji coba</span></span><span>→</span></a>` : ""}
     <div class="page-head">
       <div><h1>${esc(school?.name ?? "Sekolah")}</h1>
@@ -592,22 +607,18 @@ pages.get("/app/students", async (c) => {
     .join("");
 
   const classRows = classList
-    .map((cl) => `<tr>
-      <td>${esc(cl.name)}</td><td>${cl.grade ?? ""}</td><td>${esc(cl.year)}</td>
-      <td style="text-align:right"><button class="danger" data-del-class="${esc(cl.id)}">Hapus</button></td>
-    </tr>`).join("") || `<tr><td colspan="4" class="muted">Belum ada kelas.</td></tr>`;
+    .map((cl) => `<div class="lrow">
+      <span class="lt"><b>${esc(cl.name)}</b><span>${cl.grade ? `Kelas ${cl.grade} · ` : ""}${esc(cl.year)}</span></span>
+      <div class="acts"><button type="button" class="ibtn" aria-label="Edit kelas ${esc(cl.name)}" data-edit-class='${esc(JSON.stringify(cl))}'>${ICON_EDIT}</button>
+        <button type="button" class="ibtn del" aria-label="Hapus kelas ${esc(cl.name)}" data-del-class="${esc(cl.id)}">${ICON_DEL}</button></div>
+    </div>`).join("") || `<p class="muted">Belum ada kelas.</p>`;
 
-  const studentRows = studentList.map((s) => `<tr data-sid="${esc(s.id)}">
-      <td><a href="/app/students/${esc(s.id)}/analytics">${esc(s.name)}</a></td>
-      <td>${esc(s.username)}</td>
-      <td>${esc(s.class_name ?? "-")}</td>
-      <td>${s.gender ?? ""}</td>
-      <td>${esc(s.nisn ?? "")}</td>
-      <td style="text-align:right; white-space:nowrap">
-        <button data-edit-student='${esc(JSON.stringify(s))}'>Edit</button>
-        <button class="danger" data-del-student="${esc(s.id)}">Hapus</button>
-      </td>
-    </tr>`).join("") || `<tr><td colspan="6" class="muted">Belum ada siswa.</td></tr>`;
+  const studentRows = studentList.map((s) => `<div class="lrow" data-sid="${esc(s.id)}">
+      <span class="lt"><a href="/app/students/${esc(s.id)}/analytics"><b>${esc(s.name)}</b></a>
+        <span>${esc(s.username)} · ${esc(s.class_name ?? "tanpa kelas")}${s.nisn ? ` · NISN ${esc(s.nisn)}` : ""}</span></span>
+      <div class="acts"><button type="button" class="ibtn" aria-label="Edit ${esc(s.name)}" data-edit-student='${esc(JSON.stringify(s))}'>${ICON_EDIT}</button>
+        <button type="button" class="ibtn del" aria-label="Hapus ${esc(s.name)}" data-del-student="${esc(s.id)}">${ICON_DEL}</button></div>
+    </div>`).join("") || `<p class="muted">Belum ada siswa.</p>`;
 
   const ov = overview as { students: string; open_exams: string; online: string; week_submits: string; avg_score: string };
   return c.html(base("Siswa & kelas", `
@@ -622,27 +633,25 @@ pages.get("/app/students", async (c) => {
 
     <div class="card">
       <div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">Kelas</h2></div>
-      <details class="add" ${classList.length ? "" : "open"}>
+      <details class="add" id="dcls" ${classList.length ? "" : "open"}>
         <summary class="btn primary">+ Tambah kelas</summary>
         <form id="fcls" class="inline">
+          <input type="hidden" name="cid">
           <div class="grid">
-            <div><label>Nama kelas</label><input name="name" required placeholder="X-IPA-1"></div>
-            <div><label>Tingkat</label><input name="grade" type="number" min="1" max="12" placeholder="10"></div>
-            <div><label>Tahun ajar</label><input name="year" required placeholder="2025/2026"></div>
+            <div><label>Nama kelas</label><input name="name" required placeholder="mis. 7A atau X-IPA-1"></div>
+            <div><label>Tingkat</label><select name="grade"><option value="">—</option>${Array.from({ length: 12 }, (_, i) => i + 1).map((g) => `<option value="${g}">Kelas ${g} · ${g <= 6 ? "SD" : g <= 9 ? "SMP" : "SMA/SMK"}</option>`).join("")}</select></div>
+            <div><label>Tahun ajar</label><input name="year" required value="${schoolYear()}"></div>
           </div>
-          <div class="row"><button class="primary" type="submit">Simpan kelas</button></div>
+          <div class="row"><button class="primary" type="submit" id="clsSave">Simpan kelas</button><button type="button" id="clsCancel" hidden>Batal edit</button></div>
           <p class="err" id="errcls" hidden></p>
         </form>
       </details>
-      <table>
-        <thead><tr><th>Nama</th><th>Tingkat</th><th>Tahun</th><th></th></tr></thead>
-        <tbody id="tbcls">${classRows}</tbody>
-      </table>
+      <div class="lrows" id="tbcls">${classRows}</div>
     </div>
 
     <div class="card">
       <div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">Siswa</h2></div>
-      <details class="add" ${studentList.length || !classList.length ? "" : "open"}>
+      <details class="add">
         <summary class="btn primary">+ Tambah siswa</summary>
         <form id="fstu" class="inline">
           <div class="grid">
@@ -666,10 +675,7 @@ pages.get("/app/students", async (c) => {
           <p class="err" id="errstu" hidden></p>
         </form>
       </details>
-      <table>
-        <thead><tr><th>Nama</th><th>Username</th><th>Kelas</th><th>G</th><th>NISN</th><th></th></tr></thead>
-        <tbody id="tbstu">${studentRows}</tbody>
-      </table>
+      <div class="lrows" id="tbstu">${studentRows}</div>
     </div>
 
     <!-- Dialog edit siswa -->
@@ -716,12 +722,24 @@ pages.get("/app/students", async (c) => {
         const err = $('#errcls'); err.hidden = true;
         const d = Object.fromEntries(new FormData(e.target));
         if (d.grade === '') d.grade = null; else d.grade = +d.grade;
-        try { await send('/api/classes', 'POST', d); location.reload(); }
+        const id = d.cid; delete d.cid;
+        try {
+          await send(id ? '/api/classes/' + id : '/api/classes', id ? 'PATCH' : 'POST', d);
+          toast(id ? 'Kelas diperbarui.' : 'Kelas dibuat. Sekarang tambahkan siswanya.', 'ok'); location.reload();
+        }
         catch (x) { err.textContent = x.message; err.hidden = false; }
       });
 
+      $('#clsCancel').addEventListener('click', () => { $('#fcls').reset(); $('#fcls').cid.value = ''; $('#clsSave').textContent = 'Simpan kelas'; $('#clsCancel').hidden = true; });
       $('#tbcls').addEventListener('click', async (e) => {
-        const id = e.target.getAttribute('data-del-class'); if (!id) return;
+        const ed = e.target.closest('[data-edit-class]');
+        if (ed) {
+          const c = JSON.parse(ed.getAttribute('data-edit-class')), f = $('#fcls');
+          f.cid.value = c.id; f.name.value = c.name; f.grade.value = c.grade ?? ''; f.year.value = c.year;
+          $('#dcls').open = true; $('#clsSave').textContent = 'Simpan perubahan'; $('#clsCancel').hidden = false; f.name.focus();
+          return;
+        }
+        const id = e.target.closest('[data-del-class]')?.getAttribute('data-del-class'); if (!id) return;
         if (!confirm('Hapus kelas ini? Siswa yang terdaftar akan jadi tidak berkelas.')) return;
         try { await send('/api/classes/' + id, 'DELETE'); location.reload(); }
         catch (x) { alert(x.message); }
@@ -732,19 +750,19 @@ pages.get("/app/students", async (c) => {
         const err = $('#errstu'); err.hidden = true;
         const d = Object.fromEntries(new FormData(e.target));
         for (const k of ['class_id','gender','nisn']) if (d[k] === '') d[k] = null;
-        try { await send('/api/students', 'POST', d); location.reload(); }
+        try { await send('/api/students', 'POST', d); toast('Siswa ditambahkan.', 'ok'); location.reload(); }
         catch (x) { err.textContent = x.message; err.hidden = false; }
       });
 
       $('#tbstu').addEventListener('click', async (e) => {
-        const delId = e.target.getAttribute('data-del-student');
+        const delId = e.target.closest('[data-del-student]')?.getAttribute('data-del-student');
         if (delId) {
           if (!confirm('Hapus siswa ini?')) return;
           try { await send('/api/students/' + delId, 'DELETE'); location.reload(); }
           catch (x) { alert(x.message); }
           return;
         }
-        const editJson = e.target.getAttribute('data-edit-student');
+        const editJson = e.target.closest('[data-edit-student]')?.getAttribute('data-edit-student');
         if (editJson) {
           const s = JSON.parse(editJson);
           erredit.hidden = true;
@@ -765,8 +783,11 @@ pages.get("/app/students", async (c) => {
       });
       const COLS = { name: ['nama', 'nama lengkap', 'name'], username: ['username', 'user', 'nama pengguna'], class: ['kelas', 'class'],
         gender: ['jk', 'jenis kelamin', 'gender', 'l/p'], nisn: ['nisn'], pin: ['pin', 'password', 'kata sandi'] };
-      $('#btnTpl').addEventListener('click', async () => {
-        const X = await loadXlsx();
+      // Muat pembaca Excel di latar belakang supaya tombol langsung bereaksi.
+      (window.requestIdleCallback || ((f) => setTimeout(f, 1500)))(() => loadXlsx().catch(() => {}));
+      $('#btnTpl').addEventListener('click', async (ev) => {
+        const btn = ev.currentTarget, label = btn.textContent; btn.disabled = true; btn.textContent = 'Menyiapkan…';
+        const X = await loadXlsx().finally(() => { btn.disabled = false; btn.textContent = label; });
         const ws = X.utils.aoa_to_sheet([['Nama', 'Username', 'Kelas', 'JK', 'NISN', 'PIN'],
           ['Andi Saputra', 'andi.saputra', 'X-IPA-1', 'L', '0012345678', '123456'],
           ['Siti Aminah', 'siti.aminah', 'X-IPA-1', 'P', '', '654321']]);
@@ -1062,18 +1083,20 @@ pages.get("/app/settings", async (c) => {
   return c.html(base("Pengaturan", `
     <div class="page-head"><div><h1>Pengaturan</h1><p>${esc(sc.name)} · paket ${esc(sc.plan === "trial" ? "uji coba" : sc.plan)}</p></div></div>
     <div class="tiles">
-      ${tile("/app/pin-resets", "Reset PIN siswa", "Setujui permintaan siswa yang lupa PIN", "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4", pending ? ` <span class="pill closed">${pending}</span>` : "")}
-      ${admin ? tile("/app/users", "Guru & admin", "Undang guru, pengawas, atau admin lain", "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0M19 8v6M16 11h6") : ""}
       ${admin ? tile("#profil", "Profil sekolah", "Nama, jenjang, kontak, dan warna", "M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6") : ""}
+      ${admin ? tile("/app/users", "Guru & admin", "Undang guru, pengawas, atau admin lain", "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0M19 8v6M16 11h6") : ""}
+      ${tile("/app/pin-resets", "Reset PIN siswa", "Setujui permintaan siswa yang lupa PIN", "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4", pending ? ` <span class="pill closed">${pending}</span>` : "")}
       ${admin ? tile("/app/restore", "Backup & pulihkan", "Unduh cadangan data atau pulihkan", "M4 12a8 8 0 1 0 3-6.2M4 4v4h4") : ""}
     </div>
     <div class="card">
       <h2>Tampilan</h2>
       <div class="seg" id="thm" role="group" aria-label="Tema"><button type="button" data-t="light">Terang</button><button type="button" data-t="dark">Gelap</button><button type="button" data-t="">Ikuti perangkat</button></div>
     </div>
-    ${admin ? `<div id="profil" style="scroll-margin-top:80px"></div><form id="fs" class="two">
-      <div class="card">
-        <h2>Identitas</h2>
+    ${admin ? `<dialog id="prof" class="sheet" aria-labelledby="profT"><form id="fs" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="sheet-head"><h2 id="profT">Profil sekolah</h2><button type="button" class="x" id="profX" aria-label="Tutup">✕</button></div>
+      <div class="sheet-body">
+      <div>
+        <h3 style="margin:8px 0 0">Identitas</h3>
         <label>Nama sekolah</label><input name="name" required value="${esc(sc.name)}">
         <div class="grid">
           <div><label>Jenjang</label><select name="level">${lv("SD", "SD")}${lv("SMP", "SMP")}${lv("SMA", "SMA/SMK")}${lv("CAMPURAN", "Campuran")}</select></div>
@@ -1084,15 +1107,16 @@ pages.get("/app/settings", async (c) => {
           <div><label>No. HP operator</label><input name="operator_phone" inputmode="tel" value="${esc(sc.operator_phone)}"></div>
         </div>
       </div>
-      <div class="card">
-        <h2>Warna merek</h2>
+      <div style="margin-top:18px">
+        <h3 style="margin:0">Warna merek</h3>
         <p class="muted" style="margin-top:-6px">Dipakai untuk tombol, menu, dan pilihan jawaban siswa.</p>
         <div class="sws">${swatches}</div>
         <div class="prev"><button type="button" class="primary" tabindex="-1">Tombol utama</button><span class="pill scheduled">Terjadwal</span><span class="pv-opt"><i>A</i>Jawaban terpilih</span></div>
         <p class="muted" style="margin-bottom:0">Paket: <b>${esc(sc.plan === "trial" ? "Uji coba" : sc.plan)}</b> · terdaftar ${new Date(sc.created_at).toLocaleDateString("id-ID", { dateStyle: "long", timeZone: "Asia/Jakarta" })}</p>
       </div>
-      <div class="row" style="grid-column:1/-1;margin:0"><button class="primary" type="submit">Simpan perubahan</button><span id="msg" class="muted" role="status"></span></div>
-    </form>` : ""}
+      </div>
+      <div class="sheet-foot"><span id="msg" class="muted" role="status" style="align-self:center"></span><span class="spacer"></span><button class="primary" type="submit">Simpan perubahan</button></div>
+    </form></dialog>` : ""}
     <style>
       .tiles { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 16px; }
       .tile { display:flex; align-items:center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px; box-shadow: var(--shadow); text-decoration: none; color: var(--fg); min-height: 76px; }
@@ -1128,6 +1152,9 @@ pages.get("/app/settings", async (c) => {
         markT();
       });
       markT();
+      const prof = document.getElementById('prof');
+      document.querySelector('a.tile[href="#profil"]')?.addEventListener('click', (e) => { e.preventDefault(); prof.showModal(); });
+      document.getElementById('profX')?.addEventListener('click', () => prof.close());
       const f = document.getElementById('fs'), msg = document.getElementById('msg');
       if (f) f.addEventListener('change', (e) => { if (e.target.name === 'color') document.documentElement.style.setProperty('--brand', HEX[e.target.value]); });
       if (f) f.addEventListener('submit', async (e) => {
@@ -1135,7 +1162,7 @@ pages.get("/app/settings", async (c) => {
         const d = Object.fromEntries(new FormData(f));
         const r = await fetch('/api/school', { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
         const j = await r.json().catch(() => ({}));
-        if (r.ok) { msg.textContent = 'Tersimpan.'; } else { msg.className = 'err'; msg.textContent = j.error || 'Gagal menyimpan.'; }
+        if (r.ok) { msg.textContent = ''; prof.close(); toast('Profil sekolah tersimpan.', 'ok'); } else { msg.className = 'err'; msg.textContent = j.error || 'Gagal menyimpan.'; }
       });
     </script>
   `, { role: sess.role }));
@@ -1172,9 +1199,9 @@ pages.get("/app/exams/new", async (c) => {
         <h2>Ujian apa ini?</h2>
         <label>Judul ujian</label><input name="title" placeholder="mis. Ulangan Harian Matematika Bab 3" required>
         <div class="grid">
-          <div><label>Jenis ujian <span class="muted">(pilih atau ketik sendiri)</span></label>
-            <input name="kind" list="kinds" value="Ulangan harian" maxlength="60" required>
-            <datalist id="kinds"><option value="Ulangan harian"><option value="Kuis"><option value="PTS"><option value="PAS"><option value="Sumatif"><option value="Asesmen formatif"><option value="Tryout"><option value="Remedial"><option value="Ujian sekolah"></datalist></div>
+          <div style="grid-column:1/-1"><label for="kindIn">Jenis ujian <span class="muted">(ketuk salah satu atau ketik sendiri)</span></label>
+            <div class="kchips" id="kchips">${["Ulangan harian", "Kuis", "PTS", "PAS", "Sumatif", "Tryout", "Remedial", "Ujian sekolah"].map((k, i) => `<button type="button" aria-pressed="${i === 0}">${k}</button>`).join("")}</div>
+            <input id="kindIn" name="kind" value="Ulangan harian" maxlength="60" required autocomplete="off"></div>
           <div><label>Durasi pengerjaan <span class="muted">(menit)</span></label><input name="duration_minutes" type="number" min="5" value="60" required></div>
         </div>
       </section>
@@ -1257,12 +1284,19 @@ pages.get("/app/exams/new", async (c) => {
       .cls:has(input:checked) { border-color:var(--ink); background:color-mix(in srgb, var(--pencil) 14%, transparent); }
       .cls small { margin-left:auto; color:var(--mut); font-weight:400; }
       .wnav { justify-content:space-between; }
+      .kchips { display:flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+      .kchips button { min-height: 38px; padding: 6px 14px; border-radius: 999px; font-size: 13.5px; }
+      .kchips button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
     </style>
     <script>
       const D = ${data};
       const f = document.getElementById('wf'), err = document.getElementById('wErr');
       const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
       const TYPE = { pg:'Pilihan ganda', benar_salah:'Benar/Salah', isian:'Isian', uraian:'Uraian', pgk_centang:'PG kompleks', menjodohkan:'Menjodohkan', pgk_kategori:'Kategori', simulasi:'Simulasi', dinamis_hitung:'Hitung dinamis' };
+      const kch = document.getElementById('kchips');
+      kch.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; f.kind.value = b.textContent; markKind(); });
+      const markKind = () => kch.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.textContent === f.kind.value.trim())));
+      f.kind.addEventListener('input', markKind);
       let step = 1;
       const pickedQ = new Set();
 
@@ -2889,11 +2923,11 @@ pages.get("/app/questions", async (c) => {
       <button type="button" role="tab" data-tab="pub" aria-selected="false">Soal publik</button>
     </div>
     <section id="tabMine">
-      <div class="chips" id="cats" aria-label="Kategori"></div>
       <div class="qbar">
         <input type="search" id="fq" placeholder="Cari soal…" aria-label="Cari soal">
         <select id="ft" aria-label="Tipe"><option value="">Semua tipe</option></select>
       </div>
+      <div class="crumb" id="crumb" hidden><button type="button" id="back">‹ Semua kategori</button><b id="crumbName"></b></div>
       <div id="qlist"></div>
     </section>
     <section id="tabPub" hidden>
@@ -2982,6 +3016,21 @@ Jawaban: B
       @media (max-width: 480px) { .qbar { grid-template-columns: minmax(0, 1fr) 130px; } }
       .qc, .qc p, .qc li span { overflow-wrap: anywhere; }
       .qc .katex-display { overflow-x: auto; overflow-y: hidden; }
+      .folders { display:grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-bottom: 18px; }
+      .folder { display:flex; align-items:center; gap: 14px; text-align:left; padding: 14px; min-height: 76px; border-radius: 18px; width: 100%;
+                background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--fg); font-weight: 400; white-space: normal; justify-content:flex-start; }
+      .folder:hover { border-color: hsl(var(--h, 217) 70% 55%); }
+      .folder .fi { width: 46px; height: 46px; border-radius: 14px; flex: 0 0 auto; display:grid; place-items:center; font-weight: 800; font-size: 19px;
+                    background: hsl(var(--h, 217) 85% 95%); color: hsl(var(--h, 217) 65% 40%); }
+      :root[data-theme="dark"] .folder .fi { background: hsl(var(--h, 217) 40% 20%); color: hsl(var(--h, 217) 80% 75%); }
+      .folder .ft { flex: 1; min-width: 0; display:flex; flex-direction:column; } .folder .ft b { font-size: 15.5px; } .folder .ft span { color: var(--mut); font-size: 13px; }
+      .folder .chev { color: var(--mut); font-size: 22px; }
+      .folder.add { border-style: dashed; box-shadow: none; } .folder.add .fi { background: var(--soft); color: var(--brand); }
+      .folder.pack button { min-height: 38px; padding: 6px 14px; font-size: 13.5px; flex: 0 0 auto; }
+      h3.sec { margin: 6px 0 8px; font-size: 16px; }
+      .crumb { display:flex; align-items:center; gap: 10px; margin: 0 0 12px; }
+      .crumb button { min-height: 38px; padding: 6px 12px; font-size: 13.5px; border-radius: 999px; }
+      .crumb b { font-size: 16px; }
       .pubhead { display:flex; gap: 12px; align-items:center; justify-content:space-between; flex-wrap: wrap; margin-bottom: 12px; }
       .pb { display:flex; gap: 14px; align-items:center; flex-wrap: wrap; }
       .pb .pt { flex: 1 1 220px; min-width: 0; } .pb .pt > b, .pb .pt > span { display:block; } .pb .pt span { color: var(--mut); font-size: 13.5px; }
@@ -2997,15 +3046,6 @@ Jawaban: B
       .qc li.ok { color: var(--ok); font-weight: 600; }
       .tpill { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--soft); color: var(--brand); }
       .empty-q { text-align:center; padding: 40px 16px; color: var(--mut); background: var(--surface); border: 1.5px dashed var(--line); border-radius: 18px; }
-      dialog.sheet { max-width: 680px; width: calc(100% - 16px); padding: 0; max-height: calc(100dvh - 24px); }
-      dialog.sheet[open] { display:flex; flex-direction:column; }
-      dialog.sheet form { display:flex; flex-direction:column; min-height: 0; flex: 1; }
-      .sheet-head { display:flex; justify-content:space-between; align-items:center; padding: 16px 20px; border-bottom: 1px solid var(--line); }
-      .sheet-head h2 { margin: 0; }
-      .sheet-head .x { min-height: 40px; min-width: 40px; padding: 0; border: none; box-shadow:none; }
-      .sheet-body { padding: 8px 20px 18px; overflow-y: auto; flex: 1; }
-      .sheet-foot { display:flex; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--surface); }
-      .sheet-foot .spacer { flex: 1; }
       .seg { display:flex; flex-wrap: wrap; gap: 6px; }
       .seg button { min-height: 38px; padding: 6px 12px; font-size: 13.5px; border-radius: 999px; }
       .seg button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
@@ -3034,23 +3074,47 @@ Jawaban: B
       const math = (el) => { if (window.renderMathInElement) renderMathInElement(el, { delimiters: [{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}], throwOnError: false }); };
       TYPES.forEach(([k, v]) => $('ft').insertAdjacentHTML('beforeend', '<option value="' + k + '">' + v + '</option>'));
       D.cats.forEach((c) => $('catList').insertAdjacentHTML('beforeend', '<option value="' + esc(c.name) + '">'));
-      let catSel = '';
-      function drawCats() {
-        const n = (id) => D.qs.filter((q) => q.category_id === id).length;
-        $('cats').innerHTML = '<button type="button" data-c="" aria-pressed="' + (catSel === '') + '">Semua</button>' +
-          D.cats.map((c) => '<button type="button" data-c="' + c.id + '" aria-pressed="' + (catSel === c.id) + '">' + esc(c.name) + ' <span class="muted">' + n(c.id) + '</span></button>').join('') +
-          '<button type="button" class="add" id="addCat">+ Kategori</button>';
+      // Tampilan awal "Soal saya": kartu per kategori. Ketuk kartu → daftar soalnya.
+      let catSel = null;
+      const CONTOH = [['contoh-ipa', 'Contoh IPA'], ['contoh-matematika', 'Contoh Matematika'], ['contoh-bahasa-indonesia', 'Contoh Bahasa Indonesia'], ['contoh-pancasila', 'Contoh Pendidikan Pancasila']];
+      const HUES = [217, 160, 262, 340, 25, 190, 45, 290];
+      const hue = (s) => HUES[[...String(s)].reduce((a, ch) => a + ch.charCodeAt(0), 0) % HUES.length];
+      const typeSum = (qs) => { const m = {}; qs.forEach((q) => m[q.type] = (m[q.type] || 0) + 1);
+        const e = Object.entries(m).sort((a, b) => b[1] - a[1]); return e.slice(0, 2).map(([t, n]) => (TL[t] || t) + ' ' + n).join(' · ') + (e.length > 2 ? ' · …' : ''); };
+      function folderCard(id, name, qs) {
+        const h = hue(name);
+        return '<button type="button" class="folder" data-c="' + id + '" style="--h:' + h + '"><span class="fi">' + esc(name.trim().charAt(0).toUpperCase()) + '</span>' +
+          '<span class="ft"><b>' + esc(name) + '</b><span>' + qs.length + ' soal' + (qs.length ? ' · ' + esc(typeSum(qs)) : '') + '</span></span><span class="chev">›</span></button>';
       }
-      $('cats').addEventListener('click', async (e) => {
-        const b = e.target.closest('button'); if (!b) return;
-        if (b.id === 'addCat') {
+      function folders() {
+        const known = new Set(D.cats.map((c) => c.id));
+        const none = D.qs.filter((q) => !q.category_id || !known.has(q.category_id));
+        const have = new Set(D.cats.map((c) => c.name.toLowerCase()));
+        const packs = CONTOH.filter(([, t]) => !have.has(t.toLowerCase()));
+        return '<div class="folders">' + D.cats.map((c) => folderCard(c.id, c.name, D.qs.filter((q) => q.category_id === c.id))).join('') +
+          (none.length ? folderCard('__none', 'Tanpa kategori', none) : '') +
+          '<button type="button" class="folder add" id="addCat"><span class="fi">+</span><span class="ft"><b>Kategori baru</b><span>mis. Matematika Kelas 7</span></span></button></div>' +
+          (packs.length ? '<h3 class="sec">Contoh soal siap pakai</h3><p class="hint" style="margin:-4px 0 10px">Tambahkan ke bank Anda, lalu edit sesuai kebutuhan.</p><div class="folders">' +
+            packs.map(([slug, t]) => '<div class="folder pack" style="--h:' + hue(t) + '"><span class="fi">' + esc(t.replace('Contoh ', '').charAt(0)) + '</span><span class="ft"><b>' + esc(t) + '</b><span>Paket contoh</span></span><button type="button" class="primary" data-sample="' + slug + '">Tambahkan</button></div>').join('') + '</div>' : '');
+      }
+      $('qlist').addEventListener('click', async (e) => {
+        const f = e.target.closest('.folder[data-c]');
+        if (f) { catSel = f.dataset.c; draw(); window.scrollTo(0, 0); return; }
+        if (e.target.closest('#addCat')) {
           const name = (prompt('Nama kategori baru (mis. Matematika Kelas 7):') || '').trim(); if (!name) return;
-          try { catSel = await catId(name); drawCats(); draw(); } catch (x) { alert(x.message); }
+          try { catSel = await catId(name); draw(); toast('Kategori "' + name + '" dibuat.', 'ok'); } catch (x) { toast(x.message, 'err'); }
           return;
         }
-        catSel = b.dataset.c; drawCats(); draw();
+        const sm = e.target.closest('[data-sample]');
+        if (sm) {
+          sm.disabled = true; sm.textContent = 'Menambahkan…';
+          const r = await fetch('/api/public-banks/' + sm.dataset.sample + '/save', { method: 'POST', credentials: 'same-origin' });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) { toast('Gagal: ' + (j.error || r.status), 'err'); sm.disabled = false; sm.textContent = 'Tambahkan'; return; }
+          toast(j.ok + ' soal contoh ditambahkan ke "' + j.category + '".', 'ok'); location.reload();
+        }
       });
-      drawCats();
+      $('crumb').addEventListener('click', (e) => { if (e.target.closest('#back')) { catSel = null; $('fq').value = ''; $('ft').value = ''; draw(); } });
 
       function keyView(q) {
         const k = q.answer_key || {}, o = q.content.options || [];
@@ -3063,7 +3127,15 @@ Jawaban: B
       }
       function draw() {
         const t = $('fq').value.trim().toLowerCase(), ty = $('ft').value, ca = catSel;
-        const v = D.qs.filter((q) => (!ty || q.type === ty) && (!ca || q.category_id === ca) && (!t || (q.content.text || '').toLowerCase().includes(t)));
+        if (ca === null && !t && !ty) {
+          $('crumb').hidden = true; $('qsum').textContent = D.qs.length + ' soal dalam ' + D.cats.length + ' kategori.';
+          $('qlist').innerHTML = folders(); return;
+        }
+        const known = new Set(D.cats.map((c) => c.id));
+        const inCat = (q) => !ca || (ca === '__none' ? !q.category_id || !known.has(q.category_id) : q.category_id === ca);
+        $('crumb').hidden = false;
+        $('crumbName').textContent = ca ? (ca === '__none' ? 'Tanpa kategori' : CAT[ca] || '') : 'Hasil pencarian';
+        const v = D.qs.filter((q) => (!ty || q.type === ty) && inCat(q) && (!t || (q.content.text || '').toLowerCase().includes(t)));
         $('qsum').textContent = v.length !== D.qs.length ? v.length + ' dari ' + D.qs.length + ' soal tampil.' : 'Simpan soal sekali, pakai di ujian mana pun.';
         $('qlist').innerHTML = v.length ? v.map((q) =>
           '<article class="qc"><div class="qc-top"><span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + (+q.points) + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
@@ -3209,7 +3281,7 @@ Jawaban: B
         $('edTitle').textContent = id ? 'Edit soal' : 'Tulis soal';
         seg(q.type); body(q.type, q.answer_key, q.content);
         $('eText').value = q.content.text || ''; $('ePts').value = +q.points || 1;
-        $('eCat').value = q.category_id && CAT[q.category_id] ? CAT[q.category_id] : '';
+        $('eCat').value = q.category_id && CAT[q.category_id] ? CAT[q.category_id] : (!id && catSel && CAT[catSel] ? CAT[catSel] : '');
         showImg(q.content.image || '');
         ed.showModal(); $('eText').focus();
       }

@@ -15,6 +15,10 @@ export const brandHex = (key: string | null | undefined) => (BRAND_COLORS[key ??
 
 export const APP_NAME = "CBT Yuk";
 
+const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+export const ICON_EDIT = svg("M4 20h4L19 9l-4-4L4 16zM14 6l4 4");
+export const ICON_DEL = svg("M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3");
+
 // Kritik & saran langsung ke WhatsApp pengelola.
 export const FEEDBACK_WA = "https://wa.me/6289530713597?text=" + encodeURIComponent("Halo CBT Yuk, saya mau kasih kritik/saran: ");
 
@@ -42,11 +46,51 @@ export const SITE_FOOTER = `
   <div class="sf-bot"><span>© CBT Yuk</span><span>Dibuat untuk sekolah Indonesia</span></div>
 </footer>`;
 
+// Toast (menggantikan alert bawaan) + tombol "Pasang aplikasi". Pesan yang
+// muncul tepat sebelum halaman dimuat ulang dibawa ke halaman berikutnya.
+export const UI_JS = `<script>
+(function () {
+  let box;
+  function toast(msg, kind) {
+    msg = String(msg ?? '');
+    kind = kind || (/gagal|error|salah|tidak bisa|harus|wajib|belum/i.test(msg) ? 'err' : /berhasil|tersimpan|disimpan|dikirim|dibagikan|diimpor|dibuat/i.test(msg) ? 'ok' : 'info');
+    if (!box) { box = document.createElement('div'); box.className = 'yk-toasts'; box.setAttribute('role', 'status'); document.body.appendChild(box); }
+    const t = document.createElement('div'); t.className = 'yk-toast ' + kind;
+    t.innerHTML = '<i>' + (kind === 'ok' ? '✓' : kind === 'err' ? '!' : 'i') + '</i><span></span>'; t.querySelector('span').textContent = msg;
+    box.appendChild(t);
+    try { sessionStorage.setItem('yk_flash', JSON.stringify({ msg, kind, at: Date.now() })); } catch (_) {}
+    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); try { sessionStorage.removeItem('yk_flash'); } catch (_) {} }, 4200);
+  }
+  window.toast = toast; window.alert = (m) => toast(m);
+  try { const f = JSON.parse(sessionStorage.getItem('yk_flash') || 'null'); if (f && Date.now() - f.at < 6000) addEventListener('DOMContentLoaded', () => toast(f.msg, f.kind)); else sessionStorage.removeItem('yk_flash'); } catch (_) {}
+
+  let deferred = null;
+  const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault(); deferred = e;
+    let seen = false; try { seen = !!localStorage.getItem('install_dismissed'); } catch (_) {}
+    if (!seen) setTimeout(() => { const c = document.getElementById('installCard'); if (c && deferred) c.hidden = false; }, 6000);
+  });
+  async function install() {
+    const c = document.getElementById('installCard'); if (c) c.hidden = true;
+    if (standalone()) return toast('CBT Yuk sudah terpasang di perangkat ini.', 'ok');
+    if (deferred) { deferred.prompt(); const r = await deferred.userChoice; deferred = null; if (r.outcome === 'accepted') toast('CBT Yuk dipasang. Buka dari layar utama.', 'ok'); return; }
+    if (/iphone|ipad|ipod/i.test(navigator.userAgent)) return toast('Di iPhone/iPad: ketuk tombol Bagikan di Safari, lalu pilih "Tambah ke Layar Utama".');
+    toast('Buka menu browser (⋮), lalu pilih "Instal aplikasi" atau "Tambahkan ke layar utama".');
+  }
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-install]')) { e.preventDefault(); install(); }
+    if (e.target.closest('#installClose')) { document.getElementById('installCard').hidden = true; try { localStorage.setItem('install_dismissed', '1'); } catch (_) {} }
+  });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+})();
+</script>`;
+
 export const INSTALL_SHEET = `
 <div id="installCard" class="install" role="dialog" aria-labelledby="installTitle" hidden>
   <img src="/icon-192.svg" alt="" width="52" height="52">
   <div class="install-txt"><b id="installTitle">Pasang CBT Yuk</b><span>Buka langsung dari layar utama, layar penuh seperti aplikasi.</span></div>
-  <div class="install-act"><button type="button" id="installClose">Nanti</button><button type="button" class="primary" id="installBtn">Pasang</button></div>
+  <div class="install-act"><button type="button" id="installClose">Nanti</button><button type="button" class="primary" data-install>Pasang</button></div>
 </div>`;
 
 export const SHARED_CSS = `
@@ -87,7 +131,8 @@ export const SHARED_CSS = `
          color: var(--fg); background: var(--paper); font-feature-settings: "tnum" 0; }
   a { color: inherit; text-underline-offset: 3px; }
   main a:not(.btn) { color: var(--brand); text-decoration: none; font-weight: 500; }
-  main a:not(.btn):hover { text-decoration: underline; }
+  @media (hover: hover) { main a:not(.btn):hover { text-decoration: underline; } }
+  * { -webkit-tap-highlight-color: transparent; }
   h1 { font-size: clamp(22px, 2.6vw, 28px); line-height: 1.2; letter-spacing: -.02em; font-weight: 800; margin: 0 0 6px; }
   h2 { font-size: 17px; line-height: 1.3; letter-spacing: -.01em; font-weight: 700; margin: 0 0 12px; }
   h3 { font-size: 15px; font-weight: 700; }
@@ -107,8 +152,8 @@ export const SHARED_CSS = `
          background: var(--surface); color: var(--fg); font: inherit; transition: border-color .15s; }
   textarea { min-height: 0; }
   input:hover, select:hover, textarea:hover { border-color: color-mix(in srgb, var(--fg) 25%, var(--line)); }
-  input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; border-color: var(--brand);
-         box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 18%, transparent); }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--brand); box-shadow: none; }
+  @media (hover: hover) { input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent); } }
   input[type=checkbox], input[type=radio] { width: 18px; height: 18px; min-height: 0; accent-color: var(--brand); }
   label:has(> input[type=checkbox]) { display:flex; align-items:center; gap:10px; font-weight:500; min-height:44px; margin:6px 0 0; }
 
@@ -117,7 +162,9 @@ export const SHARED_CSS = `
          font: inherit; font-size: 14px; font-weight: 600; cursor:pointer; text-decoration:none; white-space: nowrap;
          transition: background .15s, border-color .15s; }
   button:hover, .btn:hover { border-color: color-mix(in srgb, var(--fg) 35%, var(--line)); }
-  button:focus-visible, .btn:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--brand) 45%, transparent); outline-offset: 2px; }
+  button:focus, .btn:focus, a:focus, summary:focus { outline: none; }
+  @media (hover: hover) { button:focus-visible, .btn:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid color-mix(in srgb, var(--brand) 55%, transparent); outline-offset: 2px; } }
+  button:active, .btn:active { transform: scale(.98); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.primary, .btn.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink);
          box-shadow: 0 1px 2px rgba(15,23,42,.08), 0 4px 12px color-mix(in srgb, var(--brand) 28%, transparent); }
@@ -187,6 +234,40 @@ export const SHARED_CSS = `
   .sf-col a:hover { color:#fff; }
   .sf-bot { max-width:1040px; margin:0 auto; padding: 16px 20px 26px; border-top: 1px solid #1E293B; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; font-size:13px; color:#64748B; }
   @media (max-width: 640px) { .sf-in { grid-template-columns: 1fr 1fr; } .sf-brand { grid-column: 1 / -1; } }
+
+  /* Panel dialog (sheet) */
+  dialog.sheet { max-width: 680px; width: calc(100% - 16px); padding: 0; max-height: calc(100dvh - 24px); }
+  dialog.sheet[open] { display:flex; flex-direction:column; }
+  dialog.sheet form { display:flex; flex-direction:column; min-height: 0; flex: 1; }
+  .sheet-head { display:flex; justify-content:space-between; align-items:center; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+  .sheet-head h2 { margin: 0; }
+  .sheet-head .x { min-height: 40px; min-width: 40px; padding: 0; border: none; box-shadow:none; }
+  .sheet-body { padding: 8px 20px 18px; overflow-y: auto; flex: 1; }
+  .sheet-foot { display:flex; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--surface); }
+  .sheet-foot .spacer { flex: 1; }
+  /* Tombol ikon (edit/hapus di tabel) */
+  .ibtn { width: 40px; height: 40px; min-height: 40px; padding: 0; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--mut); box-shadow: none; }
+  .ibtn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .ibtn:hover { color: var(--brand); border-color: var(--brand); }
+  .ibtn.del:hover { color: var(--danger); border-color: var(--danger); }
+  .acts { display:flex; gap: 6px; justify-content:flex-end; flex: 0 0 auto; }
+  .lrows { margin-top: 10px; }
+  .lrow { display:flex; align-items:center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .lrow:first-child { border-top: none; }
+  .lrow .lt { flex: 1; min-width: 0; display:flex; flex-direction:column; }
+  .lrow .lt > span { color: var(--mut); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  main .lrow .lt a { color: var(--fg); }
+
+  /* Toast */
+  .yk-toasts { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 200; display:flex; flex-direction:column; gap: 8px;
+               width: min(440px, calc(100% - 24px)); pointer-events: none; }
+  .yk-toast { display:flex; gap: 12px; align-items:flex-start; padding: 13px 14px; border-radius: 16px; background: var(--surface); color: var(--fg);
+              border: 1px solid var(--line); box-shadow: 0 16px 40px rgba(15,23,42,.18); font-size: 14.5px; line-height: 1.45; pointer-events: auto;
+              animation: tin .22s ease-out; white-space: pre-line; }
+  .yk-toast i { width: 26px; height: 26px; border-radius: 50%; flex: 0 0 auto; display:grid; place-items:center; font-style: normal; font-weight: 800; font-size: 14px; color: #fff; background: var(--brand); }
+  .yk-toast.ok i { background: var(--ok); } .yk-toast.err i { background: var(--danger); }
+  .yk-toast.out { opacity: 0; transform: translateY(-6px); transition: .2s; }
+  @keyframes tin { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
 
   /* Kartu pasang aplikasi */
   .install { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(460px, calc(100% - 24px)); z-index: 70;

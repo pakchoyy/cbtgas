@@ -64,6 +64,19 @@ api.get("/api/classes", async (c) => {
   return c.json(rows);
 });
 
+api.patch("/api/classes/:id", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
+  const b = await c.req.json().catch(() => null) as null | { name?: string; grade?: number | null; year?: string };
+  if (!b || !b.name?.trim() || !b.year?.trim()) return c.json({ error: "Nama kelas dan tahun ajar wajib diisi." }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`update classes set name = ${b.name!.trim()}, grade = ${b.grade ?? null}, year = ${b.year!.trim()}
+       where id = ${c.req.param("id")} returning id, name, grade, year`);
+  if (r.length === 0) return c.json({ error: "kelas tidak ditemukan" }, 404);
+  return c.json(r[0]);
+});
+
 api.post("/api/classes", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);

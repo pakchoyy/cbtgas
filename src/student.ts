@@ -9,7 +9,7 @@ import {
 } from "./session";
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
-import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA } from "./ui";
+import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA, UI_JS } from "./ui";
 import { createSession, finalizeSession } from "./scoring";
 
 type Bindings = {
@@ -170,7 +170,7 @@ const page = (title: string, body: string) => `<!doctype html>
   .badge { margin-left: 6px; background: var(--danger); color: #fff; padding: 1px 7px; border-radius: 999px; font-size: 11px; }
 </style>
 <link rel="stylesheet" href="/brand.css"></head><body><main>${body}</main>
-<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});</script>
+${UI_JS}
 </body></html>`;
 
 function esc(s: string): string {
