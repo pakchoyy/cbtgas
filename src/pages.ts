@@ -2886,7 +2886,7 @@ pages.get("/app/questions", async (c) => {
     <div class="page-head">
       <div><h1>Bank soal</h1><p id="qsum">Semua soal sekolah Anda. Pakai ulang di ujian mana pun.</p></div>
       <div class="row" style="margin:0">
-        <button type="button" id="btnUp">Upload Excel</button>
+        <button type="button" id="btnUp">Upload soal</button>
         <button type="button" class="primary" id="btnNew">+ Tulis soal</button>
       </div>
     </div>
@@ -2921,15 +2921,34 @@ pages.get("/app/questions", async (c) => {
     </dialog>
 
     <dialog id="up" class="sheet" aria-labelledby="upTitle">
-      <div class="sheet-head"><h2 id="upTitle">Upload soal dari Excel</h2><button type="button" class="x" id="upX" aria-label="Tutup">✕</button></div>
+      <div class="sheet-head"><h2 id="upTitle">Upload soal</h2><button type="button" class="x" id="upX" aria-label="Tutup">✕</button></div>
       <div class="sheet-body">
-        <ol class="howto">
+        <div class="seg" id="upTabs" style="margin:8px 0 4px"><button type="button" data-u="doc" aria-pressed="true">Word / PDF</button><button type="button" data-u="xls" aria-pressed="false">Excel</button></div>
+        <div id="upDoc">
+          <p class="hint" style="margin-top:10px">Unggah naskah soal yang biasa Anda ketik. Tulis dengan pola seperti ini:</p>
+          <pre class="sample">1. Ibu kota Indonesia adalah …
+A. Bandung
+B. Jakarta
+C. Surabaya
+D. Medan
+Jawaban: B
+
+2. Jelaskan proses fotosintesis.</pre>
+          <ul class="howto">
+            <li>Soal bernomor, pilihan diawali A–E. Pilihan boleh sebaris: <i>A. 3 B. 4 C. 5</i>.</li>
+            <li>Kunci: tulis <b>Jawaban: B</b> di bawah soal, atau kumpulkan di akhir: <b>Kunci Jawaban: 1. B 2. C …</b></li>
+            <li>Dua huruf atau lebih (A, C) jadi PG kompleks. Benar/Salah, teks isian, dan soal tanpa pilihan (uraian) juga dikenali.</li>
+            <li>Gambar dan rumus di dokumen belum ikut terbaca. Tambahkan lewat tombol Edit setelah disimpan.</li>
+          </ul>
+          <label class="btn primary" style="margin:6px 0 0">Pilih file Word / PDF<input type="file" id="upDocFile" accept=".docx,.pdf" hidden></label>
+        </div>
+        <ol class="howto" id="upXls" hidden>
           <li><b>Unduh template</b>, isi satu soal per baris.</li>
           <li>Kolom <b>Tipe</b>: PG, PGK, Benar-Salah, Isian, Uraian, atau Menjodohkan.</li>
           <li>Kolom <b>Jawaban</b>: huruf untuk PG (B), beberapa huruf untuk PGK (A,C), Benar/Salah, jawaban isian dipisah | , atau pedoman untuk uraian. Menjodohkan: isi A–E dengan "kiri = kanan".</li>
           <li>Pilih file, lalu periksa pratinjau sebelum disimpan.</li>
+          <li class="row" style="list-style:none;margin-left:-20px"><button type="button" id="upTpl">Unduh template</button><label class="btn primary" style="margin:0">Pilih file Excel<input type="file" id="upFile" accept=".xlsx,.xls,.csv" hidden></label></li>
         </ol>
-        <div class="row"><button type="button" id="upTpl">Unduh template</button><label class="btn primary" style="margin:0">Pilih file Excel<input type="file" id="upFile" accept=".xlsx,.xls,.csv" hidden></label></div>
         <div id="upPrev"></div>
       </div>
       <div class="sheet-foot"><button type="button" id="upCancel">Batal</button><span class="spacer"></span><button type="button" class="primary" id="upGo" disabled>Simpan soal</button></div>
@@ -2970,6 +2989,7 @@ pages.get("/app/questions", async (c) => {
       .orow .rm, .mrow .rm { min-height: 40px; padding: 0; border: none; box-shadow: none; color: var(--mut); }
       .mrow { display:grid; grid-template-columns: 1fr 24px 1fr 40px; gap: 8px; align-items:center; margin: 8px 0; }
       .hint { font-size: 13px; color: var(--mut); margin: 4px 0 0; }
+      .sample { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font: 13px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; margin: 6px 0; }
       .howto { padding-left: 20px; color: var(--mut); font-size: 14px; } .howto li { margin: 6px 0; }
       .uprev { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 12px; margin-top: 14px; }
       .uprev table { margin: 0; font-size: 13px; } .uprev td.bad { color: var(--danger); }
@@ -3004,7 +3024,7 @@ pages.get("/app/questions", async (c) => {
           (TYPES.some(([k]) => k === q.type) ? '<button type="button" data-ed="' + q.id + '">Edit</button>' : '') +
           (D.canDelete ? '<button type="button" class="danger" data-del="' + q.id + '">Hapus</button>' : '') + '</div>' +
           '<p>' + esc(q.content.text || '(tanpa teks)') + '</p>' + keyView(q) + '</article>').join('')
-          : '<div class="empty-q">' + (D.qs.length ? 'Tidak ada soal yang cocok.' : '<b>Bank soal masih kosong.</b><br>Mulai dengan <b>+ Tulis soal</b> atau <b>Upload Excel</b>.') + '</div>';
+          : '<div class="empty-q">' + (D.qs.length ? 'Tidak ada soal yang cocok.' : '<b>Bank soal masih kosong.</b><br>Mulai dengan <b>+ Tulis soal</b> atau <b>Upload soal</b> (Word, PDF, Excel).') + '</div>';
         math($('qlist'));
       }
       ['fq','ft','fc'].forEach((id) => $(id).addEventListener('input', draw));
@@ -3173,19 +3193,131 @@ pages.get("/app/questions", async (c) => {
         if (type === 'menjodohkan') { const pr = opts.map((x) => x.split('=').map((y) => y.trim())); if (pr.length < 2 || pr.some((p) => p.length !== 2 || !p[0] || !p[1])) return [q, 'Isi A–E dengan "kiri = kanan"']; q.left = pr.map((p) => p[0]); q.right = pr.map((p) => p[1]); }
         return [q, ''];
       }
+      // ===== Word / PDF: ambil teks, lalu kenali pola "1. soal / A. pilihan / Jawaban: B" =====
+      const loadJs = (src, test) => test() ? Promise.resolve() : new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('Gagal memuat pembaca file. Periksa koneksi.')); document.head.appendChild(s); });
+      // .docx dibaca langsung (zip + XML) supaya penomoran otomatis Word ikut terbaca:
+      // level 1 jadi "1.", "2.", level berhuruf jadi "A.", "B.".
+      async function docxLines(buf) {
+        await loadJs('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', () => window.JSZip);
+        const zip = await window.JSZip.loadAsync(buf);
+        const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+        const xml = async (name) => { const f = zip.file(name); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
+        const all = (el, tag) => [...el.getElementsByTagNameNS(W, tag)];
+        const at = (el, a) => el ? el.getAttributeNS(W, a) || el.getAttribute('w:' + a) : null;
+        const docX = await xml('word/document.xml'); if (!docX) throw new Error('Bukan file Word (.docx) yang valid.');
+        const numX = await xml('word/numbering.xml'), stX = await xml('word/styles.xml');
+        const fmt = {};
+        if (numX) {
+          const abs = {};
+          all(numX, 'abstractNum').forEach((a) => { const m = {}; all(a, 'lvl').forEach((l) => { m[at(l, 'ilvl')] = at(all(l, 'numFmt')[0], 'val'); }); abs[at(a, 'abstractNumId')] = m; });
+          all(numX, 'num').forEach((n) => { fmt[at(n, 'numId')] = abs[at(all(n, 'abstractNumId')[0], 'val')] || {}; });
+        }
+        const styleNum = {};
+        if (stX) all(stX, 'style').forEach((st) => { const np = all(st, 'numPr')[0]; if (np) styleNum[at(st, 'styleId')] = [at(all(np, 'numId')[0], 'val'), at(all(np, 'ilvl')[0], 'val') || '0']; });
+        const cnt = {}, out = [];
+        for (const p of all(docX, 'p')) {
+          const text = all(p, 't').map((t) => t.textContent).join('');
+          let numId = null, ilvl = '0';
+          const np = all(p, 'numPr')[0];
+          if (np) { numId = at(all(np, 'numId')[0], 'val'); ilvl = at(all(np, 'ilvl')[0], 'val') || '0'; }
+          if (!numId) { const ps = all(p, 'pStyle')[0]; const sn = ps && styleNum[at(ps, 'val')]; if (sn) { numId = sn[0]; if (!np) ilvl = sn[1]; } }
+          let pre = '';
+          if (numId && numId !== '0' && text.trim()) {
+            const c = cnt[numId] = cnt[numId] || {}; c[ilvl] = (c[ilvl] || 0) + 1;
+            Object.keys(c).forEach((k) => { if (+k > +ilvl) c[k] = 0; });
+            const f = (fmt[numId] || {})[ilvl] || (ilvl === '0' ? 'decimal' : 'lowerLetter');
+            pre = /letter/i.test(f) ? L[(c[ilvl] - 1) % 6] + '. ' : f === 'bullet' || f === 'none' ? '' : c[ilvl] + '. ';
+          }
+          out.push(pre + text);
+        }
+        return out;
+      }
+      async function pdfLines(buf) {
+        const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+        await loadJs(base + 'pdf.min.js', () => window.pdfjsLib);
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = base + 'pdf.worker.min.js';
+        const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+        const out = [];
+        for (let n = 1; n <= pdf.numPages; n++) {
+          const items = (await (await pdf.getPage(n)).getTextContent()).items.filter((it) => it.str.trim());
+          let y = null, line = '';
+          for (const it of items) {
+            const iy = Math.round(it.transform[5]);
+            if (y !== null && Math.abs(iy - y) > 3) { out.push(line); line = ''; }
+            line += (line && !line.endsWith(' ') && !it.str.startsWith(' ') ? ' ' : '') + it.str; y = iy;
+          }
+          if (line) out.push(line);
+        }
+        return out;
+      }
+      function parseLines(raw) {
+        let lines = raw.join('\\n').replace(/\\r/g, '').split('\\n').map((l) => l.replace(/\\s+/g, ' ').trim()).filter(Boolean);
+        // Pilihan sebaris ("A. 3  B. 4  C. 5") dipecah per baris.
+        lines = lines.flatMap((l) => /^[A-Ea-e]\\s*[.)]\\s/.test(l) && /\\s[B-Eb-e]\\s*[.)]\\s/.test(l) ? l.split(/\\s+(?=[B-Eb-e]\\s*[.)]\\s)/) : [l]);
+        // Kunci jawaban di akhir dokumen: "Kunci Jawaban" lalu "1. B 2. C ...".
+        const keyMap = {};
+        const ki = lines.findIndex((l) => /^kunci(\\s+jawaban)?\\s*:?\\s*$/i.test(l) || /^kunci(\\s+jawaban)?\\s*:?\\s*1\\s*[.)\\-:]/i.test(l));
+        if (ki >= 0) {
+          const tail = lines.splice(ki).join(' ').replace(/^kunci(\\s+jawaban)?\\s*:?/i, ' ');
+          for (const m of tail.matchAll(/(\\d+)\\s*[.)\\-:=]?\\s*([A-Ea-e](?:\\s*,\\s*[A-Ea-e])*|benar|salah)\\b/gi)) keyMap[+m[1]] = m[2];
+        }
+        const qs = []; let cur = null;
+        for (const l of lines) {
+          let m;
+          if ((m = l.match(/^(\\d{1,3})\\s*[.)]\\s*(.+)$/))) {
+            cur = { no: +m[1], text: m[2], opts: [], ans: '' }; qs.push(cur); continue;
+          }
+          if (!cur) continue;
+          if ((m = l.match(/^([A-Ea-e])\\s*[.)]\\s*(.+)$/))) { cur.opts.push(m[2]); continue; }
+          if ((m = l.match(/^(jawaban|kunci|jawab|jwb|ans)\\s*[:=]\\s*(.+)$/i))) { cur.ans = m[2].trim(); continue; }
+          if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text += ' ' + l;
+        }
+        return qs.map((c, j) => {
+          const ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').trim();
+          const q = { row: j + 1, text: c.text.trim(), points: 1 };
+          if (c.opts.length >= 2) {
+            const letters = ans.toUpperCase().split(/[\\s,;]+/).filter((x) => /^[A-E]$/.test(x)).map((x) => L.indexOf(x));
+            q.options = c.opts;
+            if (!letters.length) { q.type = 'pg'; return [q, 'Kunci jawaban belum ada']; }
+            if (letters.some((x) => x >= c.opts.length)) { q.type = 'pg'; return [q, 'Kunci di luar pilihan']; }
+            if (letters.length > 1) { q.type = 'pgk_centang'; q.correct_indexes = letters; } else { q.type = 'pg'; q.correct = letters[0]; }
+            return [q, ''];
+          }
+          if (/^(benar|salah)$/i.test(ans)) { q.type = 'benar_salah'; q.correct = /^benar$/i.test(ans); return [q, '']; }
+          if (ans) { q.type = 'isian'; q.accepted = ans.split('|').map((x) => x.trim()).filter(Boolean); return [q, '']; }
+          q.type = 'uraian'; return [q, ''];
+        });
+      }
+      function showParsed(parsed, unit) {
+        rows = parsed.filter(([, err]) => !err).map(([q]) => q);
+        const bad = parsed.filter(([, err]) => err);
+        $('upPrev').innerHTML = parsed.length ? '<p style="margin:14px 0 0"><b>' + rows.length + ' soal siap disimpan</b>' + (bad.length ? ' · <span class="err" style="margin:0">' + bad.length + ' bermasalah (dilewati)</span>' : '') + '</p>' +
+          '<div class="uprev"><table><thead><tr><th>' + unit + '</th><th>Tipe</th><th>Soal</th><th>Status</th></tr></thead><tbody>' +
+          parsed.map(([q, err]) => '<tr><td>' + q.row + '</td><td>' + esc(TL[q.type] || '?') + '</td><td>' + esc(q.text.slice(0, 70)) + (q.options ? '<br><span class="muted">' + q.options.length + ' pilihan</span>' : '') + '</td><td class="' + (err ? 'bad' : '') + '">' + (err ? esc(err) : '✓') + '</td></tr>').join('') + '</tbody></table></div>'
+          : '<p class="err">Tidak ada soal yang dikenali. Pastikan soal bernomor (1. 2. 3.) dan pilihan diawali A. B. C.</p>';
+        $('upGo').disabled = !rows.length;
+      }
+      $('upTabs').addEventListener('click', (e) => {
+        const u = e.target.dataset.u; if (!u) return;
+        $('upTabs').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === e.target)));
+        $('upDoc').hidden = u !== 'doc'; $('upXls').hidden = u !== 'xls'; $('upPrev').innerHTML = ''; $('upGo').disabled = true;
+      });
+      $('upDocFile').addEventListener('change', async (e) => {
+        const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+        $('upPrev').innerHTML = '<p class="muted" style="margin-top:14px">Membaca ' + esc(f.name) + '…</p>';
+        try {
+          const buf = await f.arrayBuffer();
+          const lines = /\\.pdf$/i.test(f.name) ? await pdfLines(buf) : await docxLines(buf);
+          showParsed(parseLines(lines), 'No.');
+        } catch (x) { $('upPrev').innerHTML = ''; alert('Gagal membaca file: ' + x.message); }
+      });
       $('upFile').addEventListener('change', async (e) => {
         const f = e.target.files[0]; e.target.value = ''; if (!f) return;
         try {
           const X = await loadX(); const wb = X.read(await f.arrayBuffer(), { type: 'array' });
           const raw = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
           const norm = raw.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.trim().toLowerCase(), v])));
-          const parsed = norm.map((r, j) => parseRow(r, j + 2)).filter(([q]) => q.text || q.type);
-          rows = parsed.filter(([, err]) => !err).map(([q]) => q);
-          const bad = parsed.filter(([, err]) => err);
-          $('upPrev').innerHTML = '<p style="margin:14px 0 0"><b>' + rows.length + ' soal siap disimpan</b>' + (bad.length ? ' · <span class="err" style="margin:0">' + bad.length + ' baris bermasalah (dilewati)</span>' : '') + '</p>' +
-            '<div class="uprev"><table><thead><tr><th>Baris</th><th>Tipe</th><th>Soal</th><th>Status</th></tr></thead><tbody>' +
-            parsed.map(([q, err]) => '<tr><td>' + q.row + '</td><td>' + esc(TL[q.type] || '?') + '</td><td>' + esc(q.text.slice(0, 60)) + '</td><td class="' + (err ? 'bad' : '') + '">' + (err ? esc(err) : '✓') + '</td></tr>').join('') + '</tbody></table></div>';
-          $('upGo').disabled = !rows.length;
+          showParsed(norm.map((r, j) => parseRow(r, j + 2)).filter(([q]) => q.text || q.type), 'Baris');
         } catch (x) { alert('Gagal membaca file: ' + x.message); }
       });
       $('upGo').onclick = async () => {
