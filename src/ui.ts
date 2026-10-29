@@ -50,7 +50,7 @@ export const SITE_FOOTER = `
 // muncul tepat sebelum halaman dimuat ulang dibawa ke halaman berikutnya.
 export const UI_JS = `<script>
 (function () {
-  let box;
+  let box, lastToast = null;
   function toast(msg, kind) {
     msg = String(msg ?? '');
     kind = kind || (/gagal|error|salah|tidak bisa|harus|wajib|belum/i.test(msg) ? 'err' : /berhasil|tersimpan|disimpan|dikirim|dibagikan|diimpor|dibuat/i.test(msg) ? 'ok' : 'info');
@@ -58,11 +58,26 @@ export const UI_JS = `<script>
     const t = document.createElement('div'); t.className = 'yk-toast ' + kind;
     t.innerHTML = '<i>' + (kind === 'ok' ? '✓' : kind === 'err' ? '!' : 'i') + '</i><span></span>'; t.querySelector('span').textContent = msg;
     box.appendChild(t);
-    try { sessionStorage.setItem('yk_flash', JSON.stringify({ msg, kind, at: Date.now() })); } catch (_) {}
-    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); try { sessionStorage.removeItem('yk_flash'); } catch (_) {} }, 4200);
+    lastToast = { msg, kind, at: Date.now() };
+    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); }, 4200);
   }
   window.toast = toast; window.alert = (m) => toast(m);
-  try { const f = JSON.parse(sessionStorage.getItem('yk_flash') || 'null'); if (f && Date.now() - f.at < 6000) addEventListener('DOMContentLoaded', () => toast(f.msg, f.kind)); else sessionStorage.removeItem('yk_flash'); } catch (_) {}
+  try { const f = JSON.parse(sessionStorage.getItem('yk_flash') || 'null'); sessionStorage.removeItem('yk_flash'); if (f) addEventListener('DOMContentLoaded', () => toast(f.msg, f.kind)); } catch (_) {}
+  // Pesan hanya dibawa ke halaman berikutnya bila halaman ditinggal sesaat setelah muncul (mis. setelah simpan lalu muat ulang).
+  addEventListener('pagehide', () => { if (lastToast && Date.now() - lastToast.at < 2500) try { sessionStorage.setItem('yk_flash', JSON.stringify(lastToast)); } catch (_) {} });
+
+  // Dialog konfirmasi: await ask('Hapus soal ini?') → true / false.
+  window.ask = (msg, okText) => new Promise((done) => {
+    const danger = /hapus|tolak|paksa|reset|archive|arsip/i.test(msg);
+    const d = document.createElement('dialog'); d.className = 'yk-ask';
+    d.innerHTML = '<div class="ai ' + (danger ? 'dg' : '') + '">' + (danger ? '!' : '?') + '</div><p></p><div class="ab"><button type="button" data-v="0">Batal</button><button type="button" class="primary ' + (danger ? 'dgb' : '') + '" data-v="1"></button></div>';
+    d.querySelector('p').textContent = msg;
+    d.querySelector('[data-v="1"]').textContent = okText || (danger ? (/hapus/i.test(msg) ? 'Ya, hapus' : 'Ya, lanjutkan') : 'Ya');
+    const end = (v) => { d.close(); d.remove(); done(v); };
+    d.addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) end(b.dataset.v === '1'); else if (e.target === d) end(false); });
+    d.addEventListener('cancel', (e) => { e.preventDefault(); end(false); });
+    document.body.appendChild(d); d.showModal(); d.querySelector('[data-v="1"]').focus();
+  });
 
   let deferred = null;
   const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
@@ -268,6 +283,16 @@ export const SHARED_CSS = `
   .yk-toast.ok i { background: var(--ok); } .yk-toast.err i { background: var(--danger); }
   .yk-toast.out { opacity: 0; transform: translateY(-6px); transition: .2s; }
   @keyframes tin { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+
+  /* Dialog konfirmasi */
+  dialog.yk-ask { max-width: 380px; width: calc(100% - 32px); text-align: center; padding: 24px 22px 18px; border-radius: 22px; }
+  dialog.yk-ask[open] { animation: tin .18s ease-out; }
+  .yk-ask .ai { width: 52px; height: 52px; border-radius: 50%; margin: 0 auto 10px; display:grid; place-items:center; font-size: 24px; font-weight: 800; background: var(--soft); color: var(--brand); }
+  .yk-ask .ai.dg { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+  .yk-ask p { margin: 0 auto 18px; font-size: 16px; line-height: 1.5; color: var(--fg); }
+  .yk-ask .ab { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .yk-ask .ab button { min-height: 48px; }
+  .yk-ask .dgb { background: var(--danger); border-color: var(--danger); color: #fff; box-shadow: none; }
 
   /* Kartu pasang aplikasi */
   .install { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(460px, calc(100% - 24px)); z-index: 70;

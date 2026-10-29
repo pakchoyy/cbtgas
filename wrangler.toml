@@ -7,6 +7,11 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 routes = [{ pattern = "cbt-yuk.web.id", custom_domain = true }]
 
+# Jalankan Worker dekat database (Neon Singapura): satu halaman butuh beberapa
+# query berurutan, jadi jarak ke database lebih penting daripada jarak ke pengguna.
+[placement]
+mode = "smart"
+
 # Hyperdrive menunjuk ke Neon. Login pakai role cbt_login (NOBYPASSRLS,
 # non-pemilik tabel); cbt_app dipakai lewat SET ROLE di dalam transaksi.
 [[hyperdrive]]

@@ -19,3 +19,6 @@ export function withTenant<T>(
     return fn(tx);
   }) as Promise<T>;
 }
+
+// Cache edge Cloudflare (tipe DOM tidak mengenal caches.default).
+export const edgeCache = () => (caches as unknown as { default: Cache }).default;

@@ -58,8 +58,8 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
 <meta name="theme-color" content="#F5F7FB">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous" media="print" onload="this.media='all'">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
 <script>
@@ -481,9 +481,9 @@ pages.get("/app", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const [school, n, live, recent] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
-    const sc = await tx`select name, code, level from schools where id = ${sess.sid}`;
-    const cnt = await tx`select
+  // Query dikirim sekaligus (pipelined) dalam satu transaksi, bukan satu per satu.
+  const [school, n, live, recent, owner] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const [sc, cnt, lv, rc, ow] = await Promise.all([tx`select name, code, level from schools where id = ${sess.sid}`, tx`select
         (select count(*) from classes)::int as classes,
         (select count(*) from students where active)::int as students,
         (select count(*) from questions)::int as questions,
@@ -492,14 +492,15 @@ pages.get("/app", async (c) => {
            and e.status in ('open','scheduled','closed'))::int as published,
         (select count(*) from exam_sessions where status = 'active' and last_seen_at > now() - interval '2 minutes')::int as online,
         (select count(*) from exam_sessions where status = 'submitted' and started_at > now() - interval '7 days')::int as week_submits,
-        (select coalesce(round(avg(final_score)::numeric, 1), 0) from scores) as avg_score`;
-    const lv = await tx`select e.id, e.title, e.ends_at,
+        (select coalesce(round(avg(final_score)::numeric, 1), 0) from scores) as avg_score`,
+      tx`select e.id, e.title, e.ends_at,
         (select count(*) from exam_sessions s where s.exam_id = e.id and s.status = 'active')::int as working,
         (select count(*) from exam_sessions s where s.exam_id = e.id and s.status in ('submitted','expired'))::int as done
-      from exams e where e.status = 'open' order by e.ends_at nulls last, e.title limit 6`;
-    const rc = await tx`select id, title, status, starts_at from exams
-      where status in ('draft','scheduled') order by coalesce(starts_at, created_at) limit 4`;
-    return [sc[0] as { name: string; code: string; level: string } | undefined, cnt[0], lv, rc] as const;
+      from exams e where e.status = 'open' order by e.ends_at nulls last, e.title limit 6`,
+      tx`select id, title, status, starts_at from exams
+      where status in ('draft','scheduled') order by coalesce(starts_at, created_at) limit 4`,
+      tx`select 1 from system_owners where email = ${sess.email.toLowerCase()}`]);
+    return [sc[0] as { name: string; code: string; level: string } | undefined, cnt[0], lv, rc, ow.length > 0] as const;
   });
   const k = n as { classes: number; students: number; questions: number; exams: number; published: number;
     online: number; week_submits: number; avg_score: string };
@@ -531,7 +532,6 @@ pages.get("/app", async (c) => {
     <div class="live-row"><span class="txt"><b>${esc(e.title)}</b><br><span class="muted">${e.status === "draft" ? "Draf, belum dijadwalkan" : `Dibuka ${e.starts_at ? new Date(e.starts_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }) : ""}`}</span></span>
     <a class="btn" href="/app/exams/${esc(e.id)}">Atur</a></div>`).join("");
 
-  const owner = await isOwner(sql, sess.email);
   return c.html(base("Dashboard", `
     ${owner ? `<a class="card" href="/owner" style="display:flex;justify-content:space-between;align-items:center;text-decoration:none;color:inherit;padding:14px 20px"><span><b>Pemantauan layanan</b> <span class="muted">· lihat semua sekolah uji coba</span></span><span>→</span></a>` : ""}
     <div class="page-head">
@@ -576,25 +576,17 @@ pages.get("/app/students", async (c) => {
   if (!sess) return c.redirect("/");
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const [school, classes, students, overview] = await withTenant(
+  const [classes, students] = await withTenant(
     sql,
     { schoolId: sess.sid, role: sess.role, userId: sess.uid },
-    async (tx) => {
-      const s = await tx`select name, code, level from schools where id = ${sess.sid}`;
-      const cl = await tx`select id, name, grade, year from classes order by year desc, grade nulls last, name`;
-      const st = await tx`
+    async (tx) => Promise.all([
+      tx`select id, name, grade, year from classes order by year desc, grade nulls last, name`,
+      tx`
         select s.id, s.name, s.username, s.gender, s.nisn, s.class_id, s.guardian_email,
                c.name as class_name
         from students s left join classes c on c.id = s.class_id
-        order by s.name limit 500`;
-      const ov = await tx`select
-          (select count(*) from students where active) as students,
-          (select count(*) from exams where status = 'open') as open_exams,
-          (select count(*) from exam_sessions where status = 'active' and last_seen_at > now() - interval '2 minutes') as online,
-          (select count(*) from exam_sessions where status = 'submitted' and started_at > now() - interval '7 days') as week_submits,
-          (select coalesce(round(avg(final_score)::numeric, 1), 0) from scores where approved_at > now() - interval '30 days' or approved_at is null) as avg_score`;
-      return [s[0] as { name: string; code: string; level: string } | undefined, cl, st, ov[0]] as const;
-    },
+        order by s.name limit 500`,
+    ]),
   );
 
   type Cls = { id: string; name: string; grade: number | null; year: string };
@@ -620,7 +612,6 @@ pages.get("/app/students", async (c) => {
         <button type="button" class="ibtn del" aria-label="Hapus ${esc(s.name)}" data-del-student="${esc(s.id)}">${ICON_DEL}</button></div>
     </div>`).join("") || `<p class="muted">Belum ada siswa.</p>`;
 
-  const ov = overview as { students: string; open_exams: string; online: string; week_submits: string; avg_score: string };
   return c.html(base("Siswa & kelas", `
     <div class="page-head">
       <div><h1>Siswa & kelas</h1><p>${studentList.length} siswa di ${classList.length} kelas. Buat kelas dulu, lalu masukkan siswanya.</p></div>
@@ -740,7 +731,7 @@ pages.get("/app/students", async (c) => {
           return;
         }
         const id = e.target.closest('[data-del-class]')?.getAttribute('data-del-class'); if (!id) return;
-        if (!confirm('Hapus kelas ini? Siswa yang terdaftar akan jadi tidak berkelas.')) return;
+        if (!(await ask('Hapus kelas ini? Siswa yang terdaftar akan jadi tidak berkelas.'))) return;
         try { await send('/api/classes/' + id, 'DELETE'); location.reload(); }
         catch (x) { alert(x.message); }
       });
@@ -757,7 +748,7 @@ pages.get("/app/students", async (c) => {
       $('#tbstu').addEventListener('click', async (e) => {
         const delId = e.target.closest('[data-del-student]')?.getAttribute('data-del-student');
         if (delId) {
-          if (!confirm('Hapus siswa ini?')) return;
+          if (!(await ask('Hapus siswa ini?'))) return;
           try { await send('/api/students/' + delId, 'DELETE'); location.reload(); }
           catch (x) { alert(x.message); }
           return;
@@ -904,7 +895,7 @@ pages.get("/app/exam-groups", async (c) => {
       });
       document.body.addEventListener('click', async (e) => {
         const id = e.target.dataset.del; if (!id) return;
-        if (!confirm('Hapus grup? Ujian anggotanya tetap ada (group_id = null).')) return;
+        if (!(await ask('Hapus grup? Ujian anggotanya tetap ada (group_id = null).'))) return;
         const r = await fetch('/api/exam-groups/' + id, { method:'DELETE', credentials:'same-origin' });
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
       });
@@ -1162,7 +1153,7 @@ pages.get("/app/settings", async (c) => {
         const d = Object.fromEntries(new FormData(f));
         const r = await fetch('/api/school', { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
         const j = await r.json().catch(() => ({}));
-        if (r.ok) { msg.textContent = ''; prof.close(); toast('Profil sekolah tersimpan.', 'ok'); } else { msg.className = 'err'; msg.textContent = j.error || 'Gagal menyimpan.'; }
+        if (r.ok) { msg.textContent = ''; prof.close(); toast('Profil sekolah tersimpan.', 'ok'); fetch('/brand.css', { cache: 'reload', credentials: 'same-origin' }).catch(() => {}); } else { msg.className = 'err'; msg.textContent = j.error || 'Gagal menyimpan.'; }
       });
     </script>
   `, { role: sess.role }));
@@ -1543,7 +1534,7 @@ pages.get("/app/exams/:id", async (c) => {
         const sid = e.target && e.target.getAttribute && e.target.getAttribute('data-unlock');
         if (!sid) return;
         e.preventDefault();
-        if (!confirm('Buka kembali sesi ini? Siswa dapat lanjut mengerjakan 15 menit.')) return;
+        if (!(await ask('Buka kembali sesi ini? Siswa dapat lanjut mengerjakan 15 menit.'))) return;
         const r = await fetch('/api/sessions/' + sid + '/unlock', { method: 'POST', credentials: 'same-origin' });
         if (r.ok) location.reload(); else { const j = await r.json().catch(() => ({})); alert(j.error || 'HTTP ' + r.status); }
       });
@@ -1619,7 +1610,7 @@ pages.get("/app/pin-resets", async (c) => {
         const id = e.target.dataset.approve || e.target.dataset.reject || e.target.dataset.clear;
         if (!id) return;
         const action = e.target.dataset.approve ? 'approve' : (e.target.dataset.reject ? 'reject' : 'clear');
-        if (action === 'reject' && !confirm('Tolak permintaan ini?')) return;
+        if (action === 'reject' && !(await ask('Tolak permintaan ini?'))) return;
         const r = await fetch('/api/pin-resets/' + id + '/' + action, { method:'POST', credentials:'same-origin' });
         if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || r.status); return; }
         location.reload();
@@ -2137,7 +2128,7 @@ pages.get("/app/bulk", async (c) => {
       document.getElementById('runResetPin').addEventListener('click', async () => {
         const id = document.getElementById('classSel').value;
         if (!id) { alert('Pilih kelas dulu'); return; }
-        if (!confirm('Reset PIN semua siswa kelas ini?')) return;
+        if (!(await ask('Reset PIN semua siswa kelas ini?'))) return;
         const r = await fetch('/api/classes/' + id + '/reset-pins', { method:'POST', credentials:'same-origin' });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { alert(j.error || r.status); return; }
@@ -2148,14 +2139,14 @@ pages.get("/app/bulk", async (c) => {
       document.getElementById('runWipe').addEventListener('click', async () => {
         const id = document.getElementById('examSel').value;
         if (!id) { alert('Pilih ujian dulu'); return; }
-        if (!confirm('BENAR-BENAR hapus semua sesi + jawaban + skor ujian ini? Tidak bisa dibatalkan.')) return;
+        if (!(await ask('BENAR-BENAR hapus semua sesi + jawaban + skor ujian ini? Tidak bisa dibatalkan.'))) return;
         const r = await fetch('/api/exams/' + id + '/wipe-sessions', { method:'POST', credentials:'same-origin' });
         const j = await r.json().catch(() => ({}));
         if (r.ok) alert(j.deleted + ' sesi dihapus.'); else alert(j.error || r.status);
       });
       document.getElementById('runArchive').addEventListener('click', async () => {
         const days = parseInt(document.getElementById('archDays').value, 10) || 30;
-        if (!confirm('Archive semua ujian open/scheduled > ' + days + ' hari lalu?')) return;
+        if (!(await ask('Archive semua ujian open/scheduled > ' + days + ' hari lalu?'))) return;
         const r = await fetch('/api/exams/bulk-archive', { method:'POST', credentials:'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ older_than_days: days }) });
         const j = await r.json().catch(() => ({}));
@@ -2268,7 +2259,7 @@ pages.get("/app/users", async (c) => {
         const uid = tr.dataset.uid;
         const action = e.target.dataset.action;
         if (action === 'delete') {
-          if (!confirm('Hapus staf ini?')) return;
+          if (!(await ask('Hapus staf ini?'))) return;
           const r = await fetch('/api/users/' + uid, { method:'DELETE', credentials:'same-origin' });
           if (r.ok) location.reload(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
           return;
@@ -2353,7 +2344,7 @@ pages.get("/app/shared-banks", async (c) => {
       });
       document.getElementById('tb').addEventListener('click', async (e) => {
         const id = e.target.dataset.del; if (!id) return;
-        if (!confirm('Hapus bank publik ini?')) return;
+        if (!(await ask('Hapus bank publik ini?'))) return;
         const r = await fetch('/api/shared-banks/' + id, { method:'DELETE', credentials:'same-origin' });
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
       });
@@ -2405,7 +2396,7 @@ pages.get("/app/passages", async (c) => {
       });
       document.getElementById('tb').addEventListener('click', async (e) => {
         const id = e.target.dataset.del; if (!id) return;
-        if (!confirm('Hapus bacaan? Soal yang pakai bacaan ini akan jadi tanpa bacaan.')) return;
+        if (!(await ask('Hapus bacaan? Soal yang pakai bacaan ini akan jadi tanpa bacaan.'))) return;
         const r = await fetch('/api/passages/' + id, { method:'DELETE', credentials:'same-origin' });
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
       });
@@ -2475,7 +2466,7 @@ pages.get("/app/exams/:id/lab", async (c) => {
         const err = document.getElementById('err'); err.hidden = true;
         const ids = [...document.querySelectorAll('input.pick:checked')].map((x) => x.value);
         if (ids.length === 0) { err.textContent = 'Belum ada siswa dicentang.'; err.hidden = false; return; }
-        if (!confirm('Mulai sesi untuk ' + ids.length + ' siswa?')) return;
+        if (!(await ask('Mulai sesi untuk ' + ids.length + ' siswa?'))) return;
         const r = await fetch('/api/exams/${esc(examId)}/lab-start', {
           method:'POST', credentials:'same-origin',
           headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ student_ids: ids }),
@@ -2767,7 +2758,7 @@ pages.get("/app/exams/:id/live", async (c) => {
         if (r.ok) tick(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
       };
       window.forceSubmit = async (sid) => {
-        if (!confirm('Paksa submit sesi ini sekarang?')) return;
+        if (!(await ask('Paksa submit sesi ini sekarang?'))) return;
         const r = await fetch('/api/sessions/' + sid + '/force-submit', { method:'POST', credentials:'same-origin' });
         const j = await r.json().catch(() => ({}));
         if (r.ok) tick(); else alert(j.error || r.status);
@@ -2817,7 +2808,7 @@ pages.get("/app/categories", async (c) => {
       });
       document.getElementById('tb').addEventListener('click', async (e) => {
         const id = e.target.dataset.del; if (!id) return;
-        if (!confirm('Hapus kategori? Soal yang pakai kategori ini akan jadi tanpa kategori.')) return;
+        if (!(await ask('Hapus kategori? Soal yang pakai kategori ini akan jadi tanpa kategori.'))) return;
         const r = await fetch('/api/categories/' + id, { method: 'DELETE', credentials: 'same-origin' });
         if (r.ok) location.reload(); else alert('Gagal: ' + r.status);
       });
@@ -3289,7 +3280,7 @@ Jawaban: B
       $('qlist').addEventListener('click', async (e) => {
         if (e.target.dataset.ed) openEd(e.target.dataset.ed);
         if (e.target.dataset.del) {
-          if (!confirm('Hapus soal ini? Soal juga hilang dari ujian yang memakainya.')) return;
+          if (!(await ask('Hapus soal ini? Soal juga hilang dari ujian yang memakainya.'))) return;
           const r = await fetch('/api/questions/' + e.target.dataset.del, { method: 'DELETE', credentials: 'same-origin' });
           if (r.ok) { D.qs = D.qs.filter((q) => q.id !== e.target.dataset.del); draw(); } else alert('Gagal menghapus.');
         }

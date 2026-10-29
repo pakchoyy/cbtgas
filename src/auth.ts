@@ -262,7 +262,15 @@ export async function requireStaff(
   if (!token) return null;
   const s = await verify(token, secret);
   if (!s || !STAFF_ROLES.has(s.role) || !s.email) return null;
+  // shortcut: hasil cek akun aktif disimpan 60 dtk per isolate Worker; staf yang
+  // dinonaktifkan kehilangan akses paling lambat 1 menit kemudian.
+  const key = `${s.uid}:${s.sid}`, hit = staffOk.get(key);
+  if (hit && hit > Date.now()) return s;
   const sql = connect(hyperdrive.connectionString);
   const rows = await sql`select 1 from find_staff_by_email(${s.email}) where user_id = ${s.uid} and school_id = ${s.sid}`;
-  return rows.length ? s : null;
+  if (!rows.length) { staffOk.delete(key); return null; }
+  if (staffOk.size > 5000) staffOk.clear();
+  staffOk.set(key, Date.now() + 60_000);
+  return s;
 }
+const staffOk = new Map<string, number>();

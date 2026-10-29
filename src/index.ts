@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { connect, withTenant } from "./db";
+import { connect, withTenant, edgeCache } from "./db";
 import { auth, requireStaff, AuthBindings } from "./auth";
 import { pages } from "./pages";
 import { api } from "./api";
@@ -17,16 +17,18 @@ app.get("/brand.css", async (c) => {
   const cookie = c.req.header("Cookie");
   const tok = readCookie(cookie, "cbt_sess") ?? readCookie(cookie, "cbt_sstu");
   const s = tok ? await verify(tok, c.env.SESSION_SECRET) : null;
-  let hex = brandHex(null);
-  if (s?.sid) {
-    const sql = connect(c.env.HYPERDRIVE.connectionString);
-    const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-      tx`select color from schools where id = ${s.sid}`);
-    hex = brandHex((r[0] as { color: string } | undefined)?.color);
-  }
-  return new Response(`:root{--brand:${hex}}`, {
-    headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "private, no-cache" },
-  });
+  const headers = { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "private, max-age=600" };
+  if (!s?.sid) return new Response(`:root{--brand:${brandHex(null)}}`, { headers });
+  // Warna per sekolah disimpan di cache edge; dihapus saat admin mengganti warna (PATCH /api/school).
+  const key = new Request(`https://cache.cbt-yuk/brand/${s.sid}`);
+  const hit = await edgeCache().match(key);
+  if (hit) return new Response(hit.body, { headers });
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select color from schools where id = ${s.sid}`);
+  const css = `:root{--brand:${brandHex((r[0] as { color: string } | undefined)?.color)}}`;
+  c.executionCtx.waitUntil(edgeCache().put(key, new Response(css, { headers: { "Cache-Control": "public, max-age=86400" } })));
+  return new Response(css, { headers });
 });
 
 app.get("/health", (c) => c.json({ ok: true, env: c.env.APP_ENV }));

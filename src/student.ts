@@ -54,8 +54,8 @@ const page = (title: string, body: string) => `<!doctype html>
 <link rel="icon" href="/icon-192.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous" media="print" onload="this.media='all'">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
 <script>(function(){try{var t=localStorage.getItem('theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
@@ -1121,8 +1121,8 @@ student.get("/s/take/:sid", async (c) => {
           hintBtn.textContent = hintUsed ? 'Petunjuk sudah dipakai' : 'Lihat petunjuk (poin soal ini jadi setengah)';
           hintBtn.disabled = !!hintUsed;
           hintBtn.style.cssText = 'margin-top:10px';
-          hintBtn.onclick = () => {
-            if (!confirm('Menggunakan hint mengurangi 50% poin soal ini. Lanjut?')) return;
+          hintBtn.onclick = async () => {
+            if (!(await ask('Menggunakan hint mengurangi 50% poin soal ini. Lanjut?'))) return;
             alert('Hint: ' + q.content.hint);
             save(q.id, { hint_used: true });
           };

@@ -1,7 +1,7 @@
 // REST API staf: kelas & siswa. Semua di-guard sesi staf dan dibungkus withTenant.
 
 import { Hono } from "hono";
-import { connect, withTenant } from "./db";
+import { connect, withTenant, edgeCache } from "./db";
 import { requireStaff, AuthBindings } from "./auth";
 import { hashPin } from "./hash";
 import { sendEmail, inviteEmail, pinNotifyEmail } from "./email";
@@ -50,6 +50,7 @@ api.patch("/api/school", async (c) => {
     await audit(tx, actorFromSession(s), "school.update", "school", s.sid, b as Record<string, unknown>);
     return u[0];
   });
+  c.executionCtx.waitUntil(edgeCache().delete(new Request(`https://cache.cbt-yuk/brand/${s.sid}`)));
   return c.json(r);
 });
 
