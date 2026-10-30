@@ -85,6 +85,18 @@ export const UI_JS = `<script>
     document.body.appendChild(d); d.showModal(); d.querySelector('[data-v="1"]').focus();
   });
 
+  // Dialog isian: await askText('Nama kategori baru', 'mis. Matematika 7') → teks atau null.
+  window.askText = (msg, ph, val) => new Promise((done) => {
+    const d = document.createElement('dialog'); d.className = 'yk-ask';
+    d.innerHTML = '<form method="dialog"><p style="font-weight:700;color:var(--fg)"></p><input name="v" autocomplete="off" style="width:100%;margin:4px 0 16px"><div class="ab"><button type="button" data-v="0">Batal</button><button class="primary" value="1">Simpan</button></div></form>';
+    d.querySelector('p').textContent = msg; const i = d.querySelector('input'); i.placeholder = ph || ''; i.value = val || '';
+    const end = (v) => { d.close(); d.remove(); done(v); };
+    d.querySelector('form').addEventListener('submit', (e) => { e.preventDefault(); const v = i.value.trim(); if (v) end(v); else i.focus(); });
+    d.addEventListener('click', (e) => { if (e.target.closest('[data-v="0"]') || e.target === d) end(null); });
+    d.addEventListener('cancel', (e) => { e.preventDefault(); end(null); });
+    document.body.appendChild(d); d.showModal(); i.focus();
+  });
+
   let deferred = null;
   const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   addEventListener('beforeinstallprompt', (e) => {
@@ -182,6 +194,7 @@ export const SHARED_CSS = `
          border-radius: 10px; border: 1.5px solid var(--line); background: var(--surface); color: var(--fg);
          font: inherit; font-size: 14px; font-weight: 600; cursor:pointer; text-decoration:none; white-space: nowrap;
          transition: background .15s, border-color .15s; }
+  button > svg.bi, .btn > svg.bi { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
   button:hover, .btn:hover { border-color: color-mix(in srgb, var(--fg) 35%, var(--line)); }
   button:focus, .btn:focus, a:focus, summary:focus { outline: none; }
   @media (hover: hover) { button:focus-visible, .btn:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid color-mix(in srgb, var(--brand) 55%, transparent); outline-offset: 2px; } }

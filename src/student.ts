@@ -142,6 +142,7 @@ const page = (title: string, body: string) => `<!doctype html>
   .band p { color: rgba(255,255,255,.85); margin: 0; }
   .band-top { display:flex; justify-content:space-between; align-items:center; gap: 10px; }
   .chip { font-size: 12.5px; font-weight: 700; padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.25); }
+  a.chip, a.chip:visited { color: #fff; text-decoration: none; min-height: 36px; display: inline-flex; align-items: center; }
   .band .ghostbtn { min-height: 38px; padding: 6px 12px; font-size: 13px; color: #fff; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.25); box-shadow: none; }
   .lift { margin-top: -44px; position: relative; }
   .avatar { width: 52px; height: 52px; border-radius: 16px; background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.3); display:grid; place-items:center; font-weight: 800; font-size: 20px; color: #fff; flex: 0 0 auto; }
@@ -179,6 +180,7 @@ const lockedCard = (title: string, sessionId: string) => `
     <div style="width:60px;height:60px;border-radius:50%;margin:0 auto 12px;display:grid;place-items:center;font-size:28px;background:#FEE2E2;color:#B91C1C">🔒</div>
     <h1 style="font-size:22px">Ujian terkunci</h1>
     <p class="sub">${esc(title)}<br>Terlalu banyak pelanggaran (keluar layar, pindah aplikasi). Minta <b>kode buka</b> ke pengawas, lalu masukkan di bawah. Jawaban Anda tetap aman.</p>
+    <p class="muted" style="font-size:13px;background:#FEF3C7;color:#92400E;border-radius:12px;padding:10px 12px">Setelah dibuka, hitungan pelanggaran mulai dari 0. Jika batas tercapai <b>lagi</b>, jawaban dikumpulkan otomatis.</p>
     <form id="uf"><input id="uc" class="token" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="••••••" aria-label="Kode buka" required
       style="font:800 26px/1 ui-monospace,Menlo,monospace;letter-spacing:.35em;text-align:center;min-height:60px">
       <button class="primary" style="width:100%;min-height:52px;margin-top:12px">Buka ujian</button></form>
@@ -471,7 +473,7 @@ student.get("/s/history/:sid", async (c) => {
 
 student.get("/s/login", (c) => c.html(page("Masuk siswa", `
   <section class="band" style="padding-bottom:72px">
-    <div class="band-top"><a class="brand" href="/">${LOGO}</a><a class="chip" href="/" style="text-decoration:none">Bukan siswa?</a></div>
+    <div class="band-top"><a class="brand" href="/">${LOGO}</a><a class="chip" href="/masuk">Masuk sebagai guru</a></div>
     <h1>Masuk siswa</h1>
     <p>Pakai username dan PIN yang diberikan guru.</p>
   </section>
@@ -820,7 +822,7 @@ student.get("/s/take/:sid", async (c) => {
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const s = await tx`
       select es.id, es.status, es.deadline_at, es.question_order,
-             es.violation_count, es.paused_at,
+             es.violation_count, es.paused_at, es.lock_count,
              e.title, e.anticheat_level, e.lock_after_violations
       from exam_sessions es join exams e on e.id = es.exam_id
       where es.id = ${sessionId} and es.student_id = ${stu.uid}`;
@@ -882,7 +884,7 @@ student.get("/s/take/:sid", async (c) => {
     return {
       title: sess.title, deadline: sess.deadline_at, questions, answers, flags,
       anticheat: sess.anticheat_level, limit: sess.lock_after_violations,
-      violations: sess.violation_count,
+      violations: sess.violation_count, locks: (sess as unknown as { lock_count: number }).lock_count,
       paused_at: (sess as unknown as { paused_at: string | null }).paused_at,
     };
   });
@@ -900,7 +902,7 @@ student.get("/s/take/:sid", async (c) => {
   const payload = JSON.stringify({
     sessionId, deadline: data.deadline,
     questions: data.questions, answers: data.answers, flags: data.flags,
-    anticheat: data.anticheat, limit: data.limit, violations: data.violations,
+    anticheat: data.anticheat, limit: data.limit, violations: data.violations, locks: data.locks,
     paused_at: data.paused_at,
   });
   return c.html(page(data.title!, `
@@ -1277,6 +1279,13 @@ student.get("/s/take/:sid", async (c) => {
       }
       tick(); render();
 
+      function warnBig(t, m) {
+        const d = document.createElement('dialog'); d.className = 'yk-ask';
+        d.innerHTML = '<div class="ai dg">!</div><p style="font-weight:800;color:var(--fg);margin-bottom:4px"></p><p></p><div class="ab"><button type="button" class="primary">Saya mengerti</button></div>';
+        d.querySelectorAll('p')[0].textContent = t; d.querySelectorAll('p')[1].textContent = m;
+        d.querySelector('button').onclick = () => { d.close(); d.remove(); };
+        document.body.appendChild(d); d.showModal();
+      }
       // Anti-cheat: lapor peristiwa mencurigakan ke server.
       let lastReport = 0;
       async function report(kind) {
@@ -1288,10 +1297,12 @@ student.get("/s/take/:sid", async (c) => {
         });
         const j = await r.json().catch(() => ({}));
         violations = j.count || violations + 1;
-        if (j.locked) { submitting = true; location.reload(); return; }
+        if (j.locked || j.submitted) { submitting = true; location.reload(); return; }
         if (level !== 'log') {
           const remain = limit ? Math.max(0, limit - violations) : null;
-          toast('Pelanggaran tercatat: ' + (KIND[kind] || kind) + ' (' + violations + 'x' + (remain !== null ? ', sisa ' + remain : '') + ')');
+          const next = (D.locks || 0) >= 1 ? 'jawaban Anda dikumpulkan otomatis' : 'ujian dikunci dan Anda harus minta kode ke pengawas';
+          if (remain === 1) warnBig('Peringatan terakhir', 'Satu kali lagi keluar dari halaman ujian, ' + next + '.');
+          else toast('Pelanggaran: ' + (KIND[kind] || kind) + ' (' + violations + ' dari ' + limit + '). Jika mencapai ' + limit + ', ' + next + '.', 'err');
         }
       }
       // Simulasi: terima postMessage dari iframe sandbox dan simpan sebagai
@@ -1529,11 +1540,11 @@ student.post("/s/take/:sid/violation", async (c) => {
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const out = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const sess = await tx`
-      select es.id, es.status, es.violation_count, e.anticheat_level, e.lock_after_violations
+      select es.id, es.status, es.violation_count, es.lock_count, e.anticheat_level, e.lock_after_violations
       from exam_sessions es join exams e on e.id = es.exam_id
       where es.id = ${sessionId} and es.student_id = ${stu.uid}`;
     if (sess.length === 0) throw new Error("sesi tidak ditemukan");
-    const row = sess[0] as { id: string; status: string; violation_count: number;
+    const row = sess[0] as { id: string; status: string; violation_count: number; lock_count: number;
       anticheat_level: "log"|"warn"|"lock"; lock_after_violations: number | null };
 
     await tx`insert into violations (school_id, session_id, kind)
@@ -1542,15 +1553,21 @@ student.post("/s/take/:sid/violation", async (c) => {
     const limit = row.lock_after_violations ?? 0;
     // "Peringatan" dan "Kunci" sama-sama mengunci setelah batas tercapai; "Catat saja" tidak.
     const shouldLock = row.anticheat_level !== "log" && limit > 0 && nextCount >= limit && row.status === "active";
+    // Sudah pernah dikunci lalu dibuka pengawas → batas tercapai lagi = dikumpulkan otomatis.
+    if (shouldLock && row.lock_count >= 1) {
+      await tx`update exam_sessions set violation_count = ${nextCount}, lock_count = lock_count + 1 where id = ${sessionId}`;
+      await finalizeSession(tx, sessionId, "submitted");
+      return { ok: true, count: nextCount, locked: false, submitted: true, level: row.anticheat_level };
+    }
     if (shouldLock) {
       const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
-      await tx`update exam_sessions set violation_count = ${nextCount}, status = 'locked', unlock_code = ${code}, unlock_tries = 0
+      await tx`update exam_sessions set violation_count = ${nextCount}, status = 'locked', unlock_code = ${code}, unlock_tries = 0, lock_count = lock_count + 1
                where id = ${sessionId}`;
     } else {
       await tx`update exam_sessions set violation_count = ${nextCount}
                where id = ${sessionId}`;
     }
-    return { ok: true, count: nextCount, locked: shouldLock, level: row.anticheat_level };
+    return { ok: true, count: nextCount, locked: shouldLock, level: row.anticheat_level, locks: row.lock_count };
   });
   return c.json(out);
 });

@@ -1633,6 +1633,45 @@ api.get("/api/exams/:id/scores.csv", async (c) => {
 // (parameter query ?code=xxx). Dibatasi: hanya admin dari sekolah yang
 // sudah ada (bukan unlimited onboarding), dan hanya saat APP_ENV!=production
 // kecuali pemanggil terdaftar di system_owners.
+// Pulihkan backup ke sekolah ini: data yang hilang/terhapus dikembalikan,
+// yang masih ada dilewati (pakai ID asli, jadi aman diulang).
+api.post("/api/reports/restore-here", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "Hanya admin." }, 403);
+  const p = await c.req.json().catch(() => null) as null | Record<string, Array<Record<string, any>>> & { version?: number };
+  if (!p || p.version !== 1 || !Array.isArray(p.questions)) return c.json({ error: "File ini bukan cadangan CBT Yuk." }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const tally: Record<string, number> = {};
+  await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    // Satu insert per tabel; baris yang sudah ada dilewati. Tabel yang gagal tidak menggagalkan yang lain.
+    const put = async (kind: string, rows: Array<Record<string, any>> | undefined, cols: string[], fill: (r: Record<string, any>) => Record<string, unknown>) => {
+      const list = (rows ?? []).map((r) => ({ ...fill(r), school_id: s.sid }));
+      if (!list.length) return;
+      try {
+        const res = await tx.savepoint((sp: typeof tx) => sp`insert into ${sp(kind.split(":")[1])} ${(sp as any)(list, [...cols, "school_id"])} on conflict do nothing`) as unknown as { count: number };
+        if (res.count) tally[kind.split(":")[0]] = res.count;
+      } catch (e) { console.log("restore", kind, (e as Error).message); }
+    };
+    const j = (v: unknown) => tx.json(v as never);
+    await put("kelas:classes", p.classes, ["id", "name", "grade", "year"], (r) => ({ id: r.id, name: r.name, grade: r.grade ?? null, year: r.year }));
+    await put("siswa:students", p.students, ["id", "class_id", "name", "nisn", "gender", "username", "pin_hash", "active"],
+      (r) => ({ id: r.id, class_id: r.class_id ?? null, name: r.name, nisn: r.nisn ?? null, gender: r.gender ?? null, username: r.username, pin_hash: r.pin_hash, active: r.active ?? true }));
+    await put("kategori:categories", p.categories, ["id", "name"], (r) => ({ id: r.id, name: r.name }));
+    await put("bacaan:passages", p.passages, ["id", "title", "body"], (r) => ({ id: r.id, title: r.title ?? null, body: r.body }));
+    await put("soal:questions", p.questions, ["id", "author_id", "category_id", "passage_id", "type", "content", "points"],
+      (r) => ({ id: r.id, author_id: s.uid, category_id: r.category_id ?? null, passage_id: r.passage_id ?? null, type: r.type, content: j(r.content), points: r.points }));
+    await put("-:question_keys", p.question_keys, ["question_id", "answer_key", "rubric"], (r) => ({ question_id: r.question_id, answer_key: j(r.answer_key), rubric: r.rubric ?? null }));
+    await put("ujian:exams", p.exams, ["id", "creator_id", "title", "kind", "duration_minutes", "shuffle_questions", "shuffle_options", "anticheat_level", "lock_after_violations", "starts_at", "ends_at", "status", "questions_per_session"],
+      (r) => ({ id: r.id, creator_id: s.uid, title: r.title, kind: r.kind, duration_minutes: r.duration_minutes, shuffle_questions: r.shuffle_questions ?? false, shuffle_options: r.shuffle_options ?? false,
+        anticheat_level: r.anticheat_level ?? "warn", lock_after_violations: r.lock_after_violations ?? 3, starts_at: r.starts_at ?? null, ends_at: r.ends_at ?? null, status: "draft", questions_per_session: r.questions_per_session ?? 0 }));
+    await put("-:exam_classes", p.exam_classes, ["exam_id", "class_id"], (r) => ({ exam_id: r.exam_id, class_id: r.class_id }));
+    await put("-:exam_questions", p.exam_questions, ["exam_id", "question_id", "position", "weight"], (r) => ({ exam_id: r.exam_id, question_id: r.question_id, position: r.position, weight: r.weight }));
+    await audit(tx, actorFromSession(s), "school.restore", "school", s.sid, tally);
+  });
+  delete tally["-"];
+  return c.json({ ok: true, restored: tally });
+});
+
 api.post("/api/reports/restore", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
