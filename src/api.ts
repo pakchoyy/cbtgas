@@ -1434,6 +1434,19 @@ api.post("/api/exams", async (c) => {
   return c.json(r[0], 201);
 });
 
+api.delete("/api/exams/:id", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "Pengawas tidak boleh menghapus ujian." }, 403);
+  const id = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const n = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const r = await tx`delete from exams where id = ${id} returning title`;
+    if (r.length) await audit(tx, actorFromSession(s), "exam.delete", "exam", id, { title: (r[0] as { title: string }).title });
+    return r.length;
+  });
+  return n ? c.json({ ok: true }) : c.json({ error: "Ujian tidak ditemukan." }, 404);
+});
+
 api.patch("/api/exams/:id", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);

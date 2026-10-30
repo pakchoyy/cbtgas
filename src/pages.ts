@@ -1711,6 +1711,7 @@ pages.get("/app/exams/:id", async (c) => {
         <button data-status="open" ${ex.status === "open" ? "disabled" : ""}>Buka</button>
         <button data-status="closed" ${ex.status === "closed" ? "disabled" : ""}>Tutup</button>
         <button data-status="draft" ${ex.status === "draft" ? "disabled" : ""}>Jadi draft</button>
+        ${sess.role === "proctor" ? "" : `<button type="button" class="danger" id="delExam" style="margin-left:auto"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Hapus ujian</button>`}
       </div>
     </div>
 
@@ -1757,6 +1758,13 @@ pages.get("/app/exams/:id", async (c) => {
 
     <script>
       const EID = ${JSON.stringify(examId)};
+      document.getElementById('delExam')?.addEventListener('click', async () => {
+        if (!(await ask('Hapus ujian ini? Nilai dan jawaban siswa untuk ujian ini ikut terhapus. Soal di bank soal tetap ada.'))) return;
+        const r = await fetch('/api/exams/' + EID, { method: 'DELETE', credentials: 'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return toast(j.error || 'Gagal menghapus.', 'err');
+        toast('Ujian dihapus.', 'ok'); location.href = '/app/exams';
+      });
       document.body.addEventListener('click', async (e) => {
         const sid = e.target && e.target.getAttribute && e.target.getAttribute('data-unlock');
         if (!sid) return;
