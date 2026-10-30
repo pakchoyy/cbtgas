@@ -126,6 +126,13 @@ auth.get("/auth/google/callback", async (c) => {
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const staff = await sql`select user_id, school_id, role from find_staff_by_email(${email})`;
   if (staff.length === 0) {
+    // Pemilik layanan tanpa sekolah: langsung ke halaman pemantauan.
+    if ((await sql`select 1 from system_owners where email = ${email}`).length) {
+      const own: Session = { uid: "", sid: "", role: "owner", email, exp: Math.floor(Date.now() / 1000) + SESSION_TTL };
+      headers.append("Set-Cookie", cookieHeader(SESSION_COOKIE, await sign(own, c.env.SESSION_SECRET), { maxAge: SESSION_TTL }));
+      headers.set("Location", `${c.env.APP_ORIGIN}/owner`);
+      return new Response(null, { status: 302, headers });
+    }
     return authError("Email ini belum terdaftar",
       `${email} belum menjadi staf di sekolah mana pun. Minta admin sekolah mengundang email ini, atau daftarkan sekolah baru dengan akun ini.`, 403);
   }
@@ -274,3 +281,12 @@ export async function requireStaff(
   return s;
 }
 const staffOk = new Map<string, number>();
+
+// Pemilik layanan (tabel system_owners), boleh punya sekolah atau tidak.
+export async function requireOwner(cookieHeaderStr: string | null | undefined, secret: string, hyperdrive: Hyperdrive): Promise<Session | null> {
+  const token = readCookie(cookieHeaderStr, SESSION_COOKIE);
+  const s = token ? await verify(token, secret) : null;
+  if (!s?.email) return null;
+  const sql = connect(hyperdrive.connectionString);
+  return (await sql`select 1 from system_owners where email = ${s.email.toLowerCase()}`).length ? s : null;
+}

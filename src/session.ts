@@ -26,7 +26,7 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
 export type Session = {
   uid: string;        // users.id
   sid: string;        // schools.id
-  role: "admin" | "teacher" | "proctor";
+  role: "admin" | "teacher" | "proctor" | "owner"; // owner = pemilik layanan, tanpa sekolah
   email: string;
   exp: number;        // epoch seconds
 };

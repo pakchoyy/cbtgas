@@ -4,7 +4,7 @@
 import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
-import { requireStaff, AuthBindings } from "./auth";
+import { requireStaff, requireOwner, AuthBindings } from "./auth";
 import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, UI_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
@@ -1152,14 +1152,11 @@ pages.get("/app/exams", async (c) => {
 
 // Pemantauan layanan (pemilik CBT Yuk): semua sekolah, terutama yang masih uji coba.
 // Hanya email di tabel system_owners.
-const isOwner = async (sql: ReturnType<typeof connect>, email: string) =>
-  (await sql`select 1 from system_owners where email = ${email.toLowerCase()}`).length > 0;
 
 pages.get("/owner", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
-  if (!sess) return c.redirect("/");
+  const sess = await requireOwner(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  if (!sess) return c.redirect("/masuk");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  if (!(await isOwner(sql, sess.email))) return c.notFound();
   const rows = await withTenant(sql, { schoolId: "", role: "owner" }, (tx) => tx`
     select s.id, s.name, s.level, s.plan, s.created_at, s.operator_name, s.operator_phone, s.active,
       (select email from users u where u.school_id = s.id and u.role = 'admin' order by u.created_at limit 1) as admin_email,
@@ -1362,7 +1359,7 @@ pages.get("/app/exams/new", async (c) => {
         <p class="muted" style="margin-top:-6px">Ketuk kartu untuk memakai semua soal di kategori itu. Bisa lebih dari satu.</p>
         <div class="folders" id="catCards"></div>
         <div class="wupl">
-          <label class="btn">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}Upload Word/PDF jadi soal<input type="file" id="wDoc" accept=".docx,.pdf" hidden></label>
+          <label class="btn">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}Upload Word/PDF<input type="file" id="wDoc" accept=".docx,.pdf" hidden></label>
           <a class="btn ai" href="${AI_SOAL}" target="_blank" rel="noopener">${icon("M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z")}Buat soal dengan AI</a>
         </div>
         <p class="pickcount" id="qCount2"></p>
@@ -1383,9 +1380,9 @@ pages.get("/app/exams/new", async (c) => {
       <section class="card wstep" data-s="4" hidden>
         <h2>Kapan dibuka?</h2>
         <div class="choice">
-          <label class="ch"><input type="radio" name="when" value="draft" checked><span><b>Simpan sebagai draf</b><small>Belum bisa dikerjakan siswa. Bisa dibuka nanti.</small></span></label>
-          <label class="ch"><input type="radio" name="when" value="now"><span><b>Buka sekarang</b><small>Siswa langsung bisa mulai mengerjakan.</small></span></label>
-          <label class="ch"><input type="radio" name="when" value="sched"><span><b>Jadwalkan</b><small>Terbuka dan tertutup otomatis pada waktu yang ditentukan.</small></span></label>
+          <label class="ch"><input type="radio" name="when" value="now" checked><span><b>Buka sekarang</b><small>Siswa langsung bisa mulai setelah disimpan.</small></span></label>
+          <label class="ch"><input type="radio" name="when" value="sched"><span><b>Jadwalkan</b><small>Pilih tanggal dan jam. Ujian terbuka dan tertutup sendiri.</small></span></label>
+          <label class="ch"><input type="radio" name="when" value="draft"><span><b>Simpan dulu (draf)</b><small>Belum terlihat siswa. Bisa dibuka kapan saja dari halaman ujian.</small></span></label>
         </div>
         <div class="grid" id="schedBox" hidden>
           <div><label>Mulai</label><input name="starts_at" type="datetime-local"></div>
@@ -1533,7 +1530,16 @@ pages.get("/app/exams/new", async (c) => {
 
       // Jadwal
       const whenVal = () => f.when.value;
-      f.addEventListener('change', (e) => { if (e.target.name === 'when') document.getElementById('schedBox').hidden = whenVal() !== 'sched'; });
+      // Jadwal: isi otomatis besok 07.30, berakhir sesudah durasi; ubah mulai → berakhir ikut.
+      const loc = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      const endFrom = () => { const st = new Date(f.starts_at.value); if (!isNaN(st)) f.ends_at.value = loc(new Date(st.getTime() + (+f.duration_minutes.value || 60) * 60000)); };
+      f.addEventListener('change', (e) => {
+        if (e.target.name === 'when') {
+          document.getElementById('schedBox').hidden = whenVal() !== 'sched';
+          if (whenVal() === 'sched' && !f.starts_at.value) { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(7, 30, 0, 0); f.starts_at.value = loc(d); endFrom(); }
+        }
+        if (e.target.name === 'starts_at') endFrom();
+      });
       const chosenClasses = () => [...f.querySelectorAll('input[name=cls]:checked')].map((i) => i.value);
 
       function review() {
