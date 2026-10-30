@@ -116,7 +116,7 @@ const page = (title: string, body: string) => `<!doctype html>
   .flagtag { display:inline-flex; align-items:center; gap: 6px; font-size: 12px; font-weight: 700; color: #B45309; background: #FEF3C7; padding: 3px 10px; border-radius: 999px; margin-left: 8px; vertical-align: 1px; }
   :root[data-theme="dark"] .q.flagged { background: #2A2210; }
   .exam-foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: var(--surface); border-top: 1px solid var(--line);
-               padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
+               padding: 10px 16px calc(22px + env(safe-area-inset-bottom)); }
   .exam-foot .in { max-width: 760px; margin: 0 auto; display:flex; gap: 8px; align-items:center; }
   .exam-foot .in .spacer { flex: 1; }
   .exam-foot button { min-height: 48px; }
@@ -137,7 +137,7 @@ const page = (title: string, body: string) => `<!doctype html>
           background: radial-gradient(500px 220px at 90% 0%, rgba(255,255,255,.18), transparent 60%),
                       linear-gradient(140deg, var(--brand), color-mix(in srgb, var(--brand) 62%, #0F172A)); }
   .band .brand, .band .brand b { color: #fff; }
-  .band .brand .logo rect { fill: #fff; } .band .brand .logo circle { fill: var(--brand); } .band .brand .logo path { stroke: #fff; }
+  .band .brand .logo { background: #fff; border-radius: 9px; padding: 3px; } .band .brand span { color: #fff; }
   .band h1 { color: #fff; font-size: clamp(24px, 6vw, 30px); margin: 18px 0 4px; }
   .band p { color: rgba(255,255,255,.85); margin: 0; }
   .band-top { display:flex; justify-content:space-between; align-items:center; gap: 10px; }
@@ -157,6 +157,10 @@ const page = (title: string, body: string) => `<!doctype html>
   .legend { display:flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--mut); margin: -8px 0 16px; }
   .legend i { display:inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; border: 1.5px solid var(--line); }
   .legend i.a { background: var(--brand); border-color: var(--brand); } .legend i.f { background: #F59E0B; border-color: #F59E0B; }
+  button.ragu { background: #FEF3C7; border-color: #FCD34D; color: #92400E; }
+  .eh-btn.done { background: #fff; border-color: #fff; color: #0F172A; }
+  .eh-row + .eh-row { justify-content: flex-start; gap: 8px; } .eh-row + .eh-row .eh-note { flex: 1; }
+  @media (max-width: 480px) { #exitBtn span, #chatBtn > span:first-of-type, #gridBtn > span { display: none; } .eh-btn { padding: 6px 10px; } }
   button.ragu[aria-pressed="true"] { background: #F59E0B; border-color: #F59E0B; color: #fff; }
   .gate { position: fixed; inset: 0; z-index: 120; display:grid; place-items:center; padding: 24px; background: rgba(10,15,28,.86); }
   .gate .card { max-width: 440px; text-align:center; margin: 0; }
@@ -480,7 +484,7 @@ student.get("/s/login", (c) => c.html(page("Masuk siswa", `
   <div class="lift" style="max-width:440px;margin-left:auto;margin-right:auto">
     <div class="card" style="padding:24px">
       <form id="f">
-        <label for="u">Username</label><input id="u" name="username" required autocomplete="username" autocapitalize="none" placeholder="mis. andi.saputra">
+        <label for="u">Username</label><input id="u" name="username" required autocomplete="username" autocapitalize="none" placeholder="Username atau NISN">
         <label for="p">PIN</label><input id="p" name="pin" type="password" inputmode="numeric" autocomplete="current-password" required pattern="\\d{4,8}" placeholder="4–8 angka">
         <button class="primary" type="submit" style="width:100%;min-height:50px;margin-top:18px">Masuk</button>
         <p class="err" id="err" role="alert" hidden></p>
@@ -559,6 +563,7 @@ student.post("/s/forgot", async (c) => {
   if (!body?.username) return c.json({ error: "Isi username." }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const found = await sql`select school_id from find_students_by_username(${body.username})`;
+  const contacts: Array<{ school: string; name: string; wa: string }> = [];
   // Username yang sama bisa ada di beberapa sekolah: ajukan ke semuanya.
   for (const { school_id: sid } of found as unknown as Array<{ school_id: string }>) {
     const notify = await withTenant(sql, { schoolId: sid, role: "student" }, async (tx) => {
@@ -570,11 +575,14 @@ student.post("/s/forgot", async (c) => {
         await tx`insert into pin_resets (school_id, student_id) values (${sid}, ${stuRow.id})`;
       }
       const [sch, admins] = await Promise.all([
-        tx`select name from schools where id = ${sid}`,
+        tx`select name, operator_name, operator_phone from schools where id = ${sid}`,
         tx`select email from users where role in ('admin','teacher') and active`,
       ]);
+      const sc = sch[0] as { name: string; operator_name: string | null; operator_phone: string | null } | undefined;
+      const ph = (sc?.operator_phone ?? "").replace(/\D/g, "").replace(/^0/, "62");
+      if (ph.length >= 9) contacts.push({ school: sc!.name, name: sc!.operator_name ?? "operator", wa: ph });
       return {
-        schoolName: (sch[0] as { name: string } | undefined)?.name ?? "",
+        schoolName: sc?.name ?? "",
         studentName: stuRow.name,
         username: body.username,
         recipients: (admins as unknown as Array<{ email: string }>).map((x) => x.email),
@@ -591,30 +599,34 @@ student.post("/s/forgot", async (c) => {
       }
     }
   }
-  return c.json({ ok: true, message: "Permintaan reset diajukan. Hubungi guru untuk mendapat PIN baru." });
+  return c.json({ ok: true, contacts, message: "Permintaan terkirim ke sekolah. Hubungi operator untuk mendapat PIN baru." });
 });
 
 student.get("/s/forgot", (c) => c.html(page("Lupa PIN", `
-  <div class="card">
+  <div class="card" style="max-width:440px;margin:8vh auto 0">
     <h1>Lupa PIN</h1>
-    <p class="sub">Kirim permintaan ke guru untuk reset. Guru akan memberi Anda PIN baru.</p>
+    <p class="sub">Masukkan username (atau NISN). Kami kirim permintaan ke sekolah, lalu Anda bisa langsung menghubungi operator lewat WhatsApp.</p>
     <form id="f">
-      <label>Username</label><input name="username" required autocapitalize="none" placeholder="andi.saputra">
-      <div class="row"><button class="primary" type="submit">Ajukan reset</button>
-        <a class="btn" href="/s/login">Kembali</a></div>
-      <p id="msg" style="margin-top:12px"></p>
+      <label>Username / NISN</label><input name="username" required autocapitalize="none" autocomplete="username" placeholder="mis. 0081234567">
+      <button class="primary" type="submit" style="width:100%;min-height:50px;margin-top:12px">Minta PIN baru</button>
     </form>
+    <div id="res" hidden style="margin-top:16px"></div>
+    <p style="text-align:center;margin:16px 0 0"><a href="/s/login">‹ Kembali ke halaman masuk</a></p>
   </div>
   <script>
     document.getElementById('f').addEventListener('submit', async (e) => {
       e.preventDefault();
       const d = Object.fromEntries(new FormData(e.target));
-      const r = await fetch('/s/forgot', { method:'POST', credentials:'same-origin',
-        headers: { 'Content-Type':'application/json' }, body: JSON.stringify(d) });
+      const r = await fetch('/s/forgot', { method:'POST', credentials:'same-origin', headers: { 'Content-Type':'application/json' }, body: JSON.stringify(d) });
       const j = await r.json().catch(() => ({}));
-      const msg = document.getElementById('msg');
-      msg.className = r.ok ? 'muted' : 'err';
-      msg.textContent = j.message || j.error || ('HTTP ' + r.status);
+      const res = document.getElementById('res'); res.hidden = false; res.innerHTML = '';
+      const p = document.createElement('p'); p.className = r.ok ? 'muted' : 'err'; p.textContent = j.message || j.error || 'Gagal mengirim.'; res.appendChild(p);
+      (j.contacts || []).forEach((k) => {
+        const a = document.createElement('a'); a.className = 'btn'; a.target = '_blank'; a.rel = 'noopener';
+        a.style.cssText = 'width:100%;min-height:50px;background:#16A34A;border-color:#16A34A;color:#fff;margin-top:8px';
+        a.href = 'https://wa.me/' + k.wa + '?text=' + encodeURIComponent('Halo ' + k.name + ', saya siswa ' + k.school + ' dengan username ' + d.username + '. Saya lupa PIN CBT Yuk, mohon dibantu reset.');
+        a.textContent = 'Chat ' + k.name + ' (' + k.school + ') di WhatsApp'; res.appendChild(a);
+      });
     });
   </script>
 `)));
@@ -883,7 +895,7 @@ student.get("/s/take/:sid", async (c) => {
     }
     return {
       title: sess.title, deadline: sess.deadline_at, questions, answers, flags,
-      anticheat: sess.anticheat_level, limit: sess.lock_after_violations,
+      anticheat: sess.anticheat_level, limit: sess.lock_after_violations || 3,
       violations: sess.violation_count, locks: (sess as unknown as { lock_count: number }).lock_count,
       paused_at: (sess as unknown as { paused_at: string | null }).paused_at,
     };
@@ -944,6 +956,12 @@ student.get("/s/take/:sid", async (c) => {
         <span id="qbadge" class="eh-note"></span>
         <button type="button" id="chatBtn" class="eh-btn">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg><span>Pengawas</span><span id="chatBadge" class="badge" hidden>baru</span>
+        </button>
+        <button type="button" id="exitBtn" class="eh-btn" title="Simpan dan keluar sementara">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg><span>Keluar</span>
+        </button>
+        <button type="button" id="doneBtn" class="eh-btn done">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Kumpulkan</span>
         </button>
       </div>
       <div class="prog" aria-hidden="true"><i id="progBar"></i></div>
@@ -1255,6 +1273,12 @@ student.get("/s/take/:sid", async (c) => {
       });
       document.getElementById('finBack').onclick = () => finish.close();
       document.getElementById('finGo').onclick = () => submitExam(false);
+      document.getElementById('doneBtn').onclick = () => openFinish();
+      document.getElementById('exitBtn').onclick = async () => {
+        if (!(await ask('Keluar sementara? Jawaban sudah tersimpan, tapi waktu ujian tetap berjalan. Masuk lagi untuk melanjutkan. Untuk menyelesaikan ujian, pakai tombol Kumpulkan.', 'Ya, keluar'))) return;
+        submitting = true; try { if (document.fullscreenElement) await document.exitFullscreen(); } catch (_) {}
+        location.href = '/s';
+      };
       async function submitExam(auto) {
         if (submitting) return; submitting = true;
         try { await flushQueue(); } catch (_) {}
@@ -1550,7 +1574,7 @@ student.post("/s/take/:sid/violation", async (c) => {
     await tx`insert into violations (school_id, session_id, kind)
              values (${stu.sid}, ${sessionId}, ${kind})`;
     const nextCount = row.violation_count + 1;
-    const limit = row.lock_after_violations ?? 0;
+    const limit = row.lock_after_violations || 3; // kosong di ujian lama → bawaan 3
     // "Peringatan" dan "Kunci" sama-sama mengunci setelah batas tercapai; "Catat saja" tidak.
     const shouldLock = row.anticheat_level !== "log" && limit > 0 && nextCount >= limit && row.status === "active";
     // Sudah pernah dikunci lalu dibuka pengawas → batas tercapai lagi = dikumpulkan otomatis.

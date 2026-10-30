@@ -125,7 +125,7 @@ api.post("/api/students", async (c) => {
     const pin_hash = await hashPin(pin);
     const sql = connect(c.env.HYPERDRIVE.connectionString);
     const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
-      const username = body.username?.trim() ? body.username.trim().toLowerCase() : await newUsername(tx, body.name, new Set());
+      const username = body.username?.trim() ? body.username.trim().toLowerCase() : await newUsername(tx, body.name, new Set(), body.nisn);
       return tx`insert into students (school_id, class_id, name, username, gender, nisn, pin_hash)
          values (${s.sid}, ${body.class_id ?? null}, ${body.name.trim()}, ${username},
                  ${body.gender ?? null}, ${body.nisn ?? null}, ${pin_hash})
@@ -203,7 +203,7 @@ api.post("/api/students/import", async (c) => {
         }
       }
       try {
-        const username = String(r.username ?? "").trim().toLowerCase() || await newUsername(tx, name, taken);
+        const username = String(r.username ?? "").trim().toLowerCase() || await newUsername(tx, name, taken, String(r.nisn ?? ""));
         taken.add(username);
         await tx`insert into students (school_id, class_id, name, username, gender, nisn, pin_hash)
           values (${s.sid}, ${classId}, ${name}, ${username}, ${g === "L" || g === "P" ? g : null}, ${String(r.nisn ?? "").trim() || null}, ${await hashPin(pin)})`;
@@ -227,7 +227,10 @@ function gradeOf(cls: string): number | null {
 
 // Username dari nama ("Andi Saputra" → "andi.saputra"), unik di semua sekolah
 // karena siswa masuk tanpa kode sekolah.
-async function newUsername(tx: postgres.TransactionSql, name: string, taken: Set<string>): Promise<string> {
+// Bila NISN ada, NISN dipakai sebagai username (mudah diingat siswa).
+async function newUsername(tx: postgres.TransactionSql, name: string, taken: Set<string>, nisn?: string | null): Promise<string> {
+  const ni = String(nisn ?? "").replace(/\s/g, "");
+  if (/^\d{4,20}$/.test(ni) && !taken.has(ni) && !(await tx`select 1 from find_students_by_username(${ni}) limit 1`).length) return ni;
   const base = name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9 ]/g, "").trim().split(/\s+/).slice(0, 2).join(".").slice(0, 24) || "siswa";
   for (let n = 1; n < 200; n++) {
     const u = n === 1 ? base : `${base}${n}`;
@@ -872,11 +875,11 @@ api.post("/api/students/:id/send-report", async (c) => {
 // {username, pin} satu kali untuk dibagikan.
 api.post("/api/classes/:id/reset-pins", async (c) => {
   const s = getSess(c);
-  if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
+  if (s.role === "proctor") return c.json({ error: "Pengawas tidak boleh mengganti PIN." }, 403);
   const classId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
-    const stus = await tx`select id, username, name from students where class_id = ${classId} and active`;
+    const stus = await tx`select id, username, name from students where class_id = ${classId} and active order by name`;
     const out: Array<{ username: string; name: string; pin: string }> = [];
     for (const row of stus as unknown as Array<{ id: string; username: string; name: string }>) {
       const buf = new Uint8Array(4); crypto.getRandomValues(buf);

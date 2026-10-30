@@ -92,10 +92,13 @@ app.get("/manifest.webmanifest", (c) => c.json({
 
 // Logo: gelembung jawaban yang sudah dicentang di atas kotak biru.
 const iconSvg = (pad: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B82F6"/><stop offset="1" stop-color="#1D4ED8"/></linearGradient></defs>
-  <rect width="512" height="512" rx="${pad ? 0 : 116}" fill="url(#g)"/>
-  <circle cx="256" cy="256" r="${150 - pad}" fill="#fff"/>
-  <path d="M${190 + pad / 3} 262 l46 46 l${86 - pad / 2} -${96 - pad / 2}" fill="none" stroke="#2563EB" stroke-width="${44 - pad / 4}" stroke-linecap="round" stroke-linejoin="round"/>
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B9BFF"/><stop offset="1" stop-color="#1D4ED8"/></linearGradient></defs>
+  <rect width="512" height="512" rx="${pad ? 0 : 116}" fill="#fff"/>
+  <g transform="translate(${56 + pad / 2} ${56 + pad / 2}) scale(${(400 - pad) / 32})">
+    <path d="M23.1 8.9A10 10 0 1 0 23.1 23.1" fill="none" stroke="url(#g)" stroke-width="6.4" stroke-linecap="round"/>
+    <circle cx="15.6" cy="16" r="3.1" fill="#2563EB"/>
+    <path d="M19.6 16.6l2.6 2.6 6.4-6.8" fill="none" stroke="#2563EB" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
 </svg>`;
 const svgRes = (body: string) => new Response(body, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" } });
 app.get("/icon-192.svg", () => svgRes(iconSvg(0)));

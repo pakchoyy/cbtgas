@@ -33,7 +33,8 @@ const KIND_LABELS: Record<string, string> = { harian: "Ulangan harian", pts_pas:
 export const kindLabel = (k: string) => KIND_LABELS[k] ?? k;
 
 // Logo kecil (ikut warna merek sekolah lewat var(--brand)).
-export const LOGO_MARK = `<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="var(--brand)"/><circle cx="16" cy="16" r="9.6" fill="#fff"/><path d="M11.8 16.4l3 3 5.6-6.2" fill="none" stroke="var(--brand)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+// Logo: huruf C tebal dengan titik dan centang (opsi 3).
+export const LOGO_MARK = `<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><path d="M23.1 8.9A10 10 0 1 0 23.1 23.1" fill="none" stroke="var(--brand)" stroke-width="6.4" stroke-linecap="round"/><circle cx="15.6" cy="16" r="3.1" fill="var(--brand)"/><path d="M19.6 16.6l2.6 2.6 6.4-6.8" fill="none" stroke="var(--brand)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 export const LOGO = `${LOGO_MARK}<span>CBT <b>Yuk</b></span>`;
 
 // Footer halaman publik + kartu "pasang aplikasi" (dipakai pages.ts dan student.ts).
@@ -99,13 +100,14 @@ export const UI_JS = `<script>
 
   let deferred = null;
   const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault(); deferred = e;
-    let seen = false; try { seen = !!localStorage.getItem('install_dismissed'); } catch (_) {}
-    if (!seen) setTimeout(() => { const c = document.getElementById('installCard'); if (c && deferred) c.hidden = false; }, 6000);
-  });
+  // Ajakan pasang muncul setiap kali browser dibuka (sekali per sesi) sampai aplikasi terpasang.
+  const offered = () => { try { return !!sessionStorage.getItem('install_dismissed'); } catch (_) { return false; } };
+  const offer = () => { const c = document.getElementById('installCard'); if (c && !standalone() && !offered()) c.hidden = false; };
+  addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferred = e; });
+  addEventListener('appinstalled', () => { const c = document.getElementById('installCard'); if (c) c.hidden = true; });
+  if (!standalone() && !location.pathname.startsWith('/s/take/')) setTimeout(offer, 3000);
   async function install() {
-    const c = document.getElementById('installCard'); if (c) c.hidden = true;
+    const c = document.getElementById('installCard'); if (c) c.hidden = true; try { sessionStorage.setItem('install_dismissed', '1'); } catch (_) {}
     if (standalone()) return toast('CBT Yuk sudah terpasang di perangkat ini.', 'ok');
     if (deferred) { deferred.prompt(); const r = await deferred.userChoice; deferred = null; if (r.outcome === 'accepted') toast('CBT Yuk dipasang. Buka dari layar utama.', 'ok'); return; }
     if (/iphone|ipad|ipod/i.test(navigator.userAgent)) return toast('Di iPhone/iPad: ketuk tombol Bagikan di Safari, lalu pilih "Tambah ke Layar Utama".');
@@ -113,7 +115,7 @@ export const UI_JS = `<script>
   }
   document.addEventListener('click', (e) => {
     if (e.target.closest('[data-install]')) { e.preventDefault(); install(); }
-    if (e.target.closest('#installClose')) { document.getElementById('installCard').hidden = true; try { localStorage.setItem('install_dismissed', '1'); } catch (_) {} }
+    if (e.target.closest('#installClose')) { document.getElementById('installCard').hidden = true; try { sessionStorage.setItem('install_dismissed', '1'); } catch (_) {} }
   });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 })();
@@ -258,16 +260,14 @@ export const SHARED_CSS = `
   .brand .logo { width:32px; height:32px; flex:0 0 auto; }
 
   /* Footer publik */
-  .site-foot { background: #0B1220; color: #CBD5E1; margin-top: 56px; }
-  .site-foot .brand { color:#fff; }
-  .site-foot .brand b { color:#fff; }
-  .sf-in { max-width: 1040px; margin: 0 auto; padding: 44px 20px 28px; display:grid; grid-template-columns: 1.6fr 1fr 1fr; gap: 28px; }
-  .sf-brand p { color:#94A3B8; font-size:14px; margin: 14px 0 0; max-width: 34ch; }
-  .sf-col h4 { color:#fff; font-size:13px; letter-spacing:.06em; text-transform:uppercase; margin: 6px 0 12px; }
-  .sf-col a { display:block; color:#CBD5E1; text-decoration:none; font-size:14px; padding: 6px 0; }
-  .sf-col a:hover { color:#fff; }
-  .sf-bot { max-width:1040px; margin:0 auto; padding: 16px 20px 26px; border-top: 1px solid #1E293B; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; font-size:13px; color:#64748B; }
-  @media (max-width: 640px) { .sf-in { grid-template-columns: 1fr 1fr; } .sf-brand { grid-column: 1 / -1; } }
+  .site-foot { background: var(--surface); border-top: 1px solid var(--line); color: var(--mut); margin-top: 56px; }
+  .sf-in { max-width: 1040px; margin: 0 auto; padding: 36px 20px 20px; display:grid; grid-template-columns: 1.6fr 1fr 1fr; gap: 24px; }
+  .sf-brand p { font-size:14px; margin: 10px 0 0; max-width: 36ch; }
+  .sf-col h4 { color: var(--fg); font-size:14px; margin: 4px 0 8px; }
+  .sf-col a { display:block; color: var(--mut); text-decoration:none; font-size:14px; padding: 5px 0; }
+  .sf-col a:hover { color: var(--brand); }
+  .sf-bot { max-width:1040px; margin:0 auto; padding: 14px 20px 22px; border-top: 1px solid var(--line); display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; font-size:13px; }
+  @media (max-width: 640px) { .sf-in { grid-template-columns: 1fr 1fr; padding-top: 28px; } .sf-brand { grid-column: 1 / -1; } }
 
   /* Kartu folder (kategori soal, kelas) */
   .folders { display:grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin-bottom: 18px; }
@@ -281,6 +281,14 @@ export const SHARED_CSS = `
   .folder .chev { color: var(--mut); font-size: 22px; }
   .folder.add { border-style: dashed; box-shadow: none; } .folder.add .fi { background: var(--soft); color: var(--brand); }
   .folder.pack button { min-height: 38px; padding: 6px 14px; font-size: 13.5px; flex: 0 0 auto; }
+  @media (max-width: 640px) {
+    .folders { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .folder { flex-direction: column; align-items: flex-start; gap: 10px; padding: 14px 12px; min-height: 0; position: relative; }
+    .folder .fi { width: 40px; height: 40px; font-size: 17px; border-radius: 12px; }
+    .folder .ft b { font-size: 15px; } .folder .ft span { font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .folder .chev { position: absolute; top: 14px; right: 12px; }
+    .folder.pack button { width: 100%; }
+  }
   .crumb { display:flex; align-items:center; gap: 10px; margin: 0 0 12px; flex-wrap: wrap; }
   .crumb button { min-height: 38px; padding: 6px 12px; font-size: 13.5px; border-radius: 999px; }
   .crumb b { font-size: 17px; }

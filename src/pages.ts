@@ -432,7 +432,6 @@ pages.get("/", async (c) => {
       <a class="btn primary topin" href="/masuk"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h4v16h-4M10 8l4 4-4 4M14 12H3"/></svg>Masuk</a></div>
     <section class="hero">
       <div>
-        <span class="eyebrow">Gratis dicoba · tanpa instal</span>
         <h1>Ujian sekolah jadi <em>gampang</em>.</h1>
         <p class="lead">Buat soal, jadwalkan ujian, awasi siswa secara langsung, dan nilai keluar otomatis. Untuk SD, SMP, dan SMA, lancar di HP maupun komputer lab.</p>
         <div class="cta">
@@ -735,7 +734,7 @@ pages.get("/app", async (c) => {
     <div class="quick">
       <a href="/app/questions?tulis=1"><span class="qi">${icon("M4 20h4L19 9l-4-4L4 16zM14 6l4 4")}</span><b>Tulis soal</b></a>
       <a href="/app/questions?upload=1"><span class="qi">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}</span><b>Upload soal</b></a>
-      <a href="${AI_SOAL}" target="_blank" rel="noopener" class="ai"><span class="qi">${icon("M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z")}</span><b>Buat soal dengan AI</b></a>
+      <a href="${AI_SOAL}" target="_blank" rel="noopener" class="ai"><span class="qi">${icon("m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16")}</span><b>Buat soal dengan AI</b></a>
       <a href="/app/students"><span class="qi">${icon("M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0")}</span><b>Siswa & kelas</b></a>
     </div>
 
@@ -821,16 +820,24 @@ pages.get("/app/students", async (c) => {
         <button type="button" class="ibtn del" aria-label="Hapus ${esc(x.name)}" data-del-student="${esc(x.id)}">${ICON_DEL}</button></div>
     </div>`).join("") : "";
   const classView = cur ? `
-    <div class="crumb"><a class="btn" href="/app/students" style="min-height:38px;border-radius:999px;padding:6px 12px;font-size:13.5px">‹ Semua kelas</a></div>
-    <div class="page-head">
-      <div><h1>${esc(cur.name)}</h1><p>${inClass(cur.id).length} siswa${cur.grade ? ` · Kelas ${cur.grade}` : ""}${cur.year ? ` · ${esc(cur.year)}` : ""}</p></div>
-      <div class="row" style="margin:0">
-        ${cur.id !== "none" ? `<button type="button" class="ibtn" aria-label="Edit kelas" data-edit-class='${esc(JSON.stringify(cur))}'>${ICON_EDIT}</button>
-        <button type="button" class="ibtn del" aria-label="Hapus kelas" data-del-class="${esc(cur.id)}">${ICON_DEL}</button>` : ""}
-        <button type="button" id="btnImport"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>Impor Excel</button>
-        <button type="button" class="primary" id="btnAdd"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Tambah siswa</button>
-      </div>
+    <a class="crumb" href="/app/students">‹ Semua kelas</a>
+    <div class="clhead">
+      <div><h1>${esc(cur.name)}</h1><p class="muted">${inClass(cur.id).length} siswa${cur.grade ? ` · Kelas ${cur.grade}` : ""}${cur.year ? ` · ${esc(cur.year)}` : ""}</p></div>
+      ${cur.id !== "none" ? `<div class="acts"><button type="button" class="ibtn" aria-label="Ubah kelas" title="Ubah kelas" data-edit-class='${esc(JSON.stringify(cur))}'>${ICON_EDIT}</button>
+        <button type="button" class="ibtn del" aria-label="Hapus kelas" title="Hapus kelas" data-del-class="${esc(cur.id)}">${ICON_DEL}</button></div>` : ""}
     </div>
+    <div class="clacts">
+      <button type="button" class="primary" id="btnAdd"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Tambah siswa</button>
+      <button type="button" id="btnImport"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>Impor Excel</button>
+      <button type="button" id="btnTpl"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Template Excel</button>
+      ${cur.id !== "none" && inClass(cur.id).length ? `<button type="button" id="btnCards" data-cls="${esc(cur.id)}"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M6 14h12v7H6z"/></svg>Cetak kartu login</button>` : ""}
+    </div>
+    <style>
+      .clhead { display:flex; justify-content:space-between; align-items:flex-start; gap: 12px; margin-bottom: 14px; }
+      .clhead h1 { margin: 0 0 2px; } .clhead p { margin: 0; }
+      .clacts { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-bottom: 16px; }
+      @media (max-width: 560px) { .clacts { grid-template-columns: 1fr 1fr; } }
+    </style>
     <div class="card">${rows || `<p class="muted" style="margin:0">Belum ada siswa di kelas ini. Tekan <b>+ Tambah siswa</b> atau <b>Impor Excel</b>.</p>`}<div class="lrows" id="tbstu"></div></div>` : "";
 
   return c.html(base("Siswa", `
@@ -888,7 +895,7 @@ pages.get("/app/students", async (c) => {
         <p class="err" id="credWarn" style="margin-top:4px">Simpan sekarang. PIN hanya tampil sekali ini.</p>
         <div id="credList"></div>
       </div>
-      <div class="sheet-foot"><button type="button" data-close>Tutup</button><span class="spacer"></span><button type="button" class="primary" id="credDl">Unduh kartu login (Excel)</button></div>
+      <div class="sheet-foot"><button type="button" data-close>Tutup</button><span class="spacer"></span><button type="button" id="credDl"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Excel</button><button type="button" class="primary" id="credPrint"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M6 14h12v7H6z"/></svg>Cetak kartu</button></div>
     </dialog>
     <input type="file" id="fileXls" accept=".xlsx,.xls,.csv" hidden>
 
@@ -939,6 +946,27 @@ pages.get("/app/students", async (c) => {
         $('#dCred').showModal();
       }
       $('#dCred').addEventListener('close', () => softReload());
+      // Kartu login siap cetak: 2 kolom di kertas A4, potong lalu bagikan.
+      $('#credPrint').addEventListener('click', () => {
+        const w = window.open('', '_blank'); if (!w) return toast('Izinkan pop-up untuk mencetak.', 'err');
+        const card = (c) => '<div class="k"><div class="h"><b>CBT Yuk</b><span>' + esc(c.class || '') + '</span></div><p class="n">' + esc(c.name) + '</p>' +
+          '<table><tr><td>Username</td><td><b>' + esc(c.username) + '</b></td></tr><tr><td>PIN</td><td><b>' + esc(c.pin) + '</b></td></tr></table><p class="u">Masuk di ' + esc(location.host) + '/s/login</p></div>';
+        w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Kartu login siswa</title><style>' +
+          'body{font-family:system-ui,sans-serif;margin:12mm}.g{display:grid;grid-template-columns:1fr 1fr;gap:6mm}' +
+          '.k{border:1.5px dashed #94A3B8;border-radius:10px;padding:10px 14px;break-inside:avoid}.h{display:flex;justify-content:space-between;color:#2563EB;font-size:13px}' +
+          '.n{font-size:16px;font-weight:700;margin:6px 0}table{font-size:14px;border-collapse:collapse}td{padding:2px 12px 2px 0}td b{font-family:ui-monospace,monospace;font-size:16px;letter-spacing:.05em}.u{font-size:11px;color:#64748B;margin:6px 0 0}' +
+          '</style></head><body><div class="g">' + creds.map(card).join('') + '</div><script>onload=()=>print()<\\/script></body></html>');
+        w.document.close();
+      });
+      document.getElementById('btnCards')?.addEventListener('click', async (e) => {
+        if (!(await ask('Cetak kartu login untuk kelas ini? PIN semua siswa di kelas ini akan diganti dengan PIN baru.', 'Ganti PIN & cetak'))) return;
+        const id = e.currentTarget.dataset.cls;
+        const r = await fetch('/api/classes/' + id + '/reset-pins', { method: 'POST', credentials: 'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return toast(j.error || 'Gagal membuat PIN baru.', 'err');
+        const cn = document.querySelector('.clhead h1').textContent;
+        showCreds(j.students.map((x) => ({ ...x, class: cn })));
+      });
       $('#credDl').addEventListener('click', async () => {
         const X = await loadXlsx();
         const ws = X.utils.aoa_to_sheet([['Nama', 'Kelas', 'Username', 'PIN', 'Alamat masuk']].concat(creds.map((c) => [c.name, c.class || '', c.username, c.pin, location.host + '/s/login'])));
@@ -1129,7 +1157,7 @@ pages.get("/app/exams", async (c) => {
   return c.html(base("Ujian", `
     <div class="page-head">
       <div><h1>Ujian</h1><p>${all.length ? `${all.length} ujian. Ketuk untuk membuka, memantau, atau melihat nilai.` : "Belum ada ujian."}</p></div>
-      ${sess.role === "proctor" ? "" : `<a class="btn primary" href="/app/exams/new">+ Buat ujian</a>`}
+      ${sess.role === "proctor" || !all.length ? "" : `<a class="btn primary" href="/app/exams/new">+ Buat ujian</a>`}
     </div>
     ${all.length ? `<div class="card lrows">${list}</div>` : `
     <div class="card exempty">
@@ -1364,7 +1392,7 @@ pages.get("/app/exams/new", async (c) => {
         <div class="folders" id="catCards"></div>
         <div class="wupl">
           <label class="btn">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}Upload Word/PDF<input type="file" id="wDoc" accept=".docx,.pdf" hidden></label>
-          <a class="btn ai" href="${AI_SOAL}" target="_blank" rel="noopener">${icon("M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z")}Buat soal dengan AI</a>
+          <a class="btn ai" href="${AI_SOAL}" target="_blank" rel="noopener">${icon("m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16")}Buat soal dengan AI</a>
         </div>
         <p class="pickcount" id="qCount2"></p>
         <details id="manual"><summary>Pilih soal satu per satu</summary>
@@ -1615,10 +1643,10 @@ pages.get("/app/exams/:id", async (c) => {
   const examId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
-    const ex = await tx`select id, title, kind, duration_minutes, status from exams where id = ${examId}`;
+    const ex = await tx`select id, title, kind, duration_minutes, status, starts_at, ends_at, shuffle_questions, shuffle_options, anticheat_level, lock_after_violations from exams where id = ${examId}`;
     if (ex.length === 0) return null;
     const [bank, picked, classes, pickedClasses, scores, summary, needsManual] = await Promise.all([
-      tx`select id, content from questions where type = 'pg' order by created_at desc limit 500`,
+      tx`select id, content from questions order by created_at desc limit 500`,
       tx`select question_id from exam_questions where exam_id = ${examId}`,
       tx`select id, name from classes order by year desc, name`,
       tx`select class_id from exam_classes where exam_id = ${examId}`,
@@ -1648,7 +1676,8 @@ pages.get("/app/exams/:id", async (c) => {
   });
   if (!data) return c.notFound();
 
-  type Ex = { id: string; title: string; kind: string; duration_minutes: number; status: string };
+  type Ex = { id: string; title: string; kind: string; duration_minutes: number; status: string; starts_at: string | null; ends_at: string | null;
+    shuffle_questions: boolean; shuffle_options: boolean; anticheat_level: string; lock_after_violations: number | null };
   type Q = { id: string; content: { text: string; options: string[] } };
   type Cls = { id: string; name: string };
   const ex = data.ex as unknown as Ex;
@@ -1703,18 +1732,43 @@ pages.get("/app/exams/:id", async (c) => {
   return c.html(base(ex.title, `
     <div class="card" id="okBanner" hidden style="border-color:var(--ok)"><b>Ujian tersimpan.</b> Atur detail di bawah, atau kembali ke <a href="/app/exams">daftar ujian</a>.</div>
     <script>if (new URLSearchParams(location.search).has("baru")) document.getElementById("okBanner").hidden = false;</script>
-    <div class="card">
-      <h1>${esc(ex.title)} <span class="muted" style="font-weight:normal">· ${esc(ex.kind)} · ${ex.duration_minutes} mnt</span></h1>
-      <p class="sub"><a href="/app/exams">Daftar ujian</a></p>
-      <div class="row">
-        Status: <span class="pill ${esc(ex.status)}">${esc(ex.status)}</span>
-        <button data-status="open" ${ex.status === "open" ? "disabled" : ""}>Buka</button>
-        <button data-status="closed" ${ex.status === "closed" ? "disabled" : ""}>Tutup</button>
-        <button data-status="draft" ${ex.status === "draft" ? "disabled" : ""}>Jadi draft</button>
-        ${sess.role === "proctor" ? "" : `<button type="button" class="danger" id="delExam" style="margin-left:auto"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Hapus ujian</button>`}
+    <a class="crumb" href="/app/exams">‹ Semua ujian</a>
+    <div class="card exhero">
+      <div class="exh-top">
+        <div><h1>${esc(ex.title)}</h1>
+          <p class="muted">${esc(kindLabel(ex.kind))} · ${ex.duration_minutes} menit · ${pickedSet.size} soal · ${pickedClsSet.size} kelas${ex.starts_at ? ` · mulai ${new Date(ex.starts_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" })}` : ""}</p></div>
+        <span class="pill ${esc(ex.status)}">${({ draft: "Draf", scheduled: "Terjadwal", open: "Dibuka", closed: "Selesai" } as Record<string, string>)[ex.status] ?? esc(ex.status)}</span>
+      </div>
+      <div class="exh-acts">
+        ${ex.status === "open" ? `<button type="button" data-status="closed"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>Tutup ujian</button>` : `<button type="button" class="primary" data-status="open"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Buka sekarang</button>`}
+        <a class="btn" href="/app/exams/${esc(examId)}/live"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>Pantau</a>
+        ${sess.role === "proctor" ? "" : `<button type="button" id="editExam"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Ubah</button>`}
+        ${ex.status === "draft" ? "" : `<button type="button" data-status="draft"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/></svg>Jadikan draf</button>`}
+        ${sess.role === "proctor" ? "" : `<button type="button" class="danger" id="delExam"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Hapus</button>`}
       </div>
     </div>
-
+    <dialog id="edDlg" class="sheet" aria-labelledby="edT"><form id="edF" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="sheet-head"><h2 id="edT">Ubah ujian</h2><button type="button" class="x" data-x aria-label="Tutup">✕</button></div>
+      <div class="sheet-body">
+        <label>Judul</label><input name="title" required value="${esc(ex.title)}">
+        <label>Durasi (menit)</label><input name="duration_minutes" type="number" min="5" required value="${ex.duration_minutes}">
+        <div class="grid">
+          <div><label>Mulai <span class="muted">(opsional)</span></label><input name="starts_at" type="datetime-local" data-iso="${ex.starts_at ? new Date(ex.starts_at).toISOString() : ""}"></div>
+          <div><label>Berakhir <span class="muted">(opsional)</span></label><input name="ends_at" type="datetime-local" data-iso="${ex.ends_at ? new Date(ex.ends_at).toISOString() : ""}"></div>
+        </div>
+        <label class="sw-row"><span><b>Acak urutan soal</b></span><input type="checkbox" class="switch" name="shuffle_questions" ${ex.shuffle_questions ? "checked" : ""}></label>
+        <label class="sw-row"><span><b>Acak pilihan jawaban</b></span><input type="checkbox" class="switch" name="shuffle_options" ${ex.shuffle_options ? "checked" : ""}></label>
+        <label class="sw-row"><span><b>Kunci bila siswa curang</b><small>Batas keluar layar: <input name="lock_after_violations" type="number" min="1" max="20" value="${ex.lock_after_violations || 3}" style="width:64px;min-height:34px;padding:4px 8px;display:inline-block"> kali</small></span><input type="checkbox" class="switch" name="ac" ${ex.anticheat_level !== "log" ? "checked" : ""}></label>
+      </div>
+      <div class="sheet-foot"><span class="spacer"></span><button class="primary" type="submit">Simpan perubahan</button></div>
+    </form></dialog>
+    <style>
+      .exhero .exh-top { display:flex; justify-content:space-between; align-items:flex-start; gap: 12px; }
+      .exhero h1 { margin: 0 0 4px; font-size: 24px; } .exhero p { margin: 0; }
+      .exh-acts { display:flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+      .exh-acts .danger { margin-left: auto; }
+      @media (max-width: 560px) { .exh-acts > * { flex: 1 1 calc(50% - 8px); } .exh-acts .danger { margin-left: 0; } }
+    </style>
     <div class="card">
       <h2>Soal</h2>
       <form id="fq">
@@ -1743,12 +1797,10 @@ pages.get("/app/exams/:id", async (c) => {
     <div class="card">
       <h2>Skor peserta</h2>
       <div class="row" style="margin-bottom:8px">
-        <a class="btn" href="/api/exams/${esc(examId)}/scores.csv">Download CSV</a>
-        <a class="btn" href="/app/exams/${esc(examId)}/live">Live monitoring</a>
-        <a class="btn" href="/app/exams/${esc(examId)}/lab">Mode lab komputer</a>
-        <a class="btn" href="/app/exams/${esc(examId)}/items">Analisis butir soal</a>
-        <a class="btn" href="/app/exams/${esc(examId)}/insights">Insights (distraktor + chat)</a>
-        <a class="btn" href="/app/exams/${esc(examId)}/print">Cetak soal</a>
+        <a class="btn" href="/api/exams/${esc(examId)}/scores.csv"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Unduh nilai</a>
+        <a class="btn" href="/app/exams/${esc(examId)}/items"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18M7 15l4-4 3 3 5-6"/></svg>Analisis soal</a>
+        <a class="btn" href="/app/exams/${esc(examId)}/print"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M6 14h12v7H6z"/></svg>Cetak soal</a>
+        <a class="btn" href="/app/exams/${esc(examId)}/lab"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v12H3zM8 20h8M12 16v4"/></svg>Mode lab</a>
       </div>
       <table>
         <thead><tr><th>Siswa</th><th>Kelas</th><th>Status</th><th>Auto</th><th>Manual</th><th>Final</th></tr></thead>
@@ -1758,6 +1810,23 @@ pages.get("/app/exams/:id", async (c) => {
 
     <script>
       const EID = ${JSON.stringify(examId)};
+      const ed = document.getElementById('edDlg'), edF = document.getElementById('edF');
+      const loc = (iso) => { if (!iso) return ''; const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+      edF.querySelectorAll('[data-iso]').forEach((i) => { i.value = loc(i.dataset.iso); });
+      document.getElementById('editExam')?.addEventListener('click', () => ed.showModal());
+      ed.querySelector('[data-x]').addEventListener('click', () => ed.close());
+      edF.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const iso = (v) => v ? new Date(v).toISOString() : null;
+        const body = { title: edF.title.value.trim(), duration_minutes: +edF.duration_minutes.value,
+          starts_at: iso(edF.starts_at.value), ends_at: iso(edF.ends_at.value),
+          shuffle_questions: edF.shuffle_questions.checked, shuffle_options: edF.shuffle_options.checked,
+          anticheat_level: edF.ac.checked ? 'warn' : 'log', lock_after_violations: +edF.lock_after_violations.value || 3 };
+        const r = await fetch('/api/exams/' + EID, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return toast(j.error || 'Gagal menyimpan.', 'err');
+        ed.close(); toast('Perubahan tersimpan.', 'ok'); softReload();
+      });
       document.getElementById('delExam')?.addEventListener('click', async () => {
         if (!(await ask('Hapus ujian ini? Nilai dan jawaban siswa untuk ujian ini ikut terhapus. Soal di bank soal tetap ada.'))) return;
         const r = await fetch('/api/exams/' + EID, { method: 'DELETE', credentials: 'same-origin' });
@@ -1784,14 +1853,14 @@ pages.get("/app/exams/:id", async (c) => {
         const ids = [...e.target.querySelectorAll('input[name=qid]:checked')].map((x) => x.value);
         const r = await fetch('/api/exams/' + EID + '/questions', { method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question_ids: ids }) });
-        if (r.ok) alert('Tersimpan: ' + ids.length + ' soal'); else alert('Gagal: ' + r.status);
+        if (r.ok) toast(ids.length + ' soal tersimpan.', 'ok'); else toast('Gagal menyimpan soal.', 'err');
       });
       document.getElementById('fc').addEventListener('submit', async (e) => {
         e.preventDefault();
         const ids = [...e.target.querySelectorAll('input[name=cid]:checked')].map((x) => x.value);
         const r = await fetch('/api/exams/' + EID + '/classes', { method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ class_ids: ids }) });
-        if (r.ok) alert('Tersimpan: ' + ids.length + ' kelas'); else alert('Gagal: ' + r.status);
+        if (r.ok) toast(ids.length + ' kelas tersimpan.', 'ok'); else toast('Gagal menyimpan kelas.', 'err');
       });
     </script>
   `, { role: sess.role }));
@@ -3160,7 +3229,7 @@ pages.get("/app/questions", async (c) => {
     <div class="bankact">
       <button type="button" class="primary" id="btnNew">${icon("M4 20h4L19 9l-4-4L4 16zM14 6l4 4")}Tulis soal</button>
       <button type="button" id="btnUp">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}Upload Word/PDF</button>
-      <a class="btn ai" href="${AI_SOAL}" target="_blank" rel="noopener">${icon("M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z")}Buat soal dengan AI</a>
+      <a class="btn ai" href="${AI_SOAL}" target="_blank" rel="noopener">${icon("m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16")}Buat soal dengan AI</a>
     </div>
     <div class="tabs" role="tablist">
       <button type="button" role="tab" data-tab="mine" aria-selected="true">Soal saya <b id="nMine"></b></button>
@@ -3634,7 +3703,7 @@ pages.get("/masuk", async (c) => {
       .mk .daftar ul { margin: 0 0 8px; padding-left: 18px; color: rgba(255,255,255,.9); font-size: 14.5px; } .mk .daftar li { margin: 4px 0; }
       .mk .daftar .btn { background: #fff; color: #0F172A; border-color: #fff; min-height: 52px; margin-top: auto; }
     </style>
-    <div class="mk-top"><a class="brand" href="/">${LOGO}</a><a href="/demo" style="font-weight:600">Coba demo dulu →</a></div>
+    <div class="mk-top"><a class="brand" href="/">${LOGO}</a><a class="btn" href="/demo">Cobain gratis</a></div>
     <div class="mk-head"><h1>Masuk atau daftar</h1><p>Pilih sesuai keperluan Anda.</p></div>
     <div class="mk">
       <section class="card">
