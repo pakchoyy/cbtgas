@@ -20,11 +20,15 @@ const NAV: Array<[string, string, string]> = [
   ["/app/students", "Siswa", "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"],
   ["/app/settings", "Pengaturan", "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"],
 ];
+// Menu pemilik layanan (admin super): hanya pemantauan sekolah.
+const OWNER_NAV: Array<[string, string, string]> = [
+  ["/owner", "Semua sekolah", "M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6"],
+];
 const AI_SOAL = "https://bantuguruyuk.web.id/soal";
 const MOON = "M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z";
 const icon = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 
-const sidebar = (role: string) => `
+const sidebar = (role: string) => { const nav = role === "owner" ? OWNER_NAV : NAV; return `
 <header class="mbar">
   <a class="brand" href="/app">${LOGO}</a>
   <span class="mbar-act">
@@ -32,13 +36,13 @@ const sidebar = (role: string) => `
     <button type="button" class="ghost" id="navOpen" aria-label="Menu" aria-controls="side" aria-expanded="false">${icon("M4 7h16M4 12h16M4 17h16")}</button>
   </span>
 </header>
-<nav class="bnav" aria-label="Menu utama">
-  ${NAV.map(([href, label, d]) => `<a href="${href}"${href === "/app/exams" ? ` class="fab"` : ""}>${icon(d)}<span>${label}</span></a>`).join("")}
-</nav>
+${role === "owner" ? "" : `<nav class="bnav" aria-label="Menu utama">
+  ${nav.map(([href, label, d]) => `<a href="${href}"${href === "/app/exams" ? ` class="fab"` : ""}>${icon(d)}<span>${label}</span></a>`).join("")}
+</nav>`}
 <aside class="side" id="side">
   <a class="brand" href="/app" aria-label="CBT Yuk, beranda">${LOGO}</a>
   <nav class="nav" aria-label="Utama">
-    <div class="nav-main">${NAV.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span data-i18n-src="${label}">${label}</span></a>`).join("")}</div>
+    <div class="nav-main">${nav.map(([href, label, d]) => `<a href="${href}">${icon(d)}<span data-i18n-src="${label}">${label}</span></a>`).join("")}</div>
   </nav>
   <div class="side-foot">
     <a class="ghost" href="/panduan">${icon("M4 19.5V5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2zM8 7h8M8 11h6")}<span>Petunjuk</span></a>
@@ -49,7 +53,7 @@ const sidebar = (role: string) => `
     <form method="post" action="/auth/logout"><button type="submit" class="ghost out">${icon("M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10")}<span>Keluar</span></button></form>
   </div>
 </aside>
-<div class="scrim" id="scrim" hidden></div>`;
+<div class="scrim" id="scrim" hidden></div>`; };
 
 const base = (title: string, body: string, opts: { nav?: boolean; role?: string } = {}) => `<!doctype html>
 <html lang="id">
