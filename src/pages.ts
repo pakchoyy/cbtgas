@@ -47,6 +47,7 @@ ${role === "owner" ? "" : `<nav class="bnav" aria-label="Menu utama">
   <div class="side-foot">
     <a class="ghost" href="/panduan">${icon("M4 19.5V5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2zM8 7h8M8 11h6")}<span>Petunjuk</span></a>
     <a class="ghost" href="/tentang">${icon("M12 8h.01M11 12h1v5h1M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z")}<span>Tentang &amp; kontak</span></a>
+    <a class="ghost" href="https://wa.me/?text=${encodeURIComponent("Coba CBT Yuk, aplikasi ujian sekolah online yang ringan: soal dari Word/PDF, nilai otomatis, anti-curang, jalan di HP & komputer. Gratis selama uji coba 👉 https://cbt-yuk.web.id")}" target="_blank" rel="noopener">${icon("M4 12v8h16v-8M16 6l-4-4-4 4M12 2v13")}<span>Ajak sekolah lain</span></a>
     <a class="ghost fb" href="${FEEDBACK_WA}" target="_blank" rel="noopener">${icon("M4 5h16v11H8l-4 4zM8 9h8M8 12h5")}<span>Kritik &amp; saran</span></a>
     <button type="button" class="ghost" data-install>${icon("M12 3v12M7 10l5 5 5-5M5 21h14")}<span>Pasang aplikasi</span></button>
     <button type="button" class="ghost desk-only" data-theme-toggle>${icon(MOON)}<span>Terang / gelap</span></button>
@@ -685,7 +686,9 @@ pages.get("/app", async (c) => {
         (select coalesce(round(avg(final_score)::numeric, 1), 0) from scores) as avg_score`,
       tx`select e.id, e.title, e.ends_at,
         (select count(*) from exam_sessions s where s.exam_id = e.id and s.status = 'active')::int as working,
-        (select count(*) from exam_sessions s where s.exam_id = e.id and s.status in ('submitted','expired'))::int as done
+        (select count(*) from exam_sessions s where s.exam_id = e.id and s.status in ('submitted','expired'))::int as done,
+        (select count(*) from exam_sessions s where s.exam_id = e.id and s.status = 'locked')::int as locked,
+        (select count(*) from students st join exam_classes ec on ec.class_id = st.class_id where ec.exam_id = e.id and st.active)::int as total
       from exams e where e.status = 'open' order by e.ends_at nulls last, e.title limit 6`,
       tx`select id, title, status, starts_at from exams
       where status in ('draft','scheduled') order by coalesce(starts_at, created_at) limit 4`,
@@ -709,7 +712,12 @@ pages.get("/app", async (c) => {
       ${ok ? "" : `<a class="btn ${i === nextIdx ? "primary" : ""}" href="${href}">${cta}</a>`}
     </li>`).join("");
 
-  type L = { id: string; title: string; ends_at: string | null; working: number; done: number };
+  type L = { id: string; title: string; ends_at: string | null; working: number; done: number; locked: number; total: number };
+  const runCards = (live as unknown as L[]).filter((e) => e.working + e.locked > 0).map((e) => `
+    <a class="runc" href="/app/exams/${esc(e.id)}/live">
+      <span class="rt"><span class="ldot"></span><b>${esc(e.title)}</b><span class="chev">Pantau ›</span></span>
+      <span class="rn"><span><b>${e.working}</b>mengerjakan</span><span class="${e.locked ? "lk" : ""}"><b>${e.locked}</b>terkunci</span><span><b>${e.done}</b>selesai</span><span><b>${Math.max(0, e.total - e.working - e.locked - e.done)}</b>belum mulai</span></span>
+    </a>`).join("");
   const liveRows = (live as unknown as L[]).map((e) => `
     <div class="live-row">
       <span class="live-dot" aria-hidden="true"></span>
@@ -737,6 +745,7 @@ pages.get("/app", async (c) => {
       <a class="btn dh-cta" href="/app/exams/new">+ Buat ujian baru</a>
     </section>
 
+    ${runCards ? `<h2 class="runh">Ujian berlangsung sekarang</h2><div class="runs">${runCards}</div>` : ""}
     <div class="quick">
       <a href="/app/questions?tulis=1"><span class="qi">${icon("M4 20h4L19 9l-4-4L4 16zM14 6l4 4")}</span><b>Tulis soal</b></a>
       <a href="/app/questions?upload=1"><span class="qi">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}</span><b>Upload soal</b></a>
@@ -771,6 +780,14 @@ pages.get("/app", async (c) => {
       .quick .qi svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
       .quick a.ai .qi { background: linear-gradient(135deg, #A855F7, #EC4899); color: #fff; }
       @media (max-width: 560px) { .quick { grid-template-columns: 1fr 1fr; } }
+      .runh { margin: 4px 0 8px; font-size: 17px; } .runs { display:grid; gap: 10px; margin-bottom: 14px; }
+      .runc { display:block; background: var(--surface); border: 1.5px solid color-mix(in srgb, var(--ok) 45%, var(--line)); border-radius: 18px; padding: 14px 16px; color: var(--fg); text-decoration: none; box-shadow: var(--shadow); }
+      main a.runc { color: var(--fg); text-decoration: none; }
+      .runc .rt { display:flex; align-items:center; gap: 8px; } .runc .rt b { flex: 1; } .runc .chev { color: var(--brand); font-weight: 700; font-size: 14px; }
+      .runc .ldot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 20%, transparent); }
+      .runc .rn { display:grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+      .runc .rn span { background: var(--paper); border-radius: 10px; padding: 6px; text-align:center; font-size: 12px; color: var(--mut); display:flex; flex-direction:column; }
+      .runc .rn b { font-size: 18px; color: var(--fg); } .runc .rn .lk { background: #FEF2F2; } .runc .rn .lk b { color: var(--danger); }
     </style>
 
     <div class="two">
@@ -907,7 +924,7 @@ pages.get("/app/students", async (c) => {
 
     <style>
       .tip { background: var(--soft); border-color: transparent; box-shadow: none; font-size: 14.5px; }
-      .cred { width: 100%; font-size: 14px; } .cred td, .cred th { padding: 8px 6px; } .cred td.pin { font: 700 15px ui-monospace, Menlo, monospace; letter-spacing: .08em; }
+      .cred { width: 100%; font-size: 14px; } .cred td, .cred th { padding: 8px 6px; } .cred td.pin { font: 700 15px ui-monospace, Menlo, monospace; letter-spacing: .08em; } .cred .btn.wa { min-height: 34px; padding: 4px 10px; font-size: 13px; background: #16A34A; border-color: #16A34A; color: #fff; }
       main a.folder { text-decoration: none; }
     </style>
     <script>
@@ -947,8 +964,9 @@ pages.get("/app/students", async (c) => {
       let creds = [];
       function showCreds(list) {
         creds = list;
-        $('#credList').innerHTML = '<table class="cred"><thead><tr><th>Nama</th><th>Username</th><th>PIN</th></tr></thead><tbody>' +
-          list.map((c) => '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.username) + '</td><td class="pin">' + esc(c.pin) + '</td></tr>').join('') + '</tbody></table>';
+        const waTxt = (c) => 'https://wa.me/?text=' + encodeURIComponent('Akun CBT Yuk untuk ' + c.name + (c.class ? ' (' + c.class + ')' : '') + ':\\nUsername: ' + c.username + '\\nPIN: ' + c.pin + '\\nMasuk di: ' + location.origin + '/s/login\\n\\nJangan berikan PIN ke orang lain.');
+        $('#credList').innerHTML = '<table class="cred"><thead><tr><th>Nama</th><th>Username</th><th>PIN</th><th></th></tr></thead><tbody>' +
+          list.map((c) => '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.username) + '</td><td class="pin">' + esc(c.pin) + '</td><td><a class="btn wa" target="_blank" rel="noopener" href="' + esc(waTxt(c)) + '">WA</a></td></tr>').join('') + '</tbody></table>';
         $('#dCred').showModal();
       }
       $('#dCred').addEventListener('close', () => softReload());
@@ -1681,7 +1699,8 @@ pages.get("/app/exams/:id", async (c) => {
       join questions q on q.id = eq.question_id
       where eq.exam_id = ${examId} and q.type = 'uraian'`,
     ]);
-    return { ex: ex[0], bank, picked, classes, pickedClasses, scores, summary, needsManual };
+    const school = await tx`select name from schools where id = ${sess.sid}`;
+    return { ex: ex[0], bank, picked, classes, pickedClasses, scores, summary, needsManual, school: (school[0] as { name: string }).name };
   });
   if (!data) return c.notFound();
 
@@ -1751,6 +1770,7 @@ pages.get("/app/exams/:id", async (c) => {
       <div class="exh-acts">
         ${ex.status === "open" ? `<button type="button" data-status="closed"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>Tutup ujian</button>` : `<button type="button" class="primary" data-status="open"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Buka sekarang</button>`}
         <a class="btn" href="/app/exams/${esc(examId)}/live"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>Pantau</a>
+        <button type="button" id="waShare"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21l1.7-5A9 9 0 1 1 8 19.3zM9 9.5c0 3 2.5 5.5 5.5 5.5l1-1.5-2-1-1 1a4 4 0 0 1-2-2l1-1-1-2z"/></svg>Umumkan ke WA</button>
         ${sess.role === "proctor" ? "" : `<button type="button" id="editExam"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Ubah</button>`}
         ${ex.status === "draft" ? "" : `<button type="button" data-status="draft"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/></svg>Jadikan draf</button>`}
         ${sess.role === "proctor" ? "" : `<button type="button" class="danger" id="delExam"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Hapus</button>`}
@@ -1808,7 +1828,9 @@ pages.get("/app/exams/:id", async (c) => {
     <div class="card">
       <h2>Skor peserta</h2>
       <div class="row" style="margin-bottom:8px">
-        <a class="btn" href="/api/exams/${esc(examId)}/scores.csv"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Unduh nilai</a>
+        <button type="button" id="xlsBtn"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Unduh nilai (Excel)</button>
+        ${needsManual && sess.role !== "proctor" ? `<a class="btn primary" href="/app/exams/${esc(examId)}/uraian"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Nilai uraian</a>` : ""}
+        <button type="button" id="waRekap"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21l1.7-5A9 9 0 1 1 8 19.3zM9 9.5c0 3 2.5 5.5 5.5 5.5l1-1.5-2-1-1 1a4 4 0 0 1-2-2l1-1-1-2z"/></svg>Bagikan rekap ke WA</button>
         <a class="btn" href="/app/exams/${esc(examId)}/items"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18M7 15l4-4 3 3 5-6"/></svg>Analisis soal</a>
         <a class="btn" href="/app/exams/${esc(examId)}/admin?doc=hadir"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6v3H9zM6 6h12v15H6zM9 12h6M9 16h4"/></svg>Daftar hadir &amp; berita acara</a>
         <a class="btn" href="/app/exams/${esc(examId)}/print"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M6 14h12v7H6z"/></svg>Cetak soal</a>
@@ -1822,6 +1844,31 @@ pages.get("/app/exams/:id", async (c) => {
 
     <script>
       const EID = ${JSON.stringify(examId)};
+      const XD = ${JSON.stringify({ title: ex.title, kind: kindLabel(ex.kind), dur: ex.duration_minutes, token: ex.use_token, school: data.school,
+        when: ex.starts_at ? new Date(ex.starts_at).toLocaleString("id-ID", { dateStyle: "full", timeStyle: "short", timeZone: "Asia/Jakarta" }) : "",
+        cls: classes.filter((x) => pickedClsSet.has(x.id)).map((x) => x.name), scores, summary }).replace(/</g, "\\u003c")};
+      const wa = (t) => window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank');
+      document.getElementById('waShare').onclick = () => wa('📢 *' + XD.title + '*\\n' + XD.kind + ' · ' + XD.dur + ' menit' + (XD.cls.length ? '\\nKelas: ' + XD.cls.join(', ') : '') +
+        (XD.when ? '\\n🗓 ' + XD.when : '') + '\\n\\nMasuk di: ' + location.origin + '/s/login\\nPakai username dan PIN masing-masing.' +
+        (XD.token ? '\\n🔑 Token diberikan pengawas di ruangan.' : '') + '\\n\\nSemangat! 💪');
+      document.getElementById('waRekap').onclick = () => {
+        const sc = XD.scores.map((r) => r.final_score).filter((v) => v != null).map(Number);
+        const avg = sc.length ? (sc.reduce((a, b) => a + b, 0) / sc.length).toFixed(1) : '-';
+        const belum = XD.scores.filter((r) => r.status !== 'submitted' && r.status !== 'expired').length;
+        wa('📊 *Rekap nilai: ' + XD.title + '*\\n' + XD.school + '\\n\\nPeserta selesai: ' + sc.length + (belum ? ' (belum selesai: ' + belum + ')' : '') +
+          '\\nRata-rata: ' + avg + '\\nTertinggi: ' + (sc.length ? Math.max(...sc) : '-') + '\\nTerendah: ' + (sc.length ? Math.min(...sc) : '-') +
+          (XD.summary.length > 1 ? '\\n\\nPer kelas:\\n' + XD.summary.map((r) => '• ' + r.class_name + ': rata-rata ' + (r.rata_rata ?? '-')).join('\\n') : ''));
+      };
+      document.getElementById('xlsBtn').onclick = async () => {
+        if (!window.XLSX) await new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; sc.onload = ok; sc.onerror = no; document.head.appendChild(sc); });
+        const rows = [[XD.school], ['Rekap nilai: ' + XD.title], [XD.kind + ' · ' + XD.dur + ' menit' + (XD.when ? ' · ' + XD.when : '')], [],
+          ['No', 'Nama', 'Kelas', 'Status', 'Pelanggaran', 'Nilai otomatis', 'Nilai uraian', 'Nilai akhir']]
+          .concat(XD.scores.map((r, i) => [i + 1, r.student_name, r.class_name || '', r.status === 'submitted' ? 'Selesai' : r.status === 'expired' ? 'Waktu habis' : r.status === 'locked' ? 'Terkunci' : 'Mengerjakan',
+            r.violation_count || 0, r.auto_score != null ? +r.auto_score : '', r.manual_score != null ? +r.manual_score : '', r.final_score != null ? +r.final_score : '']));
+        const ws = XLSX.utils.aoa_to_sheet(rows); ws['!cols'] = [{ wch: 5 }, { wch: 28 }, { wch: 10 }, { wch: 13 }, { wch: 11 }, { wch: 13 }, { wch: 12 }, { wch: 11 }];
+        ws['!merges'] = [0, 1, 2].map((r) => ({ s: { r, c: 0 }, e: { r, c: 7 } }));
+        const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Nilai'); XLSX.writeFile(wb, 'nilai-' + XD.title.replace(/[^\\w-]+/g, '-') + '.xlsx');
+      };
       const ed = document.getElementById('edDlg'), edF = document.getElementById('edF');
       const loc = (iso) => { if (!iso) return ''; const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
       edF.querySelectorAll('[data-iso]').forEach((i) => { i.value = loc(i.dataset.iso); });
@@ -1938,6 +1985,63 @@ pages.get("/app/pin-resets", async (c) => {
 
 // Printable: semua soal ujian + opsional kunci (?key=1). Cetak atau simpan
 // sebagai PDF untuk cadangan paper-based.
+// Nilai uraian per soal: satu soal, semua jawaban siswa berurutan.
+pages.get("/app/exams/:id/uraian", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  if (!sess) return c.redirect("/");
+  if (sess.role === "proctor") return c.redirect("/app/exams");
+  const examId = c.req.param("id");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const qs = await tx`select q.id, q.content->>'text' as text, q.points, k.rubric from exam_questions eq join questions q on q.id = eq.question_id
+      left join question_keys k on k.question_id = q.id where eq.exam_id = ${examId} and q.type in ('uraian','simulasi') order by eq.position`;
+    const list = qs as unknown as Array<{ id: string; text: string; points: string; rubric: string | null }>;
+    const cur = list.find((x) => x.id === c.req.query("q")) ?? list[0];
+    const ans = cur ? await tx`select es.id as sid, st.name, c.name as class_name, a.answer->>'text' as text, a.answer->>'manual_score' as score
+      from exam_sessions es join students st on st.id = es.student_id left join classes c on c.id = st.class_id
+      left join answers a on a.session_id = es.id and a.question_id = ${cur.id}
+      where es.exam_id = ${examId} and es.status in ('submitted','expired') order by c.name, st.name` : [];
+    const ex = await tx`select title from exams where id = ${examId}`;
+    return { list, cur, ans, title: (ex[0] as { title: string } | undefined)?.title };
+  });
+  if (!data.title) return c.notFound();
+  const { list, cur } = data;
+  const ans = data.ans as unknown as Array<{ sid: string; name: string; class_name: string | null; text: string | null; score: string | null }>;
+  const max = cur ? +cur.points : 0;
+  const graded = ans.filter((a) => a.score != null).length;
+  return c.html(base("Nilai uraian", `
+    <a class="crumb" href="/app/exams/${esc(examId)}">‹ ${esc(data.title)}</a>
+    <div class="page-head"><div><h1>Nilai uraian</h1><p>${cur ? `${graded} dari ${ans.length} jawaban sudah dinilai. Nilai tersimpan otomatis.` : "Ujian ini tidak punya soal uraian."}</p></div></div>
+    ${list.length > 1 ? `<div class="uqtabs">${list.map((q, i) => `<a class="btn${q.id === cur?.id ? " primary" : ""}" href="?q=${esc(q.id)}">Soal uraian ${i + 1}</a>`).join("")}</div>` : ""}
+    ${cur ? `<div class="card"><p style="margin:0 0 6px"><b>Soal</b> (maks ${max} poin)</p><p style="margin:0">${esc(cur.text ?? "")}</p>${cur.rubric ? `<p class="muted" style="margin:10px 0 0"><b>Pedoman:</b> ${esc(cur.rubric)}</p>` : ""}</div>
+    <div class="uans">${ans.map((a, i) => `<div class="card ua" data-sid="${esc(a.sid)}">
+      <div class="uh"><b>${i + 1}. ${esc(a.name)}</b><span class="muted">${esc(a.class_name ?? "")}</span></div>
+      <p class="ut">${a.text ? esc(a.text) : `<i class="muted">Tidak menjawab</i>`}</p>
+      <div class="us">${[0, Math.round(max / 4 * 10) / 10, Math.round(max / 2 * 10) / 10, Math.round(max * 3 / 4 * 10) / 10, max].filter((v, j, arr) => arr.indexOf(v) === j).map((v) => `<button type="button" data-v="${v}" aria-pressed="${a.score != null && +a.score === v}">${v}</button>`).join("")}
+        <input type="number" min="0" max="${max}" step="0.5" value="${a.score ?? ""}" placeholder="Nilai" aria-label="Nilai"><span class="ok" hidden>✓ tersimpan</span></div>
+    </div>`).join("") || `<p class="muted">Belum ada siswa yang mengumpulkan.</p>`}</div>` : ""}
+    <style>
+      .uqtabs { display:flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+      .ua .uh { display:flex; justify-content:space-between; gap: 10px; } .ua .ut { white-space: pre-wrap; background: var(--paper); border-radius: 12px; padding: 10px 12px; }
+      .ua .us { display:flex; gap: 6px; flex-wrap: wrap; align-items:center; } .ua .us button { min-width: 48px; min-height: 42px; }
+      .ua .us button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); } .ua .us input { width: 90px; } .ua .ok { color: var(--ok); font-weight: 700; font-size: 13px; }
+    </style>
+    <script>
+      const QID = ${JSON.stringify(cur?.id ?? "")}, MAX = ${max};
+      async function put(card, v) {
+        v = Math.max(0, Math.min(MAX, +v)); const inp = card.querySelector('input'); inp.value = v;
+        card.querySelectorAll('.us button').forEach((b) => b.setAttribute('aria-pressed', String(+b.dataset.v === v)));
+        const r = await fetch('/api/sessions/' + card.dataset.sid + '/manual-score', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scores: [{ question_id: QID, score: v }] }) });
+        const ok = card.querySelector('.ok'); if (r.ok) { ok.hidden = false; setTimeout(() => ok.hidden = true, 1500); } else toast('Gagal menyimpan nilai.', 'err');
+      }
+      document.querySelectorAll('.ua').forEach((card) => {
+        card.querySelector('.us').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) put(card, b.dataset.v); });
+        card.querySelector('input').addEventListener('change', (e) => { if (e.target.value !== '') put(card, e.target.value); });
+      });
+    </script>
+  `, { role: sess.role }));
+});
+
 // Administrasi cetak: daftar hadir (?doc=hadir) atau berita acara (?doc=berita), per kelas.
 pages.get("/app/exams/:id/admin", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
@@ -2652,7 +2756,12 @@ pages.get("/app/users", async (c) => {
         const d = Object.fromEntries(new FormData(e.target));
         const r = await fetch('/api/users', { method:'POST', credentials:'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
-        if (r.ok) { inv.close(); toast('Undangan dibuat untuk ' + d.email + '.', 'ok'); softReload(); }
+        if (r.ok) {
+          inv.close(); toast('Undangan dibuat untuk ' + d.email + '.', 'ok');
+          if (await ask('Kirim info cara masuk ke ' + (d.name || d.email) + ' lewat WhatsApp?', 'Kirim ke WA'))
+            window.open('https://wa.me/?text=' + encodeURIComponent('Halo ' + (d.name || '') + ', Anda diundang ke CBT Yuk sekolah kami.\\n\\n1. Buka ' + location.origin + '/masuk\\n2. Ketuk "Saya guru / admin" lalu masuk dengan Google memakai email ' + d.email + '\\n\\nSampai jumpa di sana!'), '_blank');
+          softReload();
+        }
         else { const j = await r.json().catch(() => ({})); toast(j.error || 'Gagal mengundang.', 'err'); }
       });
       document.getElementById('tb').addEventListener('click', async (e) => {
