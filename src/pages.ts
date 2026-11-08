@@ -1423,6 +1423,8 @@ pages.get("/app/exams/new", async (c) => {
         <h3 style="margin:18px 0 0">Aturan ujian</h3>
         <label class="sw-row"><span><b>Acak urutan soal</b><small>Tiap siswa mendapat urutan berbeda</small></span><input type="checkbox" class="switch" name="shuffle_questions" checked></label>
         <label class="sw-row"><span><b>Acak pilihan jawaban</b><small>Huruf A–E berbeda tiap siswa</small></span><input type="checkbox" class="switch" name="shuffle_options" checked></label>
+        <label class="sw-row"><span><b>Pakai token dari pengawas</b><small>Siswa harus mengetik token yang tampil di layar Pantau (berganti tiap 15 menit), jadi tidak bisa mulai dari rumah</small></span><input type="checkbox" class="switch" name="use_token"></label>
+        <label class="sw-row"><span><b>Tampilkan nilai ke siswa</b><small>Nilai muncul begitu siswa mengumpulkan</small></span><input type="checkbox" class="switch" name="show_score" checked></label>
         <label class="sw-row"><span><b>Kunci bila siswa curang</b><small>Setelah <input name="lock_after_violations" type="number" min="1" max="20" value="3" style="width:64px;min-height:36px;padding:4px 8px;display:inline-block"> kali keluar layar/pindah aplikasi, ujian terkunci dan siswa minta kode ke pengawas. Bila terulang setelah dibuka, jawaban dikumpulkan otomatis.</small></span><input type="checkbox" class="switch" id="acSw" checked></label>
         <input type="hidden" name="anticheat_level" value="warn">
         <details style="margin-top:12px"><summary>Pengaturan lanjutan</summary>
@@ -1615,6 +1617,7 @@ pages.get("/app/exams/new", async (c) => {
             title: f.title.value.trim(), kind: f.kind.value.trim(), duration_minutes: +f.duration_minutes.value,
             starts_at: when === 'sched' ? iso(f.starts_at.value) : null, ends_at: when === 'sched' ? iso(f.ends_at.value) : null,
             shuffle_questions: f.shuffle_questions.checked, shuffle_options: f.shuffle_options.checked,
+            use_token: f.use_token.checked, show_score: f.show_score.checked,
             anticheat_level: f.anticheat_level.value, lock_after_violations: f.lock_after_violations.value ? +f.lock_after_violations.value : null,
             questions_per_session: +f.questions_per_session.value || 0,
             scoring_config: pen > 0 ? { wrong_penalty: pen } : {},
@@ -1643,7 +1646,7 @@ pages.get("/app/exams/:id", async (c) => {
   const examId = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
-    const ex = await tx`select id, title, kind, duration_minutes, status, starts_at, ends_at, shuffle_questions, shuffle_options, anticheat_level, lock_after_violations from exams where id = ${examId}`;
+    const ex = await tx`select id, title, kind, duration_minutes, status, starts_at, ends_at, shuffle_questions, shuffle_options, anticheat_level, lock_after_violations, use_token, show_score from exams where id = ${examId}`;
     if (ex.length === 0) return null;
     const [bank, picked, classes, pickedClasses, scores, summary, needsManual] = await Promise.all([
       tx`select id, content from questions order by created_at desc limit 500`,
@@ -1677,7 +1680,7 @@ pages.get("/app/exams/:id", async (c) => {
   if (!data) return c.notFound();
 
   type Ex = { id: string; title: string; kind: string; duration_minutes: number; status: string; starts_at: string | null; ends_at: string | null;
-    shuffle_questions: boolean; shuffle_options: boolean; anticheat_level: string; lock_after_violations: number | null };
+    shuffle_questions: boolean; shuffle_options: boolean; anticheat_level: string; lock_after_violations: number | null; use_token: boolean; show_score: boolean };
   type Q = { id: string; content: { text: string; options: string[] } };
   type Cls = { id: string; name: string };
   const ex = data.ex as unknown as Ex;
@@ -1758,6 +1761,8 @@ pages.get("/app/exams/:id", async (c) => {
         </div>
         <label class="sw-row"><span><b>Acak urutan soal</b></span><input type="checkbox" class="switch" name="shuffle_questions" ${ex.shuffle_questions ? "checked" : ""}></label>
         <label class="sw-row"><span><b>Acak pilihan jawaban</b></span><input type="checkbox" class="switch" name="shuffle_options" ${ex.shuffle_options ? "checked" : ""}></label>
+        <label class="sw-row"><span><b>Pakai token dari pengawas</b><small>Token tampil di layar Pantau</small></span><input type="checkbox" class="switch" name="use_token" ${ex.use_token ? "checked" : ""}></label>
+        <label class="sw-row"><span><b>Tampilkan nilai ke siswa</b></span><input type="checkbox" class="switch" name="show_score" ${ex.show_score ? "checked" : ""}></label>
         <label class="sw-row"><span><b>Kunci bila siswa curang</b><small>Batas keluar layar: <input name="lock_after_violations" type="number" min="1" max="20" value="${ex.lock_after_violations || 3}" style="width:64px;min-height:34px;padding:4px 8px;display:inline-block"> kali</small></span><input type="checkbox" class="switch" name="ac" ${ex.anticheat_level !== "log" ? "checked" : ""}></label>
       </div>
       <div class="sheet-foot"><span class="spacer"></span><button class="primary" type="submit">Simpan perubahan</button></div>
@@ -1821,6 +1826,7 @@ pages.get("/app/exams/:id", async (c) => {
         const body = { title: edF.title.value.trim(), duration_minutes: +edF.duration_minutes.value,
           starts_at: iso(edF.starts_at.value), ends_at: iso(edF.ends_at.value),
           shuffle_questions: edF.shuffle_questions.checked, shuffle_options: edF.shuffle_options.checked,
+          use_token: edF.use_token.checked, show_score: edF.show_score.checked,
           anticheat_level: edF.ac.checked ? 'warn' : 'log', lock_after_violations: +edF.lock_after_violations.value || 3 };
         const r = await fetch('/api/exams/' + EID, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const j = await r.json().catch(() => ({}));
@@ -2932,153 +2938,148 @@ pages.get("/app/exams/:id/live", async (c) => {
   );
   if ((ex as unknown as unknown[]).length === 0) return c.notFound();
   const title = (ex[0] as { title: string }).title;
-  return c.html(base(`Live — ${title}`, `
-    <div class="card">
-      <h1>Live monitoring</h1>
-      <p class="sub">${esc(title)} · <a href="/app/exams/${esc(examId)}">Detail ujian</a> · <span id="t" class="muted"></span></p>
+  // Ikon aksi (Lucide).
+  const IC = {
+    chat: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg>`, plus: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v8M8 12h8M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/></svg>`, pause: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>`, play: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>`, unlock: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 11h12v10H6zM8 11V7a4 4 0 0 1 7.5-2"/></svg>`, send: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>`, reset: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/></svg>`,
+  };
+  return c.html(base(`Pantau — ${title}`, `
+    <a class="crumb" href="/app/exams/${esc(examId)}">‹ Detail ujian</a>
+    <div class="card lvhead">
+      <div><h1>${esc(title)}</h1><p class="muted" id="t">Memuat…</p></div>
+      <div class="tok" id="tok" hidden><span>Token ujian</span><b id="tokV">------</b><small id="tokT"></small></div>
     </div>
-    <div class="card">
-      <table style="width:100%; border-collapse:collapse">
-        <thead><tr><th>Siswa</th><th>Status</th><th>Kemajuan</th><th>Pelanggaran</th><th>Sinyal</th><th></th></tr></thead>
-        <tbody id="tb"><tr><td colspan="6" class="muted">Memuat…</td></tr></tbody>
-      </table>
+    <div class="lvchips" id="chips"></div>
+    <div class="card" style="padding:8px 8px 4px">
+      <div class="lvbar"><input id="q" type="search" placeholder="Cari nama siswa…" aria-label="Cari siswa">
+        <select id="cls" aria-label="Kelas"><option value="">Semua kelas</option></select></div>
+      <div id="tb" class="lvlist"><p class="muted" style="padding:12px">Memuat…</p></div>
     </div>
-    <div class="card">
-      <h2>Chat masuk</h2>
-      <div id="chats"><p class="muted">Memuat…</p></div>
-    </div>
-    <!-- Panel chat per sesi -->
-    <dialog id="chatDlg" style="max-width:420px; width:92%;">
-      <h3 id="chatTitle" style="margin:0 0 8px"></h3>
-      <div id="chatBox2" style="max-height:300px; overflow-y:auto; padding:8px; border:1px solid var(--bd); border-radius:6px; background:var(--bg); margin-bottom:8px"></div>
-      <form id="chatForm2" style="display:flex; gap:6px">
-        <input id="chatInput2" placeholder="Balas…" maxlength="500" style="flex:1; padding:8px 12px; border:1px solid var(--bd); border-radius:6px; background:var(--bg); color:var(--fg); font:inherit">
-        <button class="primary">Kirim</button>
-        <button type="button" id="chatCloseDlg">Tutup</button>
-      </form>
+    <div class="card"><h2>Chat dari siswa</h2><div id="chats"><p class="muted">Memuat…</p></div></div>
+    <dialog id="chatDlg" class="sheet">
+      <div class="sheet-head"><h2 id="chatTitle"></h2><button type="button" class="x" id="chatCloseDlg" aria-label="Tutup">✕</button></div>
+      <div class="sheet-body"><div id="chatBox2" class="chatbox"></div></div>
+      <form id="chatForm2" class="sheet-foot"><input id="chatInput2" placeholder="Balas…" maxlength="500" style="flex:1"><button class="primary">Kirim</button></form>
     </dialog>
+    <style>
+      .lvhead { display:flex; justify-content:space-between; align-items:center; gap: 14px; flex-wrap: wrap; }
+      .lvhead h1 { margin: 0 0 2px; font-size: 22px; } .lvhead p { margin: 0; }
+      .tok { border: 2px dashed var(--brand); border-radius: 14px; padding: 8px 16px; text-align:center; display:flex; flex-direction:column; }
+      .tok span { font-size: 12px; color: var(--mut); } .tok b { font: 800 28px/1.1 ui-monospace, Menlo, monospace; letter-spacing: .18em; color: var(--brand); } .tok small { color: var(--mut); }
+      .lvchips { display:flex; gap: 8px; overflow-x: auto; margin: 0 0 12px; padding-bottom: 2px; }
+      .lvchips button { border-radius: 999px; min-height: 38px; padding: 6px 14px; font-size: 13.5px; white-space: nowrap; }
+      .lvchips button b { margin-left: 6px; } .lvchips button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+      .lvchips i { display:inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+      .lvbar { display:flex; gap: 8px; padding: 4px 4px 8px; } .lvbar input { flex: 1; } .lvbar select { width: auto; }
+      .lvrow { display:flex; align-items:center; gap: 12px; padding: 12px 8px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+      .lvrow:first-child { border-top: none; }
+      .lvrow .nm { flex: 1 1 200px; min-width: 0; } .lvrow .nm b { display:block; } .lvrow .nm span { color: var(--mut); font-size: 13px; }
+      .lvrow .pg { flex: 0 0 120px; font-size: 13px; color: var(--mut); }
+      .lvrow .pg i { display:block; height: 6px; border-radius: 99px; background: var(--paper); border: 1px solid var(--line); overflow:hidden; margin-top: 4px; }
+      .lvrow .pg i u { display:block; height: 100%; background: var(--brand); }
+      .lvrow .st { flex: 0 0 auto; display:flex; flex-direction:column; gap: 4px; align-items:flex-start; }
+      .lvrow .vio { color: var(--danger); font-size: 12.5px; font-weight: 700; }
+      .lvrow .code { font: 800 15px ui-monospace, monospace; letter-spacing: .15em; color: var(--danger); background: #FEF2F2; border-radius: 8px; padding: 2px 8px; }
+      .lvrow .sc { flex: 0 0 48px; text-align: right; font-weight: 800; font-size: 18px; }
+      .lvrow .acts { flex: 0 0 auto; }
+      .lvrow .ibtn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .pill.none { background: var(--paper); color: var(--mut); border-color: transparent; }
+      .chatbox { max-height: 320px; overflow-y: auto; }
+      @media (max-width: 640px) { .lvrow .pg { flex: 1 1 100%; order: 3; } .lvrow .acts { flex: 1 1 100%; order: 4; justify-content: flex-end; } }
+    </style>
     <script>
       const EID = ${JSON.stringify(examId)};
-      const tb = document.getElementById('tb');
-      const t = document.getElementById('t');
-      function timeAgo(iso) {
-        if (!iso) return '—';
-        const s = Math.floor((Date.now() - new Date(iso).getTime())/1000);
-        if (s < 60) return s + ' dtk lalu';
-        if (s < 3600) return Math.floor(s/60) + ' mnt lalu';
-        return Math.floor(s/3600) + ' jam lalu';
-      }
-      function dot(iso) {
-        if (!iso) return '<span style="color:var(--mut)">○</span>';
-        const s = (Date.now() - new Date(iso).getTime())/1000;
-        const color = s < 30 ? 'var(--ok,#16a34a)' : (s < 120 ? '#eab308' : 'var(--danger)');
-        return '<span style="color:' + color + '">●</span>';
+      const IC = ${JSON.stringify(IC)};
+      const ST = { none: ['Belum mulai', '#94A3B8'], active: ['Mengerjakan', '#F59E0B'], locked: ['Terkunci', '#DC2626'], submitted: ['Selesai', '#16A34A'], expired: ['Waktu habis', '#16A34A'] };
+      const FILT = [['all', 'Semua'], ['none', 'Belum mulai'], ['active', 'Mengerjakan'], ['locked', 'Terkunci'], ['done', 'Selesai']];
+      let rows = [], filt = 'all', tokLeft = 0;
+      const escH = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+      const grp = (r) => r.status === 'submitted' || r.status === 'expired' ? 'done' : r.status;
+      const ago = (iso) => { if (!iso) return ''; const s = Math.floor((Date.now() - new Date(iso)) / 1000); return s < 60 ? 'aktif ' + s + ' dtk lalu' : s < 3600 ? 'aktif ' + Math.floor(s / 60) + ' mnt lalu' : ''; };
+      const btn = (act, ic, label, sid, extra) => '<button type="button" class="ibtn' + (extra || '') + '" data-act="' + act + '" data-sid="' + sid + '" title="' + label + '" aria-label="' + label + '">' + IC[ic] + '</button>';
+      function draw() {
+        const cnt = { all: rows.length, none: 0, active: 0, locked: 0, done: 0 };
+        rows.forEach((r) => cnt[grp(r)]++);
+        document.getElementById('chips').innerHTML = FILT.map(([k, t]) => '<button type="button" data-f="' + k + '" aria-pressed="' + (filt === k) + '">' +
+          (k === 'all' ? '' : '<i style="background:' + (ST[k === 'done' ? 'submitted' : k][1]) + '"></i>') + t + '<b>' + cnt[k] + '</b></button>').join('');
+        const q = document.getElementById('q').value.toLowerCase(), cl = document.getElementById('cls').value;
+        const list = rows.filter((r) => (filt === 'all' || grp(r) === filt) && (!q || r.student_name.toLowerCase().includes(q)) && (!cl || r.class_name === cl));
+        document.getElementById('tb').innerHTML = list.map((r) => {
+          const pct = r.total ? Math.round(r.answered * 100 / r.total) : 0, sid = escH(r.session_id || '');
+          let acts = '';
+          if (r.session_id) {
+            acts += btn('chat', 'chat', 'Chat', sid);
+            if (r.status === 'locked') acts += btn('unlock', 'unlock', 'Buka kunci', sid);
+            if (r.status === 'active') acts += btn('extend', 'plus', 'Tambah 5 menit', sid) + btn('pause', 'pause', 'Jeda / lanjutkan', sid) + btn('submit', 'send', 'Kumpulkan paksa', sid);
+            acts += btn('reset', 'reset', 'Reset (ulang dari awal)', sid, ' del');
+          }
+          return '<div class="lvrow"><span class="nm"><b>' + escH(r.student_name) + '</b><span>' + escH(r.class_name || '-') + ' · ' + escH(r.username) + (r.status === 'active' ? ' · ' + ago(r.last_seen_at) : '') + '</span></span>' +
+            '<span class="pg">' + (r.session_id ? r.answered + '/' + r.total + ' soal<i><u style="width:' + pct + '%"></u></i>' : '') + '</span>' +
+            '<span class="st"><span class="pill ' + escH(r.status) + '">' + ST[r.status][0] + '</span>' + (r.violation_count ? '<span class="vio">⚠ ' + r.violation_count + ' pelanggaran</span>' : '') +
+            (r.unlock_code ? '<span class="code" title="Kode buka">' + escH(r.unlock_code) + '</span>' : '') + '</span>' +
+            '<span class="sc">' + (r.final_score != null ? Math.round(r.final_score * 10) / 10 : '') + '</span>' +
+            '<span class="acts">' + acts + '</span></div>';
+        }).join('') || '<p class="muted" style="padding:12px">Tidak ada siswa.</p>';
       }
       async function tick() {
         try {
-          const r = await fetch('/api/exams/' + EID + '/live', { credentials:'same-origin' });
+          const r = await fetch('/api/exams/' + EID + '/live', { credentials: 'same-origin' });
           if (!r.ok) throw new Error(r.status);
-          const d = await r.json();
-          t.textContent = 'Terakhir diperbarui ' + new Date().toLocaleTimeString('id-ID');
-          if (d.length === 0) { tb.innerHTML = '<tr><td colspan="5" class="muted">Belum ada peserta.</td></tr>'; return; }
-          tb.innerHTML = d.map((r) => {
-            const pct = r.total > 0 ? Math.round(r.answered * 100 / r.total) : 0;
-            const vio = r.violation_count ? '<span style="color:var(--danger)"><b>' + r.violation_count + '</b></span>' : '0';
-            const bar = '<div style="background:var(--bg);border:1px solid var(--bd);border-radius:4px;height:8px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:#2563eb"></div></div>';
-            return '<tr><td><b>' + escapeHtml(r.student_name) + '</b><br><span class="muted">' + escapeHtml(r.class_name || '-') + '</span></td>'
-              + '<td>' + escapeHtml(r.status) + '</td>'
-              + '<td>' + r.answered + '/' + r.total + ' (' + pct + '%)' + bar + '</td>'
-              + '<td>' + vio + (r.unlock_code ? '<br><b style="color:var(--danger)">Kode buka: <span style="font-family:ui-monospace,monospace;letter-spacing:.15em">' + escapeHtml(r.unlock_code) + '</span></b>' : '') + '</td>'
-              + '<td>' + dot(r.last_seen_at) + ' ' + timeAgo(r.last_seen_at) + '</td>'
-              + '<td><button data-act="chat" data-sid="' + escapeHtml(r.session_id) + '" data-name="' + escapeHtml(r.student_name) + '" style="padding:4px 8px">Chat</button>'
-              + (r.status === "active" ? ' <button data-act="extend" data-sid="' + escapeHtml(r.session_id) + '" style="padding:4px 8px" title="Tambah 5 menit">+5 mnt</button> <button data-act="pause" data-sid="' + escapeHtml(r.session_id) + '" style="padding:4px 8px" title="Jeda atau lanjutkan">Jeda</button> <button data-act="submit" data-sid="' + escapeHtml(r.session_id) + '" style="padding:4px 8px" title="Kumpulkan paksa">Kumpulkan</button>' : "")
-              + '</td></tr>';
-          }).join('');
-        } catch (e) { t.textContent = 'Gagal memuat: ' + e; }
+          const d = await r.json(); rows = d.rows;
+          document.getElementById('t').textContent = 'Diperbarui ' + new Date().toLocaleTimeString('id-ID') + ' · batas pelanggaran ' + d.limit + 'x';
+          const tk = document.getElementById('tok'); tk.hidden = !d.token;
+          if (d.token) { document.getElementById('tokV').textContent = d.token; tokLeft = d.tokenIn; }
+          const sel = document.getElementById('cls'), have = [...sel.options].map((o) => o.value);
+          [...new Set(rows.map((x) => x.class_name).filter(Boolean))].forEach((n) => { if (!have.includes(n)) sel.add(new Option(n, n)); });
+          draw();
+        } catch (e) { document.getElementById('t').textContent = 'Gagal memuat, mencoba lagi…'; }
       }
-      // Satu listener untuk semua tombol aksi: nama siswa tidak pernah masuk ke kode JS.
-      document.addEventListener('click', (ev) => {
+      setInterval(() => { if (tokLeft > 0) { tokLeft--; document.getElementById('tokT').textContent = 'berganti dalam ' + Math.floor(tokLeft / 60) + ':' + String(tokLeft % 60).padStart(2, '0'); if (tokLeft === 0) tick(); } }, 1000);
+      document.getElementById('chips').addEventListener('click', (e) => { const b = e.target.closest('[data-f]'); if (b) { filt = b.dataset.f; draw(); } });
+      document.getElementById('q').addEventListener('input', draw);
+      document.getElementById('cls').addEventListener('change', draw);
+      const post = async (url, body) => { const r = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+        const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Gagal.'); return j; };
+      document.addEventListener('click', async (ev) => {
         const b = ev.target.closest('[data-act]'); if (!b) return;
-        const sid = b.dataset.sid, act = b.dataset.act;
-        if (act === 'chat') openChat(sid, b.dataset.name);
-        else if (act === 'extend') extend(sid);
-        else if (act === 'pause') pauseResume(sid);
-        else if (act === 'submit') forceSubmit(sid);
+        const sid = b.dataset.sid, act = b.dataset.act, name = b.closest('.lvrow')?.querySelector('b')?.textContent || '';
+        try {
+          if (act === 'chat') return openChat(sid, name);
+          if (act === 'extend') { await post('/api/sessions/' + sid + '/extend', { minutes: 5 }); toast('Waktu ' + name + ' ditambah 5 menit.', 'ok'); }
+          if (act === 'pause') { try { await post('/api/sessions/' + sid + '/pause'); toast(name + ' dijeda.'); } catch (_) { await post('/api/sessions/' + sid + '/resume'); toast(name + ' dilanjutkan.', 'ok'); } }
+          if (act === 'unlock') { if (!(await ask('Buka kunci ujian ' + name + '? Hitungan pelanggaran mulai dari 0.', 'Buka kunci'))) return; await post('/api/sessions/' + sid + '/unlock'); toast('Kunci dibuka.', 'ok'); }
+          if (act === 'submit') { if (!(await ask('Kumpulkan paksa jawaban ' + name + ' sekarang?', 'Kumpulkan'))) return; await post('/api/sessions/' + sid + '/force-submit'); toast('Jawaban dikumpulkan.', 'ok'); }
+          if (act === 'reset') { if (!(await ask('Reset ujian ' + name + '? Semua jawabannya dihapus dan siswa mengulang dari awal.', 'Ya, reset'))) return; await post('/api/sessions/' + sid + '/reset'); toast('Ujian ' + name + ' direset.', 'ok'); }
+          tick();
+        } catch (x) { toast(x.message, 'err'); }
       });
-      function escapeHtml(s){return (s||'').replace(/[&<>\"']/g,(ch)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]);}
-      tick(); setInterval(tick, 3000);
+      tick(); setInterval(tick, 5000);
 
-      // Chat panel
-      const chatDlg = document.getElementById('chatDlg');
-      const chatBox2 = document.getElementById('chatBox2');
-      const chatInput2 = document.getElementById('chatInput2');
-      const chatTitle = document.getElementById('chatTitle');
+      // Chat
+      const chatDlg = document.getElementById('chatDlg'), chatBox2 = document.getElementById('chatBox2'), chatInput2 = document.getElementById('chatInput2');
       let activeSid = null;
       document.getElementById('chatCloseDlg').onclick = () => chatDlg.close();
-      async function openChat(sid, name) {
-        activeSid = sid; chatTitle.textContent = 'Chat — ' + name;
-        await loadChat(); chatDlg.showModal();
-      }
+      async function openChat(sid, name) { activeSid = sid; document.getElementById('chatTitle').textContent = 'Chat · ' + name; await loadChat(); chatDlg.showModal(); }
       async function loadChat() {
         if (!activeSid) return;
-        const r = await fetch('/api/sessions/' + activeSid + '/messages', { credentials:'same-origin' });
-        if (!r.ok) return;
+        const r = await fetch('/api/sessions/' + activeSid + '/messages', { credentials: 'same-origin' }); if (!r.ok) return;
         const msgs = await r.json();
-        chatBox2.innerHTML = msgs.map((m) => {
-          const align = m.from_role === 'staff' ? 'right' : 'left';
-          const bg = m.from_role === 'staff' ? '#2563eb' : 'var(--bd)';
-          const fg = m.from_role === 'staff' ? '#fff' : 'var(--fg)';
-          return '<div style="text-align:' + align + '; margin:4px 2px"><span style="display:inline-block;padding:4px 10px;border-radius:10px;background:' + bg + ';color:' + fg + ';max-width:260px;text-align:left;font-size:13px"><b style="font-size:11px">' + escapeHtml(m.from_name || m.from_role) + '</b><br>' + escapeHtml(m.content) + '</span></div>';
-        }).join('');
+        chatBox2.innerHTML = msgs.map((m) => { const me = m.from_role === 'staff';
+          return '<div style="text-align:' + (me ? 'right' : 'left') + ';margin:4px 2px"><span style="display:inline-block;padding:6px 12px;border-radius:12px;max-width:80%;background:' + (me ? 'var(--brand)' : 'var(--paper)') + ';color:' + (me ? 'var(--brand-ink)' : 'var(--fg)') + '">' + escH(m.content) + '</span></div>'; }).join('') || '<p class="muted">Belum ada pesan.</p>';
         chatBox2.scrollTop = chatBox2.scrollHeight;
       }
       document.getElementById('chatForm2').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const content = chatInput2.value.trim(); if (!content || !activeSid) return;
-        chatInput2.value = '';
-        await fetch('/api/sessions/' + activeSid + '/messages', {
-          method:'POST', credentials:'same-origin',
-          headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ content }),
-        });
-        await loadChat();
+        e.preventDefault(); const content = chatInput2.value.trim(); if (!content || !activeSid) return;
+        chatInput2.value = ''; await post('/api/sessions/' + activeSid + '/messages', { content }).catch((x) => toast(x.message, 'err')); await loadChat();
       });
       async function pollChats() {
         try {
-          const r = await fetch('/api/exams/' + EID + '/chats', { credentials:'same-origin' });
-          if (!r.ok) return;
-          const d = await r.json();
-          const el = document.getElementById('chats');
-          if (d.length === 0) { el.innerHTML = '<p class="muted">Belum ada chat.</p>'; }
-          else {
-            el.innerHTML = d.map((c) => '<div style="padding:8px; border-bottom:1px solid var(--bd); cursor:pointer" data-act="chat" data-sid="' + escapeHtml(c.session_id) + '" data-name="' + escapeHtml(c.student_name) + '"><b>' + escapeHtml(c.student_name) + '</b> <span class="muted">· ' + c.msg_count + ' pesan · ' + (c.last_from === 'student' ? '' : '') + 'terakhir ' + new Date(c.last_at).toLocaleTimeString('id-ID') + '</span><br><span class="muted" style="font-size:13px">' + escapeHtml((c.last_msg || '').slice(0, 80)) + '</span></div>').join('');
-          }
-          if (activeSid) await loadChat();
-        } catch(_){}
+          const r = await fetch('/api/exams/' + EID + '/chats', { credentials: 'same-origin' }); if (!r.ok) return;
+          const d = await r.json(), el = document.getElementById('chats');
+          el.innerHTML = d.length ? d.map((c) => '<div class="lrow" style="cursor:pointer" data-act="chat" data-sid="' + escH(c.session_id) + '"><span class="lt"><b>' + escH(c.student_name) + '</b><span>' + escH(c.last_msg || '') + '</span></span></div>').join('') : '<p class="muted">Belum ada chat.</p>';
+          if (activeSid && chatDlg.open) await loadChat();
+        } catch (_) {}
       }
-      window.openChat = openChat;
-      pollChats(); setInterval(pollChats, 5000);
-
-      // Override timer siswa individual.
-      window.extend = async (sid) => {
-        const r = await fetch('/api/sessions/' + sid + '/extend', {
-          method:'POST', credentials:'same-origin',
-          headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ minutes: 5 }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (r.ok) tick(); else alert(j.error || r.status);
-      };
-      window.pauseResume = async (sid) => {
-        // Coba pause dulu; kalau 404 (sudah pause), resume.
-        let r = await fetch('/api/sessions/' + sid + '/pause', { method:'POST', credentials:'same-origin' });
-        if (r.status === 404) r = await fetch('/api/sessions/' + sid + '/resume', { method:'POST', credentials:'same-origin' });
-        if (r.ok) tick(); else { const j = await r.json().catch(() => ({})); alert(j.error || r.status); }
-      };
-      window.forceSubmit = async (sid) => {
-        if (!(await ask('Paksa submit sesi ini sekarang?'))) return;
-        const r = await fetch('/api/sessions/' + sid + '/force-submit', { method:'POST', credentials:'same-origin' });
-        const j = await r.json().catch(() => ({}));
-        if (r.ok) tick(); else alert(j.error || r.status);
-      };
+      pollChats(); setInterval(pollChats, 6000);
     </script>
   `, { role: sess.role }));
 });

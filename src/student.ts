@@ -11,6 +11,7 @@ import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
 import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA, UI_JS } from "./ui";
 import { createSession, finalizeSession } from "./scoring";
+import { tokenValid } from "./token";
 
 type Bindings = {
   HYPERDRIVE: Hyperdrive;
@@ -213,34 +214,56 @@ student.get("/s", async (c) => {
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const me = await tx`select s.name, c.name as class_name, s.class_id
                         from students s left join classes c on c.id = s.class_id where s.id = ${stu.uid}`;
-    // Ujian yang 'open' dan diperuntukkan kelas siswa.
+    // Semua ujian untuk kelas siswa (kecuali draf), beserta sesi dan nilainya.
     const exams = await tx`
-      select e.id, e.title, e.duration_minutes, e.kind,
-             es.id as session_id, es.status as session_status
+      select e.id, e.title, e.duration_minutes, e.kind, e.status, e.starts_at, e.ends_at, e.use_token, e.show_score,
+             (select count(*) from exam_questions q where q.exam_id = e.id)::int as qn,
+             es.id as session_id, es.status as session_status, sc.final_score
       from exams e
       join exam_classes ec on ec.exam_id = e.id
       left join exam_sessions es on es.exam_id = e.id and es.student_id = ${stu.uid}
-      where e.status = 'open'
-        and (ec.class_id = (select class_id from students where id = ${stu.uid}))
-      order by e.title`;
+      left join scores sc on sc.session_id = es.id
+      where e.status <> 'draft'
+        and ec.class_id = (select class_id from students where id = ${stu.uid})
+      order by coalesce(e.starts_at, e.created_at) desc`;
     return { me: me[0], exams };
   });
 
-  type Ex = { id: string; title: string; duration_minutes: number; kind: string; session_id: string|null; session_status: string|null };
-  const me = data.me as { name: string; class_name: string|null; class_id: string|null } | undefined;
-  const list = (data.exams as unknown as Ex[]).map((e) => {
-    const action = e.session_status === "submitted"
-      ? `<span class="pill submitted">Selesai</span>`
-      : e.session_status === "expired"
-      ? `<span class="pill expired">Waktu habis</span>`
-      : `<form method="post" action="/s/exams/${esc(e.id)}/start" style="margin:0"><button class="primary">${e.session_id ? "Lanjutkan" : "Mulai"}</button></form>`;
-    return `<div class="exam-item">
-      <span class="ei"><svg viewBox="0 0 24 24"><path d="M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"/></svg></span>
-      <span class="et"><b>${esc(e.title)}</b><span class="muted">${esc(kindLabel(e.kind))} · ${e.duration_minutes} menit</span></span>
-      ${action}
-    </div>`;
-  }).join("") || `<p class="muted" style="text-align:center;padding:18px 0;margin:0">Belum ada ujian yang dibuka untuk kelas Anda.</p>`;
+  type Ex = { id: string; title: string; duration_minutes: number; kind: string; status: string; starts_at: string | null; ends_at: string | null;
+    use_token: boolean; show_score: boolean; qn: number; session_id: string | null; session_status: string | null; final_score: string | null };
+  const me = data.me as { name: string; class_name: string | null; class_id: string | null } | undefined;
+  const now = Date.now();
+  const fmt = (d: string) => new Date(d).toLocaleString("id-ID", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" });
+  const err = c.req.query("err"), errEx = c.req.query("ex");
+  const all = (data.exams as unknown as Ex[]).map((e) => {
+    const done = e.session_status === "submitted" || e.session_status === "expired";
+    const future = e.status === "scheduled" || (e.starts_at && new Date(e.starts_at).getTime() > now);
+    const over = e.status === "closed" || (e.ends_at && new Date(e.ends_at).getTime() <= now);
+    return { ...e, tab: done || (over && e.session_id) ? "selesai" : future ? "mendatang" : over ? "" : "aktif" };
+  }).filter((e) => e.tab);
+  const card = (e: (typeof all)[number]) => {
+    const when = e.starts_at ? `<p class="when">${fmt(e.starts_at)}${e.ends_at ? ` – ${fmt(e.ends_at)}` : ""}</p>` : "";
+    const pill = e.tab === "aktif" ? `<span class="pill open">Aktif</span>` : e.tab === "mendatang" ? `<span class="pill scheduled">Mendatang</span>` : `<span class="pill submitted">Selesai</span>`;
+    let foot = "";
+    if (e.tab === "aktif") {
+      const needTok = e.use_token && !e.session_id;
+      foot = `<form method="post" action="/s/exams/${esc(e.id)}/start" class="go">
+        ${needTok ? `<input name="token" required maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="Token dari pengawas" aria-label="Token ujian">` : ""}
+        <button class="primary">${e.session_id ? "Lanjutkan" : "Kerjakan"} ›</button></form>
+        ${err && errEx === e.id ? `<p class="err" style="margin:8px 0 0">${esc(err)}</p>` : ""}`;
+    } else if (e.tab === "selesai") {
+      foot = `<div class="score"><span>Nilai</span><b>${e.show_score && e.final_score != null ? esc(String(Math.round(+e.final_score * 10) / 10)) : "—"}</b></div>`;
+    }
+    return `<div class="xcard" data-tab="${e.tab}">
+      <div class="xtop"><span class="ei"><svg viewBox="0 0 24 24"><path d="M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4"/></svg></span>
+        <span class="et"><small>${esc(kindLabel(e.kind))}</small><b>${esc(e.title)}</b><span class="muted">${e.duration_minutes} menit · ${e.qn} soal</span></span>${pill}</div>
+      ${when}${foot}</div>`;
+  };
+  const n = (t: string) => all.filter((e) => e.tab === t).length;
+  const first = n("aktif") ? "aktif" : n("mendatang") ? "mendatang" : "selesai";
   const initials = (me?.name ?? "S").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  const hour = +new Date().toLocaleString("en-US", { hour: "numeric", hour12: false, timeZone: "Asia/Jakarta" });
+  const greet = hour < 11 ? "Selamat pagi" : hour < 15 ? "Selamat siang" : hour < 18 ? "Selamat sore" : "Selamat malam";
 
   return c.html(page("Portal Siswa", `
     <section class="band">
@@ -248,22 +271,95 @@ student.get("/s", async (c) => {
         <div class="row" style="margin:0"><a class="btn ghostbtn" href="/s/me">Ganti PIN</a>
         <form method="post" action="/s/logout" style="margin:0"><button type="submit" class="ghostbtn">Keluar</button></form></div></div>
       <div class="who"><span class="avatar">${esc(initials)}</span>
-        <div><h1>Halo, ${esc(me?.name ?? "siswa")}</h1><p>${esc(me?.class_name ? "Kelas " + me.class_name : "Belum terdaftar di kelas")}</p></div></div>
+        <div><p>${greet}</p><h1>${esc(me?.name ?? "siswa")}</h1><p>${esc(me?.class_name ? (/^kelas\b/i.test(me.class_name) ? me.class_name : "Kelas " + me.class_name) : "Belum terdaftar di kelas")}</p></div></div>
     </section>
     <div class="lift">
-      ${c.req.query("selesai") ? `<div class="card" role="status" style="border-color:var(--ok);display:flex;gap:14px;align-items:center">
-        <span style="width:40px;height:40px;border-radius:50%;background:var(--ok);color:#fff;display:grid;place-items:center;font-weight:800;flex:0 0 auto">✓</span>
-        <span><b>Ujian berhasil dikumpulkan.</b><br><span class="muted">Lihat nilainya di <a href="/s/history">riwayat ujian</a>.</span></span></div>` : ""}
       <div class="card">
-        <h2>Ujian untuk Anda</h2>
-        ${list}
+        <div class="xhead"><h2>Jadwal ujian</h2><a class="btn" href="/s" aria-label="Muat ulang">↻</a></div>
+        <div class="xtabs" role="tablist">
+          ${[["aktif", "Aktif"], ["mendatang", "Mendatang"], ["selesai", "Selesai"]].map(([k, t]) => `<button type="button" role="tab" data-t="${k}" aria-selected="${k === first}">${t} <b>${n(k)}</b></button>`).join("")}
+        </div>
+        <div id="xlist">${all.map(card).join("")}</div>
+        <p class="muted xempty" hidden style="text-align:center;padding:18px 0;margin:0">Tidak ada ujian di sini.</p>
       </div>
       <div class="card">
-        <h2>Riwayat & belajar</h2>
+        <h2>Riwayat &amp; belajar</h2>
         <div class="row" style="margin-top:0"><a class="btn" href="/s/history">Riwayat nilai</a><a class="btn" href="/s/rekomendasi">Rekomendasi belajar</a></div>
         <p class="muted" style="margin:14px 0 0">Ada masalah atau saran? <a href="${FEEDBACK_WA}" target="_blank" rel="noopener">Kirim lewat WhatsApp</a></p>
       </div>
     </div>
+    <style>
+      .xhead { display:flex; justify-content:space-between; align-items:center; } .xhead h2 { margin: 0; } .xhead .btn { min-height: 40px; min-width: 40px; padding: 0; font-size: 18px; }
+      .xtabs { display:grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 4px; margin: 14px 0; }
+      .xtabs button { border: none; background: transparent; box-shadow: none; min-height: 40px; font-size: 13.5px; color: var(--mut); padding: 4px; }
+      .xtabs button[aria-selected="true"] { background: var(--surface); color: var(--brand); box-shadow: 0 1px 4px rgba(15,23,42,.1); }
+      .xcard { border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin-bottom: 10px; }
+      .xtop { display:flex; gap: 12px; align-items:flex-start; }
+      .xtop .ei { width: 44px; height: 44px; border-radius: 12px; background: var(--soft); color: var(--brand); display:grid; place-items:center; flex: 0 0 auto; }
+      .xtop .ei svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+      .xtop .et { flex: 1; min-width: 0; display:flex; flex-direction:column; } .xtop small { color: var(--brand); font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+      .xcard .when { margin: 12px 0 0; background: var(--paper); border-radius: 10px; padding: 8px 12px; font-size: 13.5px; color: var(--mut); }
+      .xcard .go { display:flex; gap: 8px; margin-top: 12px; } .xcard .go input { flex: 1; text-transform: uppercase; letter-spacing: .15em; font-weight: 700; }
+      .xcard .go button { margin-left: auto; min-height: 46px; }
+      .xcard .score { display:flex; justify-content:space-between; align-items:center; border-top: 1px dashed var(--line); margin-top: 12px; padding-top: 10px; }
+      .xcard .score b { font-size: 24px; color: var(--ok); }
+      .who p { margin: 0; }
+    </style>
+    <script>
+      const tabs = document.querySelectorAll('.xtabs button');
+      const show = (t) => { tabs.forEach((b) => b.setAttribute('aria-selected', String(b.dataset.t === t)));
+        let k = 0; document.querySelectorAll('.xcard').forEach((c) => { const on = c.dataset.tab === t; c.hidden = !on; if (on) k++; });
+        document.querySelector('.xempty').hidden = k > 0; };
+      tabs.forEach((b) => b.addEventListener('click', () => show(b.dataset.t)));
+      show(${JSON.stringify(first)});
+    </script>
+  `));
+});
+
+// Layar setelah mengumpulkan: nilai (bila diizinkan guru) dan ringkasan.
+student.get("/s/done/:sid", async (c) => {
+  const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
+  if (!stu) return c.redirect("/s/login");
+  const sid = c.req.param("sid");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) => tx`
+    select e.title, e.show_score, es.started_at, es.finished_at, sc.final_score, st.name, c.name as class_name,
+           (select count(*) from answers a where a.session_id = es.id)::int as answered,
+           coalesce(jsonb_array_length(case when jsonb_typeof(es.question_order) = 'object' then es.question_order->'order'
+                                            when jsonb_typeof(es.question_order) = 'array' then es.question_order else '[]'::jsonb end), 0)::int as total,
+           exists(select 1 from exam_questions eq join questions q on q.id = eq.question_id where eq.exam_id = e.id and q.type = 'uraian') as has_essay
+    from exam_sessions es join exams e on e.id = es.exam_id join students st on st.id = es.student_id
+    left join classes c on c.id = st.class_id left join scores sc on sc.session_id = es.id
+    where es.id = ${sid} and es.student_id = ${stu.uid}`);
+  const d = r[0] as undefined | { title: string; show_score: boolean; started_at: string; finished_at: string | null; final_score: string | null;
+    name: string; class_name: string | null; answered: number; total: number; has_essay: boolean };
+  if (!d) return c.redirect("/s");
+  const secs = d.finished_at ? Math.max(0, Math.round((new Date(d.finished_at).getTime() - new Date(d.started_at).getTime()) / 1000)) : 0;
+  const lama = secs >= 3600 ? `${Math.floor(secs / 3600)}j ${Math.floor(secs % 3600 / 60)}m` : `${Math.floor(secs / 60)}m ${secs % 60}d`;
+  const jam = d.finished_at ? new Date(d.finished_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }) : "-";
+  const score = d.final_score != null ? String(Math.round(+d.final_score * 10) / 10) : "-";
+  return c.html(page("Ujian selesai", `
+    <div class="card done">
+      <div class="ok">✓</div>
+      <h1>Ujian selesai</h1>
+      <p class="muted">Jawaban Anda sudah dikumpulkan dan tersimpan.</p>
+      ${d.show_score ? `<div class="big"><span>Nilai Anda</span><b>${esc(score)}</b>${d.has_essay ? `<small>Nilai uraian menyusul setelah diperiksa guru.</small>` : ""}</div>` : `<div class="big"><span>Nilai</span><b style="font-size:20px">Diumumkan oleh guru</b></div>`}
+      <dl class="who2"><div><dt>Nama</dt><dd>${esc(d.name)}</dd></div><div><dt>Kelas</dt><dd>${esc(d.class_name ?? "-")}</dd></div><div><dt>Ujian</dt><dd>${esc(d.title)}</dd></div></dl>
+      <div class="sum"><div><b>${d.answered}/${d.total}</b><span class="muted">Terjawab</span></div><div><b>${lama}</b><span class="muted">Lama</span></div><div><b>${jam}</b><span class="muted">Selesai</span></div></div>
+      <p class="note">Silakan tinggalkan ruangan dengan tertib atau tutup halaman ini. Terima kasih.</p>
+      <a class="btn primary" href="/s" style="width:100%;min-height:50px">Kembali ke beranda</a>
+    </div>
+    <style>
+      .done { max-width: 480px; margin: 6vh auto 0; text-align: center; padding: 28px 22px; }
+      .done .ok { width: 72px; height: 72px; border-radius: 50%; margin: 0 auto 12px; display:grid; place-items:center; font-size: 34px; font-weight: 800; color: #fff; background: var(--ok); box-shadow: 0 0 0 10px color-mix(in srgb, var(--ok) 15%, transparent); }
+      .done h1 { margin: 6px 0 2px; }
+      .done .big { margin: 18px 0; border-radius: 18px; padding: 18px; color: #fff; background: linear-gradient(140deg, var(--brand), color-mix(in srgb, var(--brand) 60%, #0F172A)); display:flex; flex-direction:column; gap: 2px; }
+      .done .big span { font-size: 12.5px; letter-spacing: .12em; text-transform: uppercase; opacity: .85; } .done .big b { font-size: 52px; line-height: 1.1; color: #FCD34D; } .done .big small { opacity: .85; }
+      .who2 { text-align:left; border: 1px solid var(--line); border-radius: 14px; margin: 0; padding: 4px 14px; }
+      .who2 div { display:flex; justify-content:space-between; gap: 12px; padding: 9px 0; border-top: 1px dashed var(--line); } .who2 div:first-child { border-top: none; }
+      .who2 dt { color: var(--mut); } .who2 dd { margin: 0; font-weight: 700; text-align:right; }
+      .done .note { background: #FEF3C7; color: #92400E; border-radius: 12px; padding: 10px 12px; font-size: 14px; text-align:left; }
+    </style>
   `));
 });
 
@@ -802,27 +898,32 @@ student.post("/s/exams/:id/start", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.redirect("/s/login");
   const examId = c.req.param("id");
+  const form = await c.req.parseBody().catch(() => ({} as Record<string, unknown>));
+  const token = String(form.token ?? "");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const sessionId = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     // Pastikan ujian open, dalam jendela waktu, dan menargetkan kelas siswa.
     const ok = await tx`
-      select e.id from exams e
+      select e.id, e.use_token from exams e
       join exam_classes ec on ec.exam_id = e.id
       where e.id = ${examId} and e.status = 'open'
         and ec.class_id = (select class_id from students where id = ${stu.uid})
         and (e.starts_at is null or e.starts_at <= now())
         and (e.ends_at   is null or e.ends_at   >  now())`;
-    if (ok.length === 0) throw new Error("ujian belum/sudah tidak tersedia");
+    if (ok.length === 0) throw new Error("Ujian belum dibuka atau sudah ditutup.");
     const existing = await tx`select id, status from exam_sessions where exam_id = ${examId} and student_id = ${stu.uid}`;
     if (existing.length) {
       const row = existing[0] as { id: string; status: string };
-      if (row.status === "submitted" || row.status === "expired") throw new Error("ujian ini sudah selesai untuk Anda");
+      if (row.status === "submitted" || row.status === "expired") throw new Error("Ujian ini sudah selesai untuk Anda.");
       return row.id;
     }
+    // Token dari pengawas hanya diminta saat pertama mulai.
+    if ((ok[0] as { use_token: boolean }).use_token && !(await tokenValid(c.env.SESSION_SECRET, examId, token)))
+      throw new Error(token ? "Token salah atau sudah berganti. Minta token terbaru ke pengawas." : "Masukkan token dari pengawas.");
     const sessionId = await createSession(tx, stu.sid, examId, stu.uid);
     return sessionId;
   }).catch((e) => ({ error: (e as Error).message }));
-  if (typeof sessionId === "object") return c.json(sessionId, 400);
+  if (typeof sessionId === "object") return c.redirect(`/s?err=${encodeURIComponent(sessionId.error)}&ex=${encodeURIComponent(examId)}`);
   return c.redirect(`/s/take/${sessionId}`);
 });
 
@@ -844,7 +945,7 @@ student.get("/s/take/:sid", async (c) => {
       violation_count: number; title: string;
       anticheat_level: "log"|"warn"|"lock"; lock_after_violations: number | null;
     };
-    if (sess.status === "submitted") return { done: true, title: sess.title };
+    if (sess.status === "submitted" || sess.status === "expired") return { done: true, title: sess.title };
     if (sess.status === "locked") return { locked: true, title: sess.title };
     // Backward compat: question_order dulu array string, sekarang object.
     const qoRaw = sess.question_order as unknown;
@@ -901,14 +1002,7 @@ student.get("/s/take/:sid", async (c) => {
     };
   });
   if (!data) return c.notFound();
-  if ("done" in data) {
-    return c.html(page(data.title!, `
-      <div class="card">
-        <h1>${esc(data.title!)}</h1>
-        <p>Ujian ini sudah Anda kumpulkan. Terima kasih.</p>
-        <div class="row"><a class="btn" href="/s">Kembali</a></div>
-      </div>`));
-  }
+  if ("done" in data) return c.redirect(`/s/done/${sessionId}`);
   if ("locked" in data) return c.html(page(data.title!, lockedCard(data.title!, sessionId)));
 
   const payload = JSON.stringify({
@@ -1285,7 +1379,7 @@ student.get("/s/take/:sid", async (c) => {
         if (auto) showGate('⏱', 'Waktu habis', 'Jawaban Anda sedang dikumpulkan otomatis…', null);
         const r = await fetch('/s/take/' + D.sessionId + '/submit', { method:'POST', credentials:'same-origin' }).catch(() => null);
         if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-        if (r && r.ok) { location.href = '/s?selesai=1'; return; }
+        if (r && r.ok) { location.href = '/s/done/' + D.sessionId; return; }
         submitting = false;
         showGate('!', 'Gagal mengumpulkan', 'Periksa koneksi internet, lalu coba lagi. Jawaban Anda tetap tersimpan.', ['Coba lagi', () => submitExam(auto)]);
       }

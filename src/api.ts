@@ -11,6 +11,7 @@ import { audit, actorFromSession } from "./audit";
 import { distractorRows, itemRows } from "./analytics";
 import { BRAND_COLORS, schoolYear } from "./ui";
 import { createSession, finalizeSession, writeScore } from "./scoring";
+import { currentToken } from "./token";
 
 export const api = new Hono<{ Bindings: AuthBindings & { APP_ENV: string; RESEND_API_KEY?: string; EMAIL_FROM?: string } }>();
 
@@ -729,9 +730,22 @@ api.post("/api/sessions/:sid/force-submit", async (c) => {
 
 // Buka kembali sesi yang di-locked oleh anti-cheat. Reset violation_count
 // supaya siswa tidak langsung terkunci lagi di event berikutnya.
+// Hapus sesi: siswa mengulang dari awal (jawaban, nilai, pelanggaran ikut terhapus).
+api.post("/api/sessions/:sid/reset", async (c) => {
+  const s = getSess(c);
+  const sid = c.req.param("sid");
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const n = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const d = await tx`delete from exam_sessions where id = ${sid} returning exam_id, student_id`;
+    if (d.length) await audit(tx, actorFromSession(s), "session.reset", "session", sid, d[0] as Record<string, unknown>);
+    return d.length;
+  });
+  return n ? c.json({ ok: true }) : c.json({ error: "Sesi tidak ditemukan." }, 404);
+});
+
+// Pengawas boleh membuka kunci (kode juga tampil di layar Pantau).
 api.post("/api/sessions/:sid/unlock", async (c) => {
   const s = getSess(c);
-  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const sessionId = c.req.param("sid");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
@@ -1414,7 +1428,7 @@ api.post("/api/exams", async (c) => {
     starts_at?: string | null; ends_at?: string | null;
     shuffle_questions?: boolean; shuffle_options?: boolean;
     anticheat_level?: "log"|"warn"|"lock"; lock_after_violations?: number | null;
-    questions_per_session?: number;
+    questions_per_session?: number; use_token?: boolean; show_score?: boolean;
     scoring_config?: { wrong_penalty?: number; category_weights?: Record<string, number> };
     group_id?: string | null; group_position?: number | null;
   };
@@ -1424,14 +1438,14 @@ api.post("/api/exams", async (c) => {
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`insert into exams (school_id, creator_id, title, kind, duration_minutes,
          starts_at, ends_at, shuffle_questions, shuffle_options, anticheat_level, lock_after_violations,
-         questions_per_session, scoring_config, group_id, group_position)
+         questions_per_session, scoring_config, group_id, group_position, use_token, show_score)
        values (${s.sid}, ${s.uid}, ${body.title}, ${body.kind}, ${body.duration_minutes},
          ${body.starts_at ?? null}, ${body.ends_at ?? null},
          ${body.shuffle_questions ?? false}, ${body.shuffle_options ?? false},
          ${body.anticheat_level ?? "log"}, ${body.lock_after_violations ?? null},
          ${body.questions_per_session ?? 0},
          ${(body.scoring_config ?? {}) as unknown as string},
-         ${body.group_id ?? null}, ${body.group_position ?? null})
+         ${body.group_id ?? null}, ${body.group_position ?? null}, ${body.use_token ?? false}, ${body.show_score ?? true})
        returning id`,
   );
   return c.json(r[0], 201);
@@ -1459,7 +1473,7 @@ api.patch("/api/exams/:id", async (c) => {
     starts_at?: string | null; ends_at?: string | null;
     shuffle_questions?: boolean; shuffle_options?: boolean;
     anticheat_level?: "log"|"warn"|"lock"; lock_after_violations?: number | null;
-    questions_per_session?: number;
+    questions_per_session?: number; use_token?: boolean; show_score?: boolean;
   };
   if (!body) return c.json({ error: "bad body" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
@@ -1475,7 +1489,9 @@ api.patch("/api/exams/:id", async (c) => {
        anticheat_level = coalesce(${body.anticheat_level ?? null}, anticheat_level),
        lock_after_violations = case when ${body.lock_after_violations !== undefined}
           then ${body.lock_after_violations ?? null} else lock_after_violations end,
-       questions_per_session = coalesce(${body.questions_per_session ?? null}, questions_per_session)
+       questions_per_session = coalesce(${body.questions_per_session ?? null}, questions_per_session),
+       use_token = coalesce(${body.use_token ?? null}, use_token),
+       show_score = coalesce(${body.show_score ?? null}, show_score)
      where id = ${id} returning id, status`;
     if (u.length && body.status) {
       await audit(tx, actorFromSession(s), `exam.${body.status}`, "exam", id, { title: body.title ?? null });
@@ -1588,22 +1604,30 @@ api.get("/api/exams/:id/live", async (c) => {
   const s = getSess(c);
   const id = c.req.param("id");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`select es.id as session_id, es.status, es.started_at, es.last_seen_at,
+  const [ex, rows] = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) => Promise.all([
+    tx`select title, use_token, lock_after_violations from exams where id = ${id}`,
+    // Semua siswa di kelas peserta, termasuk yang belum mulai.
+    tx`select st.id as student_id, st.name as student_name, st.username, c.name as class_name,
+              es.id as session_id, coalesce(es.status, 'none') as status, es.started_at, es.finished_at, es.last_seen_at,
               es.deadline_at, es.violation_count, case when es.status = 'locked' then es.unlock_code end as unlock_code,
-              st.name as student_name, st.username, c.name as class_name,
-              (select count(*) from answers a where a.session_id = es.id) as answered,
+              sc.final_score,
+              (select count(*) from answers a where a.session_id = es.id)::int as answered,
               coalesce(jsonb_array_length(
                 case when jsonb_typeof(es.question_order) = 'object' then es.question_order->'order'
                      when jsonb_typeof(es.question_order) = 'array'  then es.question_order
-                     else '[]'::jsonb end), 0) as total
-       from exam_sessions es
-       join students st on st.id = es.student_id
+                     else '[]'::jsonb end), 0)::int as total
+       from students st
+       join exam_classes ec on ec.class_id = st.class_id and ec.exam_id = ${id}
        left join classes c on c.id = st.class_id
-       where es.exam_id = ${id}
-       order by es.last_seen_at desc nulls last, es.started_at desc`,
-  );
-  return c.json(rows);
+       left join exam_sessions es on es.exam_id = ${id} and es.student_id = st.id
+       left join scores sc on sc.session_id = es.id
+       where st.active
+       order by c.name, st.name`,
+  ]));
+  const e = ex[0] as { title: string; use_token: boolean; lock_after_violations: number | null } | undefined;
+  if (!e) return c.json({ error: "Ujian tidak ditemukan." }, 404);
+  const tok = e.use_token ? await currentToken(c.env.SESSION_SECRET, id) : null;
+  return c.json({ title: e.title, limit: e.lock_after_violations || 3, token: tok?.token ?? null, tokenIn: tok?.expiresIn ?? 0, rows });
 });
 
 // Export CSV skor peserta satu ujian.
