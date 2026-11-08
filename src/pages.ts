@@ -354,12 +354,18 @@ const DOC_PARSER_JS = `
           }
           if (!cur) continue;
           if ((m = l.match(/^\\(?([A-Ea-e])\\s*[.):]\\s+(.+)$/))) { cur.opts.push(m[2]); continue; }
+          // Benar/Salah tabel: "Pernyataan ... (B)" atau "(Salah)".
+          if ((m = l.match(/^[-•*]?\\s*(.+?)\\s*\\((B|S|Benar|Salah)\\)\\s*$/i))) { (cur.stmts = cur.stmts || []).push([m[1], /^b/i.test(m[2])]); continue; }
+          // Menjodohkan: "Kiri -> Kanan" (juga =>, →).
+          if ((m = l.match(/^[-•*]?\\s*(.+?)\\s+(?:->|=>|→)\\s+(.+)$/))) { (cur.pairs = cur.pairs || []).push([m[1], m[2]]); continue; }
           if ((m = l.match(/^(jawaban|kunci|jawab|jwb|ans)\\s*[:=]\\s*(.+)$/i))) { cur.ans = m[2].trim(); continue; }
           if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text = (cur.text + ' ' + l).trim();
         }
         return qs.map((c, j) => {
           const ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').trim();
           const q = { row: j + 1, text: c.text.trim(), points: 1 };
+          if (c.stmts && c.stmts.length >= 2) { q.type = 'pgk_kategori'; q.statements = c.stmts.map((x) => x[0]); q.values = c.stmts.map((x) => x[1]); return [q, '']; }
+          if (c.pairs && c.pairs.length >= 2) { q.type = 'menjodohkan'; q.left = c.pairs.map((x) => x[0]); q.right = c.pairs.map((x) => x[1]); return [q, '']; }
           if (c.opts.length >= 2) {
             const letters = ans.toUpperCase().split(/[\\s,;]+/).filter((x) => /^[A-E]$/.test(x)).map((x) => L.indexOf(x));
             q.options = c.opts;
@@ -1484,7 +1490,7 @@ pages.get("/app/exams/new", async (c) => {
       const D = ${data};
       const f = document.getElementById('wf'), err = document.getElementById('wErr');
       const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-      const TYPE = { pg:'Pilihan ganda', benar_salah:'Benar/Salah', isian:'Isian', uraian:'Uraian', pgk_centang:'PG kompleks', menjodohkan:'Menjodohkan', pgk_kategori:'Kategori', simulasi:'Simulasi', dinamis_hitung:'Hitung dinamis' };
+      const TYPE = { pg:'Pilihan ganda', benar_salah:'Benar/Salah', isian:'Isian', uraian:'Uraian', pgk_centang:'PG kompleks', pgk_kategori:'B/S tabel', menjodohkan:'Menjodohkan', pgk_kategori:'Kategori', simulasi:'Simulasi', dinamis_hitung:'Hitung dinamis' };
       const kch = document.getElementById('kchips');
       kch.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; f.kind.value = b.textContent; markKind(); });
       const markKind = () => kch.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.textContent === f.kind.value.trim())));
@@ -2041,6 +2047,10 @@ pages.get("/app/exams/:id/print", async (c) => {
           );
           return `<li ${marker ? "style=\"background:#dcfce7; font-weight:600\"" : ""}>${esc(o)}${marker ? " ✓" : ""}</li>`;
         }).join("") + `</ol>`;
+    } else if (q.type === "pgk_kategori") {
+      const st = ((q.content as { statements?: string[] }).statements ?? []), vs = (q.answer_key?.values as number[] | undefined) ?? [];
+      body += `<table style="border-collapse:collapse;margin:4px 0"><tr><th style="border:1px solid #999;padding:4px 8px">Pernyataan</th><th style="border:1px solid #999;padding:4px 8px">B</th><th style="border:1px solid #999;padding:4px 8px">S</th></tr>` +
+        st.map((t, i) => `<tr><td style="border:1px solid #999;padding:4px 8px">${esc(t)}</td><td style="border:1px solid #999;padding:4px 8px;text-align:center">${showKey && vs[i] === 0 ? "✓" : ""}</td><td style="border:1px solid #999;padding:4px 8px;text-align:center">${showKey && vs[i] === 1 ? "✓" : ""}</td></tr>`).join("") + `</table>`;
     } else if (q.type === "isian") {
       body += `<p>Jawaban: ${showKey ? `<b>${esc(((q.answer_key?.accepted as string[]) ?? []).join(" / "))}</b>` : "____________________"}</p>`;
     } else if (q.type === "menjodohkan") {
@@ -3377,12 +3387,13 @@ Jawaban: B
             <li>Soal bernomor, pilihan diawali A–E. Pilihan boleh sebaris: <i>A. 3 B. 4 C. 5</i>.</li>
             <li>Kunci: tulis <b>Jawaban: B</b> di bawah soal, atau kumpulkan di akhir: <b>Kunci Jawaban: 1. B 2. C …</b></li>
             <li>Dua huruf atau lebih (A, C) jadi PG kompleks. Benar/Salah, teks isian, dan soal tanpa pilihan (uraian) juga dikenali.</li>
+            <li>B/S tabel: tiap pernyataan diakhiri <b>(B)</b> atau <b>(S)</b>. Menjodohkan: tulis <b>Kiri -&gt; Kanan</b> per baris.</li>
             <li>Gambar dan rumus di dokumen belum ikut terbaca. Tambahkan lewat tombol Edit setelah disimpan.</li>
           </ul>
           <p class="hint" style="margin:10px 0 6px"><b>Template Word</b> (unduh, isi, lalu upload lagi):</p>
           <div class="tplw" id="tplW">
             <button type="button" data-tpl="pg">Pilihan ganda</button><button type="button" data-tpl="pgk">PG kompleks</button>
-            <button type="button" data-tpl="bs">Benar / Salah</button><button type="button" data-tpl="isian">Isian &amp; uraian</button>
+            <button type="button" data-tpl="bs">Benar / Salah</button><button type="button" data-tpl="bst">B/S tabel</button><button type="button" data-tpl="mj">Menjodohkan</button><button type="button" data-tpl="isian">Isian &amp; uraian</button>
             <button type="button" data-tpl="semua">Semua tipe</button>
           </div>
           <label class="btn primary" style="margin:12px 0 0">Pilih file Word atau PDF<input type="file" id="upDocFile" accept=".docx,.pdf" hidden></label>
@@ -3393,6 +3404,9 @@ Jawaban: B
     </dialog>
 
     <style>
+      .srow { display:flex; gap: 6px; align-items:center; margin-bottom: 6px; } .srow input { flex: 1; } .srow .seg { flex: 0 0 auto; display:flex; gap: 4px; }
+      .srow .seg button { min-height: 40px; min-width: 40px; padding: 0 10px; } .srow .seg button[aria-pressed="true"][data-b="0"] { background: #16A34A; border-color: #16A34A; color: #fff; }
+      .srow .seg button[aria-pressed="true"][data-b="1"] { background: #DC2626; border-color: #DC2626; color: #fff; } .srow .rm { min-height: 40px; min-width: 40px; padding: 0; }
       .tplw { display:flex; flex-wrap: wrap; gap: 6px; } .tplw button { min-height: 38px; padding: 6px 12px; font-size: 13.5px; border-radius: 999px; }
       .howbank { background: var(--soft); border-radius: 16px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
       .howbank ol { margin: 0; padding-left: 20px; } .howbank li { margin: 3px 0; }
@@ -3454,8 +3468,8 @@ Jawaban: B
     </style>
     <script>
       const D = ${data};
-      const TYPES = [['pg','Pilihan ganda'],['pgk_centang','PG kompleks'],['benar_salah','Benar / Salah'],['isian','Isian singkat'],['uraian','Uraian'],['menjodohkan','Menjodohkan']];
-      const TL = Object.fromEntries(TYPES.concat([['simulasi','Simulasi'],['dinamis_hitung','Hitung dinamis'],['pgk_kategori','Kategori']]));
+      const TYPES = [['pg','Pilihan ganda'],['pgk_centang','PG kompleks'],['benar_salah','Benar / Salah'],['pgk_kategori','B/S tabel'],['isian','Isian singkat'],['uraian','Uraian'],['menjodohkan','Menjodohkan']];
+      const TL = Object.fromEntries(TYPES.concat([['simulasi','Simulasi'],['dinamis_hitung','Hitung dinamis']]));
       const CAT = Object.fromEntries(D.cats.map((c) => [c.id, c.name]));
       const L = 'ABCDEF';
       const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -3510,6 +3524,7 @@ Jawaban: B
         if (q.type === 'pg' || q.type === 'benar_salah') return '<ul>' + o.map((x, j) => '<li class="' + (k.index === j ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + esc(x) + '</span></li>').join('') + '</ul>';
         if (q.type === 'pgk_centang') return '<ul>' + o.map((x, j) => '<li class="' + ((k.correct || []).includes(j) ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + esc(x) + '</span></li>').join('') + '</ul>';
         if (q.type === 'isian') return '<ul><li class="ok"><b>✓</b><span>' + esc((k.accepted || []).join(' / ')) + '</span></li></ul>';
+        if (q.type === 'pgk_kategori') return '<ul>' + (q.content.statements || []).map((x, j) => '<li class="ok"><b>' + ((k.values || [])[j] === 0 ? 'B' : 'S') + '</b><span>' + esc(x) + '</span></li>').join('') + '</ul>';
         if (q.type === 'menjodohkan') return '<ul>' + (k.pairs || []).map(([a, b]) => '<li><b>' + (a + 1) + '.</b><span>' + esc(q.content.left[a]) + ' → ' + esc(q.content.right[b]) + '</span></li>').join('') + '</ul>';
         if (q.type === 'uraian') return '<p class="hint">Dinilai manual oleh guru.</p>';
         return '';
@@ -3598,6 +3613,7 @@ Jawaban: B
           opts.map((o, j) => '<div class="orow' + (multi ? ' pgk' : '') + '"><button type="button" class="mark" aria-pressed="' + marks.includes(j) + '" aria-label="Tandai benar">' + L[j] + '</button><input value="' + esc(o) + '" placeholder="Pilihan ' + L[j] + '"><button type="button" class="rm" aria-label="Hapus pilihan">✕</button></div>').join('') +
           '</div>' + (opts.length < 6 ? '<button type="button" id="addOpt" style="margin-top:4px">+ Tambah pilihan</button>' : '');
       }
+      const srow = (t, v) => '<div class="srow"><input value="' + esc(t) + '" placeholder="Pernyataan"><div class="seg bs2"><button type="button" data-b="0" aria-pressed="' + (v === 0) + '">B</button><button type="button" data-b="1" aria-pressed="' + (v === 1) + '">S</button></div><button type="button" class="rm" aria-label="Hapus">✕</button></div>';
       function body(type, k, ct) {
         const b = $('eBody'); k = k || {}; ct = ct || {};
         if (type === 'pg') b.innerHTML = optRows(ct.options || ['', '', '', ''], typeof k.index === 'number' ? [k.index] : [], false);
@@ -3605,6 +3621,10 @@ Jawaban: B
         else if (type === 'benar_salah') b.innerHTML = '<label>Jawaban benar</label><div class="seg" id="bs"><button type="button" data-v="1" aria-pressed="' + (k.index !== 1) + '">Benar</button><button type="button" data-v="0" aria-pressed="' + (k.index === 1) + '">Salah</button></div>';
         else if (type === 'isian') b.innerHTML = '<label for="eAcc">Jawaban yang diterima</label><input id="eAcc" value="' + esc((k.accepted || []).join(' | ')) + '" placeholder="mis. Surabaya | Kota Surabaya"><p class="hint">Pisahkan dengan | bila ada beberapa jawaban benar. Huruf besar/kecil tidak berpengaruh.</p>';
         else if (type === 'uraian') b.innerHTML = '<label for="eRub">Pedoman penilaian <span class="muted">(opsional)</span></label><textarea id="eRub" rows="3" placeholder="Poin penting yang harus ada di jawaban">' + esc(cur && cur.rubric || '') + '</textarea>';
+        else if (type === 'pgk_kategori') {
+          const st = ct.statements || ['', '', ''], vs = k.values || [];
+          b.innerHTML = '<label>Pernyataan <span class="muted">(B = benar, S = salah)</span></label><div id="sts">' + st.map((t, j) => srow(t, vs[j] ?? 0)).join('') + '</div><button type="button" id="addSt" style="margin-top:4px">+ Tambah pernyataan</button>';
+        }
         else if (type === 'menjodohkan') {
           const L2 = ct.left || ['', '', ''], pairs = k.pairs || [];
           const rows = L2.map((l, j) => { const p = pairs.find((x) => x[0] === j); return [l, p && ct.right ? ct.right[p[1]] : (ct.right || [])[j] || '']; });
@@ -3636,6 +3656,12 @@ Jawaban: B
           if (t.id === 'addOpt') c.options.push('');
           else { const j = [...document.querySelectorAll('#opts .orow')].indexOf(t.closest('.orow')); if (c.options.length <= 2) return; c.options.splice(j, 1); c.marks = c.marks.filter((m) => m !== j).map((m) => m > j ? m - 1 : m); }
           $('eBody').innerHTML = optRows(c.options, c.marks, type === 'pgk_centang');
+        } else if (t.id === 'addSt') {
+          $('sts').insertAdjacentHTML('beforeend', srow('', 0));
+        } else if (t.dataset.b !== undefined) {
+          t.parentNode.querySelectorAll('button').forEach((m) => m.setAttribute('aria-pressed', String(m === t)));
+        } else if (t.classList.contains('rm') && t.closest('.srow')) {
+          if (document.querySelectorAll('#sts .srow').length > 2) t.closest('.srow').remove();
         } else if (t.id === 'addPr') {
           $('prs').insertAdjacentHTML('beforeend', '<div class="mrow"><input placeholder="Kiri"><span class="muted">→</span><input placeholder="Kanan"><button type="button" class="rm" aria-label="Hapus pasangan">✕</button></div>');
         } else if (t.classList.contains('rm') && t.closest('.mrow')) {
@@ -3707,6 +3733,10 @@ Jawaban: B
         if (type === 'benar_salah') b.correct = document.querySelector('#bs [aria-pressed="true"]').dataset.v === '1';
         if (type === 'isian') b.accepted = $('eAcc').value.split('|').map((x) => x.trim()).filter(Boolean);
         if (type === 'uraian') b.rubric = $('eRub').value.trim();
+        if (type === 'pgk_kategori') {
+          const rows = [...document.querySelectorAll('#sts .srow')].map((r) => [r.querySelector('input').value.trim(), r.querySelector('[aria-pressed="true"]').dataset.b === '0']).filter(([t]) => t);
+          b.statements = rows.map((r) => r[0]); b.values = rows.map((r) => r[1]);
+        }
         if (type === 'menjodohkan') { const rows = c.left.map((l, j) => [l, c.right[j]]).filter(([l, r]) => l && r); b.left = rows.map((r) => r[0]); b.right = rows.map((r) => r[1]); }
         const btn = $('edSave'); btn.disabled = true;
         try {
@@ -3739,9 +3769,11 @@ ${DOC_PARSER_JS}
         pg: ['TEMPLATE SOAL PILIHAN GANDA', '', '1. Ibu kota Indonesia adalah …', 'A. Bandung', 'B. Jakarta', 'C. Surabaya', 'D. Medan', 'Jawaban: B', '', '2. Hasil dari 7 × 8 adalah …', 'A. 54', 'B. 56', 'C. 58', 'D. 64', 'Jawaban: B'],
         pgk: ['TEMPLATE SOAL PILIHAN GANDA KOMPLEKS (jawaban lebih dari satu)', '', '1. Manakah yang termasuk hewan mamalia?', 'A. Kucing', 'B. Ayam', 'C. Paus', 'D. Katak', 'Jawaban: A, C'],
         bs: ['TEMPLATE SOAL BENAR / SALAH', '', '1. Matahari terbit dari arah timur.', 'Jawaban: Benar', '', '2. Air mendidih pada suhu 50 °C.', 'Jawaban: Salah'],
+        bst: ['TEMPLATE SOAL BENAR / SALAH TABEL (beberapa pernyataan)', '', '1. Tentukan benar atau salah pernyataan berikut.', 'Satuan SI untuk massa adalah kilogram. (B)', 'Watt adalah satuan energi. (S)', 'Kecepatan termasuk besaran vektor. (B)'],
+        mj: ['TEMPLATE SOAL MENJODOHKAN', '', '1. Jodohkan tokoh dengan perannya.', 'Ki Hajar Dewantara -> Bapak Pendidikan Nasional', 'R.A. Kartini -> Pelopor emansipasi perempuan', 'Ir. Soekarno -> Proklamator kemerdekaan'],
         isian: ['TEMPLATE SOAL ISIAN SINGKAT DAN URAIAN', '', '1. Ibu kota Jawa Timur adalah …', 'Jawaban: Surabaya', '', '2. Jelaskan proses terjadinya hujan!', '(soal tanpa pilihan dan tanpa jawaban = uraian, dinilai guru)'],
       };
-      TPL.semua = [].concat(TPL.pg, [''], TPL.pgk.slice(2).map((x) => x.replace(/^1\\\./, '3.')), [''], TPL.bs.slice(2).map((x) => x.replace(/^1\\\./, '4.').replace(/^2\\\./, '5.')), [''], TPL.isian.slice(2).map((x) => x.replace(/^1\\\./, '6.').replace(/^2\\\./, '7.')));
+      TPL.semua = [].concat(TPL.pg, [''], TPL.pgk.slice(2).map((x) => x.replace(/^1\\\./, '3.')), [''], TPL.bs.slice(2).map((x) => x.replace(/^1\\\./, '4.').replace(/^2\\\./, '5.')), [''], TPL.isian.slice(2).map((x) => x.replace(/^1\\\./, '6.').replace(/^2\\\./, '7.')), [''], TPL.bst.slice(2).map((x) => x.replace(/^1\\\./, '8.')), [''], TPL.mj.slice(2).map((x) => x.replace(/^1\\\./, '9.')));
       TPL.semua[0] = 'TEMPLATE SOAL CBT YUK (SEMUA TIPE)';
       document.getElementById('tplW')?.addEventListener('click', async (e) => {
         const k = e.target.closest('[data-tpl]')?.dataset.tpl; if (!k) return;

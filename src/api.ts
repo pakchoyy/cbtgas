@@ -564,6 +564,15 @@ function buildQuestion(body: Record<string, unknown>): BuiltQuestion | { error: 
     content = { text, html };
     answer_key = { manual: true };
     rubric = body.rubric ? String(body.rubric) : null;
+  } else if (type === "pgk_kategori") {
+    // Benar/Salah tabel: beberapa pernyataan, tiap pernyataan Benar atau Salah.
+    const statements = Array.isArray(body.statements) ? (body.statements as string[]).map((x) => String(x).trim()).filter(Boolean) : [];
+    const values = Array.isArray(body.values) ? (body.values as unknown[]).map((v) => (v === true || v === 0 || v === "benar" ? 0 : 1)) : [];
+    if (statements.length < 2 || values.length !== statements.length) {
+      return { error: "Benar/Salah tabel: butuh minimal 2 pernyataan, masing-masing Benar atau Salah.", status: 400 };
+    }
+    content = { text, statements, cats: ["Benar", "Salah"] };
+    answer_key = { values };
   } else if (type === "menjodohkan") {
     // Matching. left & right: string[]. pairs: array of [leftIdx, rightIdx] canonical.
     const left = Array.isArray(body.left) ? (body.left as string[]).filter(Boolean) : [];
@@ -1045,6 +1054,7 @@ function bodyFromStored(q: { type: string; content: Record<string, unknown>; ans
   else if (q.type === "benar_salah") b.correct = k.index === 0;
   else if (q.type === "pgk_centang") { b.options = ct.options; b.correct_indexes = k.correct; }
   else if (q.type === "isian") b.accepted = k.accepted;
+  else if (q.type === "pgk_kategori") { b.statements = ct.statements; b.values = ((k.values as number[]) ?? []).map((v) => v === 0); }
   else if (q.type === "uraian") b.rubric = q.rubric;
   else if (q.type === "menjodohkan") {
     const left = (ct.left as string[]) ?? [], right = (ct.right as string[]) ?? [];

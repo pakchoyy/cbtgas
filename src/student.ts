@@ -165,6 +165,13 @@ const page = (title: string, body: string) => `<!doctype html>
   .bsb i { font-style: normal; width: 30px; height: 30px; border-radius: 50%; display:grid; place-items:center; background: var(--paper); }
   .bsb.yes[aria-pressed="true"] { background: #DCFCE7; border-color: #16A34A; color: #166534; } .bsb.yes[aria-pressed="true"] i { background: #16A34A; color: #fff; }
   .bsb.no[aria-pressed="true"] { background: #FEE2E2; border-color: #DC2626; color: #991B1B; } .bsb.no[aria-pressed="true"] i { background: #DC2626; color: #fff; }
+  .bst { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .bsr { display:flex; align-items:center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); } .bsr:first-child { border-top: none; }
+  .bsn { width: 26px; height: 26px; border-radius: 8px; background: var(--paper); display:grid; place-items:center; font-weight: 800; font-size: 13px; flex: 0 0 auto; }
+  .bstx { flex: 1; min-width: 0; } .bsbtns { display:flex; gap: 6px; flex: 0 0 auto; }
+  .bsbtns button { min-height: 42px; min-width: 64px; padding: 0 10px; font-size: 14px; }
+  .bsbtns .yes[aria-pressed="true"] { background: #16A34A; border-color: #16A34A; color: #fff; } .bsbtns .no[aria-pressed="true"] { background: #DC2626; border-color: #DC2626; color: #fff; }
+  @media (max-width: 420px) { .bsr { flex-wrap: wrap; } .bsbtns { width: 100%; padding-left: 36px; } .bsbtns button { flex: 1; } }
   .mj { position: relative; display:grid; grid-template-columns: 1fr 40px 1fr; gap: 0; }
   .mjl { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
   .mjc { display:flex; flex-direction:column; gap: 10px; } .mjc:last-child { grid-column: 3; }
@@ -1166,6 +1173,23 @@ student.get("/s/take/:sid", async (c) => {
             wrap.appendChild(b);
           });
           el.appendChild(wrap);
+        } else if (q.type === 'pgk_kategori') {
+          const st = q.content.statements || [], cats = q.content.cats || ['Benar', 'Salah'];
+          const cur = Array.isArray(A[q.id] && A[q.id].cats) ? A[q.id].cats.slice() : st.map(() => null);
+          const tip = document.createElement('p'); tip.className = 'qtip'; tip.innerHTML = '⚖ <b>Tentukan benar atau salah</b> untuk setiap pernyataan.'; el.appendChild(tip);
+          const tb = document.createElement('div'); tb.className = 'bst';
+          st.forEach((t, i) => {
+            const row = document.createElement('div'); row.className = 'bsr';
+            row.innerHTML = '<span class="bsn">' + (i + 1) + '</span><span class="bstx">' + mdRender(t) + '</span><span class="bsbtns">' +
+              cats.map((c, k) => '<button type="button" class="' + (k === 0 ? 'yes' : 'no') + '" data-k="' + k + '" aria-pressed="' + (cur[i] === k) + '">' + escapeHtml(c) + '</button>').join('') + '</span>';
+            row.querySelector('.bsbtns').addEventListener('click', (e) => {
+              const b = e.target.closest('button'); if (!b) return;
+              cur[i] = +b.dataset.k; row.querySelectorAll('.bsbtns button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+              save(q.id, { cats: cur.slice() });
+            });
+            tb.appendChild(row);
+          });
+          el.appendChild(tb);
         } else if (q.type === 'pg') {
           q.content.options.forEach((o, k) => {
             const checked = A[q.id] && A[q.id].index === k ? 'checked' : '';
@@ -1388,6 +1412,7 @@ student.get("/s/take/:sid", async (c) => {
       // Soal dianggap selesai bila dijawab lengkap (menjodohkan: semua pasangan terisi).
       const done = (q) => q.type === 'menjodohkan'
         ? Array.isArray(A[q.id]?.pairs) && A[q.id].pairs.length >= (q.content.left || []).length
+        : q.type === 'pgk_kategori' ? Array.isArray(A[q.id]?.cats) && A[q.id].cats.filter((x) => x !== null).length >= (q.content.statements || []).length
         : hasAnswer(q.id);
       const finish = document.getElementById('finish');
       function openFinish() {
@@ -1609,7 +1634,7 @@ student.post("/s/take/:sid/answer", async (c) => {
   const sessionId = c.req.param("sid");
   const body = await c.req.json().catch(() => null) as null | {
     question_id: string; index?: number; text?: string;
-    selected?: number[]; pairs?: [number, number][];
+    selected?: number[]; pairs?: [number, number][]; cats?: Array<number | null>;
     hint_used?: boolean; note?: string;
   };
   if (!body?.question_id) return c.json({ error: "bad body" }, 400);
@@ -1619,6 +1644,7 @@ student.post("/s/take/:sid/answer", async (c) => {
   if (typeof body.note === "string") ans.note = body.note;
   if (Array.isArray(body.selected)) ans.selected = body.selected.filter((n) => Number.isInteger(n));
   if (Array.isArray(body.pairs)) ans.pairs = body.pairs.filter((p) => Array.isArray(p) && p.length === 2);
+  if (Array.isArray(body.cats)) ans.cats = body.cats.slice(0, 30).map((v) => (v === 0 || v === 1 ? v : null));
   if (body.hint_used === true) ans.hint_used = true;
   if (Object.keys(ans).length === 0) return c.json({ error: "jawaban kosong" }, 400);
 
