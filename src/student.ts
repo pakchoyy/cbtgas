@@ -158,6 +158,20 @@ const page = (title: string, body: string) => `<!doctype html>
   .legend { display:flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--mut); margin: -8px 0 16px; }
   .legend i { display:inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; border: 1.5px solid var(--line); }
   .legend i.a { background: var(--brand); border-color: var(--brand); } .legend i.f { background: #F59E0B; border-color: #F59E0B; }
+  .qtip { background: var(--soft); color: var(--fg); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin: 4px 0 12px; }
+  .qtip .n { float: right; font-weight: 800; color: var(--brand); }
+  .bsw { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .bsb { min-height: 64px; font-size: 17px; font-weight: 700; border-radius: 14px; gap: 10px; }
+  .bsb i { font-style: normal; width: 30px; height: 30px; border-radius: 50%; display:grid; place-items:center; background: var(--paper); }
+  .bsb.yes[aria-pressed="true"] { background: #DCFCE7; border-color: #16A34A; color: #166534; } .bsb.yes[aria-pressed="true"] i { background: #16A34A; color: #fff; }
+  .bsb.no[aria-pressed="true"] { background: #FEE2E2; border-color: #DC2626; color: #991B1B; } .bsb.no[aria-pressed="true"] i { background: #DC2626; color: #fff; }
+  .mj { position: relative; display:grid; grid-template-columns: 1fr 40px 1fr; gap: 0; }
+  .mjl { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+  .mjc { display:flex; flex-direction:column; gap: 10px; } .mjc:last-child { grid-column: 3; }
+  .mjb { justify-content: flex-start; text-align: left; white-space: normal; gap: 10px; min-height: 56px; padding: 10px 12px; border-radius: 14px; font-weight: 500; position: relative; z-index: 1; }
+  .mjb i { font-style: normal; flex: 0 0 auto; width: 28px; height: 28px; border-radius: 8px; display:grid; place-items:center; font-weight: 800; font-size: 13px; background: var(--paper); }
+  .mjb.on { border-color: var(--c); } .mjb.on i { background: var(--c); color: #fff; }
+  .mjb.pick { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 30%, transparent); }
   button.ragu { background: #FEF3C7; border-color: #FCD34D; color: #92400E; }
   .eh-btn.done { background: #fff; border-color: #fff; color: #0F172A; }
   .eh-row + .eh-row { justify-content: flex-start; gap: 8px; } .eh-row + .eh-row .eh-note { flex: 1; }
@@ -1141,7 +1155,18 @@ student.get("/s/take/:sid", async (c) => {
           au.style.cssText = 'width:100%; margin:8px 0';
           el.appendChild(au);
         }
-        if (q.type === 'pg' || q.type === 'benar_salah') {
+        if (q.type === 'benar_salah') {
+          const tip = document.createElement('p'); tip.className = 'qtip'; tip.innerHTML = '⚖ <b>Benar atau salah?</b> Ketuk salah satu.'; el.appendChild(tip);
+          const wrap = document.createElement('div'); wrap.className = 'bsw';
+          q.content.options.forEach((o, k) => {
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'bsb ' + (/salah/i.test(o) ? 'no' : 'yes');
+            b.setAttribute('aria-pressed', String(!!(A[q.id] && A[q.id].index === k)));
+            b.innerHTML = '<i>' + (/salah/i.test(o) ? '✕' : '✓') + '</i>' + escapeHtml(o);
+            b.onclick = () => { wrap.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); save(q.id, { index: k }); };
+            wrap.appendChild(b);
+          });
+          el.appendChild(wrap);
+        } else if (q.type === 'pg') {
           q.content.options.forEach((o, k) => {
             const checked = A[q.id] && A[q.id].index === k ? 'checked' : '';
             const row = document.createElement('label'); row.className = 'opt';
@@ -1205,6 +1230,9 @@ student.get("/s/take/:sid", async (c) => {
           el.appendChild(ta);
         } else if (q.type === 'pgk_centang') {
           const sel = Array.isArray(A[q.id] && A[q.id].selected) ? A[q.id].selected.slice() : [];
+          const tip = document.createElement('p'); tip.className = 'qtip';
+          const setTip = (n) => { tip.innerHTML = '☑ <b>Pilihan ganda kompleks:</b> pilih <b>semua</b> jawaban yang benar (bisa lebih dari satu). <span class="n">' + n + ' dipilih</span>'; };
+          setTip(sel.length); el.appendChild(tip);
           q.content.options.forEach((o, k) => {
             const row = document.createElement('label'); row.className = 'opt';
             const checked = sel.includes(k) ? 'checked' : '';
@@ -1214,34 +1242,50 @@ student.get("/s/take/:sid", async (c) => {
               if (ev.target.checked) { if (!cur.includes(k)) cur.push(k); }
               else { const i = cur.indexOf(k); if (i >= 0) cur.splice(i, 1); }
               cur.sort((a, b) => a - b);
+              setTip(cur.length);
               save(q.id, { selected: cur });
             });
             el.appendChild(row);
           });
         } else if (q.type === 'menjodohkan') {
-          // Dua kolom: label kiri + dropdown kanan.
-          const pairs = Array.isArray(A[q.id] && A[q.id].pairs) ? A[q.id].pairs : [];
+          // Ketuk pernyataan kiri lalu jawaban kanan; pasangan digambar sebagai garis.
           const left = q.content.left || [], right = q.content.right || [];
-          const grid = document.createElement('div');
-          grid.style.cssText = 'display:grid; grid-template-columns: 1fr auto 1fr; gap:8px 12px; align-items:center';
-          left.forEach((lText, i) => {
-            const lab = document.createElement('div'); lab.innerHTML = '<b>' + (i+1) + '.</b> ' + escapeHtml(lText);
-            const arrow = document.createElement('div'); arrow.className = 'muted'; arrow.textContent = '→';
-            const sel = document.createElement('select');
-            sel.style.cssText = 'width:100%;padding:8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit';
-            sel.innerHTML = '<option value="">— pilih —</option>' + right.map((rText, k) =>
-              '<option value="'+k+'">' + String.fromCharCode(65+k) + '. ' + escapeHtml(rText) + '</option>').join('');
-            const existing = pairs.find((p) => p[0] === i);
-            if (existing) sel.value = String(existing[1]);
-            sel.addEventListener('change', () => {
-              const cur = (A[q.id] && A[q.id].pairs) ? A[q.id].pairs.filter((p) => p[0] !== i) : [];
-              if (sel.value !== '') cur.push([i, +sel.value]);
-              cur.sort((a, b) => a[0] - b[0]);
-              save(q.id, { pairs: cur });
+          let pairs = Array.isArray(A[q.id] && A[q.id].pairs) ? A[q.id].pairs.map((p) => p.slice()) : [];
+          const COL = ['#4F46E5', '#0EA5E9', '#16A34A', '#F59E0B', '#DB2777', '#7C3AED', '#0D9488', '#EA580C'];
+          const tip = document.createElement('p'); tip.className = 'qtip';
+          tip.innerHTML = '🔗 <b>Menjodohkan:</b> ketuk pernyataan di kiri, lalu ketuk jawabannya di kanan. Ketuk lagi untuk membatalkan.';
+          el.appendChild(tip);
+          const box = document.createElement('div'); box.className = 'mj';
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'mjl');
+          const L = document.createElement('div'), R = document.createElement('div'); L.className = 'mjc'; R.className = 'mjc';
+          box.append(L, svg, R);
+          let pick = null;
+          const mk = (txt, tag, side, i) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'mjb ' + side; b.dataset.i = i;
+            b.innerHTML = '<i>' + tag + '</i><span>' + escapeHtml(txt) + '</span>'; return b; };
+          left.forEach((t, i) => L.appendChild(mk(t, i + 1, 'l', i)));
+          right.forEach((t, k) => R.appendChild(mk(t, String.fromCharCode(65 + k), 'r', k)));
+          function paint() {
+            [...L.children].forEach((b) => { const i = +b.dataset.i, p = pairs.find((x) => x[0] === i);
+              b.style.setProperty('--c', p ? COL[i % COL.length] : ''); b.classList.toggle('on', !!p); b.classList.toggle('pick', pick === i); });
+            [...R.children].forEach((b) => { const k = +b.dataset.i, p = pairs.find((x) => x[1] === k);
+              b.style.setProperty('--c', p ? COL[p[0] % COL.length] : ''); b.classList.toggle('on', !!p); });
+            requestAnimationFrame(() => {
+              const bb = box.getBoundingClientRect(); svg.setAttribute('width', bb.width); svg.setAttribute('height', bb.height);
+              svg.innerHTML = pairs.map(([i, k]) => { const a = L.children[i]?.getBoundingClientRect(), c = R.children[k]?.getBoundingClientRect(); if (!a || !c) return '';
+                const x1 = a.right - bb.left, y1 = a.top + a.height / 2 - bb.top, x2 = c.left - bb.left, y2 = c.top + c.height / 2 - bb.top, m = (x1 + x2) / 2;
+                return '<path d="M' + x1 + ' ' + y1 + ' C' + m + ' ' + y1 + ' ' + m + ' ' + y2 + ' ' + x2 + ' ' + y2 + '" stroke="' + COL[i % COL.length] + '" stroke-width="3" fill="none" stroke-linecap="round"/>' +
+                  '<circle cx="' + x1 + '" cy="' + y1 + '" r="5" fill="' + COL[i % COL.length] + '"/><circle cx="' + x2 + '" cy="' + y2 + '" r="5" fill="' + COL[i % COL.length] + '"/>'; }).join('');
             });
-            grid.appendChild(lab); grid.appendChild(arrow); grid.appendChild(sel);
-          });
-          el.appendChild(grid);
+          }
+          const commit = () => { pairs.sort((a, b) => a[0] - b[0]); save(q.id, { pairs: pairs.map((p) => p.slice()) }); paint(); };
+          L.addEventListener('click', (e) => { const b = e.target.closest('.mjb'); if (!b) return; const i = +b.dataset.i;
+            if (pairs.some((x) => x[0] === i)) { pairs = pairs.filter((x) => x[0] !== i); pick = null; return commit(); }
+            pick = pick === i ? null : i; paint(); });
+          R.addEventListener('click', (e) => { const b = e.target.closest('.mjb'); if (!b) return; const k = +b.dataset.i;
+            if (pick === null) { if (pairs.some((x) => x[1] === k)) { pairs = pairs.filter((x) => x[1] !== k); commit(); } return; }
+            pairs = pairs.filter((x) => x[0] !== pick && x[1] !== k); pairs.push([pick, k]); pick = null; commit(); });
+          el.appendChild(box);
+          setTimeout(paint, 0); addEventListener('resize', paint);
         }
         // Tombol hint umum (semua tipe). Pakai hint kurangi 50% poin soal ini.
         if (q.content.hint) {

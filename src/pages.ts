@@ -5,7 +5,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
 import { requireStaff, requireOwner, AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, SITE_FOOTER, INSTALL_SHEET, UI_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, schoolYear } from "./ui";
+import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -1804,6 +1804,7 @@ pages.get("/app/exams/:id", async (c) => {
       <div class="row" style="margin-bottom:8px">
         <a class="btn" href="/api/exams/${esc(examId)}/scores.csv"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Unduh nilai</a>
         <a class="btn" href="/app/exams/${esc(examId)}/items"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18M7 15l4-4 3 3 5-6"/></svg>Analisis soal</a>
+        <a class="btn" href="/app/exams/${esc(examId)}/admin?doc=hadir"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6v3H9zM6 6h12v15H6zM9 12h6M9 16h4"/></svg>Daftar hadir &amp; berita acara</a>
         <a class="btn" href="/app/exams/${esc(examId)}/print"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M6 14h12v7H6z"/></svg>Cetak soal</a>
         <a class="btn" href="/app/exams/${esc(examId)}/lab"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v12H3zM8 20h8M12 16v4"/></svg>Mode lab</a>
       </div>
@@ -1931,6 +1932,76 @@ pages.get("/app/pin-resets", async (c) => {
 
 // Printable: semua soal ujian + opsional kunci (?key=1). Cetak atau simpan
 // sebagai PDF untuk cadangan paper-based.
+// Administrasi cetak: daftar hadir (?doc=hadir) atau berita acara (?doc=berita), per kelas.
+pages.get("/app/exams/:id/admin", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  if (!sess) return c.redirect("/");
+  const examId = c.req.param("id"), doc = c.req.query("doc") === "berita" ? "berita" : "hadir", kelas = c.req.query("kelas") ?? "";
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const [e, sc, cls] = await Promise.all([
+      tx`select title, kind, duration_minutes, starts_at from exams where id = ${examId}`,
+      tx`select name from schools where id = ${sess.sid}`,
+      tx`select c.id, c.name, c.year from exam_classes ec join classes c on c.id = ec.class_id where ec.exam_id = ${examId} order by c.name`,
+    ]);
+    if (!e.length) return null;
+    const cl = (cls as unknown as Array<{ id: string; name: string; year: string }>);
+    const cur = cl.find((x) => x.id === kelas) ?? cl[0];
+    const st = cur ? await tx`select st.name, st.nisn, st.username, es.status from students st
+      left join exam_sessions es on es.student_id = st.id and es.exam_id = ${examId}
+      where st.class_id = ${cur.id} and st.active order by st.name` : [];
+    return { e: e[0], school: (sc[0] as { name: string }).name, cl, cur, st };
+  });
+  if (!data) return c.notFound();
+  const e = data.e as { title: string; kind: string; duration_minutes: number; starts_at: string | null };
+  const st = data.st as unknown as Array<{ name: string; nisn: string | null; username: string; status: string | null }>;
+  const cur = data.cur;
+  const day = e.starts_at ? new Date(e.starts_at).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta" }) : "";
+  const jam = e.starts_at ? new Date(e.starts_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }) : "";
+  const hadir = st.filter((x) => x.status).length;
+  const head = (t: string) => `<div class="kop"><div class="lg">${LOGO_MARK}</div><div><h2>${t}</h2><h3>${esc(kindLabel(e.kind).toUpperCase())}</h3><p>${esc(data.school)}${cur ? ` · Tahun pelajaran ${esc(cur.year)}` : ""}</p></div></div>`;
+  const info = `<table class="inf"><tr><td>Ujian</td><td>: ${esc(e.title)}</td><td>Hari/tanggal</td><td>: ${esc(day) || "____________"}</td></tr>
+    <tr><td>Kelas</td><td>: ${esc(cur?.name ?? "-")}</td><td>Pukul</td><td>: ${esc(jam) || "______"} (${e.duration_minutes} menit)</td></tr></table>`;
+  const sign = `<div class="ttd"><div><p>Pengawas,</p><br><br><br><p>(.................................)</p></div><div><p>Proktor / Kepala sekolah,</p><br><br><br><p>(.................................)</p></div></div>`;
+  const body = doc === "hadir" ? `${head("DAFTAR HADIR PESERTA")}${info}
+    <table class="adt"><thead><tr><th style="width:36px">No</th><th>Nama peserta</th><th style="width:110px">NISN / Username</th><th style="width:160px">Tanda tangan</th><th style="width:90px">Ket.</th></tr></thead>
+    <tbody>${st.map((x, i) => `<tr><td class="c">${i + 1}</td><td>${esc(x.name)}</td><td>${esc(x.nisn ?? x.username)}</td><td class="${i % 2 ? "r" : ""}">${i + 1}.</td><td></td></tr>`).join("") || `<tr><td colspan="5" class="c">Belum ada siswa di kelas ini.</td></tr>`}</tbody></table>${sign}`
+  : `${head("BERITA ACARA PELAKSANAAN")}
+    <p class="para">Pada hari ini ${esc(day) || "______________"} telah diselenggarakan <b>${esc(e.title)}</b> di ${esc(data.school)} mulai pukul ${esc(jam) || "______"} sampai dengan pukul ______, dengan rincian:</p>
+    <table class="inf wide">
+      <tr><td>Kelas</td><td>: ${esc(cur?.name ?? "-")}</td></tr>
+      <tr><td>Jumlah peserta seharusnya</td><td>: ${st.length} siswa</td></tr>
+      <tr><td>Jumlah hadir (ikut ujian)</td><td>: ${hadir || "____"} siswa</td></tr>
+      <tr><td>Jumlah tidak hadir</td><td>: ${hadir ? st.length - hadir : "____"} siswa</td></tr>
+      <tr><td>Nama yang tidak hadir</td><td>: ${hadir ? esc(st.filter((x) => !x.status).map((x) => x.name).join(", ") || "-") : "________________________"}</td></tr>
+    </table>
+    <p class="para">Catatan selama pelaksanaan ujian:</p><div class="box"></div>
+    <p class="para">Berita acara ini dibuat dengan sesungguhnya.</p>${sign}`;
+  return c.html(base(doc === "hadir" ? "Daftar hadir" : "Berita acara", `
+    <div class="noprint">
+      <a class="crumb" href="/app/exams/${esc(examId)}">‹ Detail ujian</a>
+      <div class="admbar">
+        <div class="seg">${[["hadir", "Daftar hadir"], ["berita", "Berita acara"]].map(([k, t]) => `<a class="btn${doc === k ? " primary" : ""}" href="?doc=${k}&kelas=${esc(cur?.id ?? "")}">${t}</a>`).join("")}</div>
+        <select onchange="location.href='?doc=${doc}&kelas='+this.value" aria-label="Kelas">${(data.cl as Array<{ id: string; name: string }>).map((x) => `<option value="${esc(x.id)}" ${x.id === cur?.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
+        <button class="primary" onclick="print()">Cetak / simpan PDF</button>
+      </div>
+    </div>
+    <div class="paperwrap"><div class="paper">${cur ? body : `<p>Ujian ini belum punya kelas peserta.</p>`}</div></div>
+    <style>
+      .admbar { display:flex; gap: 8px; flex-wrap: wrap; align-items:center; margin-bottom: 16px; } .admbar .seg { display:flex; gap: 6px; } .admbar select { width: auto; }
+      .paper { background: #fff; color: #111; max-width: 800px; margin: 0 auto; padding: 36px 40px; border-radius: 6px; box-shadow: var(--shadow); font-size: 13.5px; }
+      .kop { display:flex; gap: 16px; align-items:center; border-bottom: 3px double #111; padding-bottom: 10px; margin-bottom: 14px; text-align:center; }
+      .kop > div:last-child { flex: 1; } .kop .lg svg { width: 56px; height: 56px; } .kop h2, .kop h3 { margin: 0; font-size: 16px; color: #111; } .kop p { margin: 2px 0 0; }
+      .inf { width: 100%; margin-bottom: 12px; } .inf td { padding: 3px 4px; } .inf.wide td:first-child { width: 220px; }
+      .adt { width: 100%; border-collapse: collapse; display: table; } .adt th, .adt td { border: 1px solid #111; padding: 6px 8px; color: #111; } .adt th { background: #F1F5F9; } .adt .c { text-align:center; } .adt td.r { padding-left: 70px; }
+      .paperwrap { overflow-x: auto; } .paper { min-width: 680px; }
+      .para { line-height: 1.8; } .box { border: 1px solid #111; height: 120px; margin-bottom: 12px; }
+      .ttd { display:flex; justify-content:space-between; margin-top: 28px; text-align:center; } .ttd p { margin: 0; }
+      @media print { body.app { padding: 0 !important; } .mbar, .bnav, .side, .noprint, .app-foot, .install { display: none !important; } main { padding: 0 !important; max-width: none !important; } .paper { box-shadow: none; padding: 0; min-width: 0; } }
+    </style>
+  `, { role: sess.role }));
+});
+
 pages.get("/app/exams/:id/print", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
@@ -3308,7 +3379,13 @@ Jawaban: B
             <li>Dua huruf atau lebih (A, C) jadi PG kompleks. Benar/Salah, teks isian, dan soal tanpa pilihan (uraian) juga dikenali.</li>
             <li>Gambar dan rumus di dokumen belum ikut terbaca. Tambahkan lewat tombol Edit setelah disimpan.</li>
           </ul>
-          <label class="btn primary" style="margin:6px 0 0">Pilih file Word atau PDF<input type="file" id="upDocFile" accept=".docx,.pdf" hidden></label>
+          <p class="hint" style="margin:10px 0 6px"><b>Template Word</b> (unduh, isi, lalu upload lagi):</p>
+          <div class="tplw" id="tplW">
+            <button type="button" data-tpl="pg">Pilihan ganda</button><button type="button" data-tpl="pgk">PG kompleks</button>
+            <button type="button" data-tpl="bs">Benar / Salah</button><button type="button" data-tpl="isian">Isian &amp; uraian</button>
+            <button type="button" data-tpl="semua">Semua tipe</button>
+          </div>
+          <label class="btn primary" style="margin:12px 0 0">Pilih file Word atau PDF<input type="file" id="upDocFile" accept=".docx,.pdf" hidden></label>
         </div>
         <div id="upPrev"></div>
       </div>
@@ -3316,6 +3393,7 @@ Jawaban: B
     </dialog>
 
     <style>
+      .tplw { display:flex; flex-wrap: wrap; gap: 6px; } .tplw button { min-height: 38px; padding: 6px 12px; font-size: 13.5px; border-radius: 999px; }
       .howbank { background: var(--soft); border-radius: 16px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
       .howbank ol { margin: 0; padding-left: 20px; } .howbank li { margin: 3px 0; }
       .bankact { display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
@@ -3656,6 +3734,29 @@ ${DOC_PARSER_JS}
               : '<p class="hint">Tidak ada teks yang bisa dibaca. Jika PDF berupa hasil scan/foto, ketik ulang di Word atau ekspor dari Word ke PDF.</p>');
         $('upGo').disabled = !rows.length;
       }
+      // Template Word (.docx) dibuat langsung di browser.
+      const TPL = {
+        pg: ['TEMPLATE SOAL PILIHAN GANDA', '', '1. Ibu kota Indonesia adalah …', 'A. Bandung', 'B. Jakarta', 'C. Surabaya', 'D. Medan', 'Jawaban: B', '', '2. Hasil dari 7 × 8 adalah …', 'A. 54', 'B. 56', 'C. 58', 'D. 64', 'Jawaban: B'],
+        pgk: ['TEMPLATE SOAL PILIHAN GANDA KOMPLEKS (jawaban lebih dari satu)', '', '1. Manakah yang termasuk hewan mamalia?', 'A. Kucing', 'B. Ayam', 'C. Paus', 'D. Katak', 'Jawaban: A, C'],
+        bs: ['TEMPLATE SOAL BENAR / SALAH', '', '1. Matahari terbit dari arah timur.', 'Jawaban: Benar', '', '2. Air mendidih pada suhu 50 °C.', 'Jawaban: Salah'],
+        isian: ['TEMPLATE SOAL ISIAN SINGKAT DAN URAIAN', '', '1. Ibu kota Jawa Timur adalah …', 'Jawaban: Surabaya', '', '2. Jelaskan proses terjadinya hujan!', '(soal tanpa pilihan dan tanpa jawaban = uraian, dinilai guru)'],
+      };
+      TPL.semua = [].concat(TPL.pg, [''], TPL.pgk.slice(2).map((x) => x.replace(/^1\\\./, '3.')), [''], TPL.bs.slice(2).map((x) => x.replace(/^1\\\./, '4.').replace(/^2\\\./, '5.')), [''], TPL.isian.slice(2).map((x) => x.replace(/^1\\\./, '6.').replace(/^2\\\./, '7.')));
+      TPL.semua[0] = 'TEMPLATE SOAL CBT YUK (SEMUA TIPE)';
+      document.getElementById('tplW')?.addEventListener('click', async (e) => {
+        const k = e.target.closest('[data-tpl]')?.dataset.tpl; if (!k) return;
+        try {
+          await loadJs('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', () => window.JSZip);
+          const x = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+          const para = TPL[k].map((t, i) => '<w:p>' + (i === 0 ? '<w:pPr><w:jc w:val="center"/></w:pPr>' : '') + '<w:r>' + (i === 0 || /^Jawaban:/.test(t) ? '<w:rPr><w:b/></w:rPr>' : '') + '<w:t xml:space="preserve">' + x(t) + '</w:t></w:r></w:p>').join('');
+          const zip = new window.JSZip();
+          zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+          zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+          zip.file('word/document.xml', '<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' + para + '</w:body></w:document>');
+          const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+          const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'template-soal-' + k + '.docx'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        } catch (x) { toast(x.message, 'err'); }
+      });
       $('upDocFile').addEventListener('change', async (e) => {
         const f = e.target.files[0]; e.target.value = ''; if (!f) return;
         $('upPrev').innerHTML = '<p class="muted" style="margin-top:14px">Membaca ' + esc(f.name) + '…</p>';
