@@ -13,6 +13,26 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 // Warna merek sekolah yang sedang login (staf atau siswa). Halaman memuat
 // file ini setelah CSS dasar, jadi cukup menimpa --brand.
+// Logo sekolah (disimpan sebagai data URI di schools.logo_key), untuk staf dan siswa yang login.
+app.get("/logo", async (c) => {
+  const cookie = c.req.header("Cookie");
+  const tok = readCookie(cookie, "cbt_sess") ?? readCookie(cookie, "cbt_sstu");
+  const s = tok ? await verify(tok, c.env.SESSION_SECRET) : null;
+  if (!s?.sid) return c.notFound();
+  const key = new Request(`https://cache.cbt-yuk/logo/${s.sid}`);
+  const hit = await edgeCache().match(key);
+  if (hit) return new Response(hit.body, hit);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) => tx`select logo_key from schools where id = ${s.sid}`);
+  const uri = (r[0] as { logo_key: string | null } | undefined)?.logo_key;
+  const m = uri?.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/);
+  if (!m) return c.notFound();
+  const bytes = Uint8Array.from(atob(m[2]), (ch) => ch.charCodeAt(0));
+  const res = new Response(bytes, { headers: { "Content-Type": m[1], "Cache-Control": "private, max-age=3600" } });
+  c.executionCtx.waitUntil(edgeCache().put(key, res.clone()));
+  return res;
+});
+
 app.get("/brand.css", async (c) => {
   const cookie = c.req.header("Cookie");
   const tok = readCookie(cookie, "cbt_sess") ?? readCookie(cookie, "cbt_sstu");

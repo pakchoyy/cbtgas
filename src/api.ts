@@ -33,12 +33,13 @@ api.patch("/api/school", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "Hanya admin." }, 403);
   const b = await c.req.json().catch(() => null) as null | {
-    name?: string; level?: string; color?: string; operator_name?: string; operator_phone?: string; npsn?: string | null;
+    name?: string; level?: string; color?: string; operator_name?: string; operator_phone?: string; npsn?: string | null; logo?: string | null;
   };
   if (!b) return c.json({ error: "bad body" }, 400);
   if (b.color && !(b.color in BRAND_COLORS)) return c.json({ error: "Warna tidak dikenal." }, 400);
   if (b.level && !["SD", "SMP", "SMA", "CAMPURAN"].includes(b.level)) return c.json({ error: "Jenjang tidak dikenal." }, 400);
   if (b.name !== undefined && !b.name.trim()) return c.json({ error: "Nama sekolah wajib diisi." }, 400);
+  if (b.logo && (!/^data:image\/(png|jpeg|webp);base64,/.test(b.logo) || b.logo.length > 200_000)) return c.json({ error: "Logo harus gambar PNG/JPG maksimal sekitar 140 KB." }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const u = await tx`update schools set
@@ -47,12 +48,13 @@ api.patch("/api/school", async (c) => {
         color = coalesce(${b.color ?? null}, color),
         operator_name = coalesce(${b.operator_name?.trim() || null}, operator_name),
         operator_phone = coalesce(${b.operator_phone?.trim() || null}, operator_phone),
-        npsn = case when ${b.npsn !== undefined} then ${b.npsn?.trim() || null} else npsn end
+        npsn = case when ${b.npsn !== undefined} then ${b.npsn?.trim() || null} else npsn end,
+        logo_key = case when ${b.logo !== undefined} then ${b.logo || null} else logo_key end
       where id = ${s.sid} returning name, level, color`;
-    await audit(tx, actorFromSession(s), "school.update", "school", s.sid, b as Record<string, unknown>);
+    await audit(tx, actorFromSession(s), "school.update", "school", s.sid, { ...b, logo: b.logo === undefined ? undefined : b.logo ? "(gambar)" : null } as Record<string, unknown>);
     return u[0];
   });
-  c.executionCtx.waitUntil(edgeCache().delete(new Request(`https://cache.cbt-yuk/brand/${s.sid}`)));
+  c.executionCtx.waitUntil(Promise.all([edgeCache().delete(new Request(`https://cache.cbt-yuk/brand/${s.sid}`)), edgeCache().delete(new Request(`https://cache.cbt-yuk/logo/${s.sid}`))]));
   return c.json(r);
 });
 

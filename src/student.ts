@@ -141,6 +141,8 @@ const page = (title: string, body: string) => `<!doctype html>
   .band .brand .logo { background: #fff; border-radius: 9px; padding: 3px; } .band .brand span { color: #fff; }
   .band h1 { color: #fff; font-size: clamp(24px, 6vw, 30px); margin: 18px 0 4px; }
   .band p { color: rgba(255,255,255,.85); margin: 0; }
+  .sbrand { display:flex; align-items:center; gap: 10px; min-width: 0; } .sbrand img { width: 40px; height: 40px; object-fit: contain; background: #fff; border-radius: 10px; padding: 3px; flex: 0 0 auto; }
+  .sbrand b { color: #fff; font-size: 16px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .band-top { display:flex; justify-content:space-between; align-items:center; gap: 10px; }
   .chip { font-size: 12.5px; font-weight: 700; padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.25); }
   a.chip, a.chip:visited { color: #fff; text-decoration: none; min-height: 36px; display: inline-flex; align-items: center; }
@@ -183,6 +185,7 @@ const page = (title: string, body: string) => `<!doctype html>
   .mjb.on { border-color: var(--c); } .mjb.on i { background: var(--c); color: #fff; }
   .mjb.pick { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 30%, transparent); }
   button.ragu { background: #FEF3C7; border-color: #FCD34D; color: #92400E; }
+  .ehlogo { width: 30px; height: 30px; object-fit: contain; background: #fff; border-radius: 8px; padding: 2px; vertical-align: middle; margin-right: 8px; }
   .eh-btn.done { background: #fff; border-color: #fff; color: #0F172A; }
   .eh-row + .eh-row { justify-content: flex-start; gap: 8px; } .eh-row + .eh-row .eh-note { flex: 1; }
   @media (max-width: 480px) { #exitBtn span, #chatBtn > span:first-of-type, #gridBtn > span { display: none; } .eh-btn { padding: 6px 10px; } }
@@ -224,6 +227,10 @@ const lockedCard = (title: string, sessionId: string) => `
     });
   </script>`;
 
+// Merek sekolah di pita atas: logo + nama sekolah (bila ada), selain itu logo CBT Yuk.
+const schoolBrand = (name?: string, hasLogo?: boolean) => name
+  ? `<span class="sbrand">${hasLogo ? `<img src="/logo" alt="">` : ""}<b>${esc(name)}</b></span>` : `<span class="brand">${LOGO}</span>`;
+
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[ch]!));
 }
@@ -236,8 +243,8 @@ student.get("/s", async (c) => {
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
-    const me = await tx`select s.name, c.name as class_name, s.class_id
-                        from students s left join classes c on c.id = s.class_id where s.id = ${stu.uid}`;
+    const me = await tx`select s.name, c.name as class_name, s.class_id, sc.name as school, sc.logo_key is not null as has_logo
+                        from students s left join classes c on c.id = s.class_id join schools sc on sc.id = s.school_id where s.id = ${stu.uid}`;
     // Semua ujian untuk kelas siswa (kecuali draf), beserta sesi dan nilainya.
     const exams = await tx`
       select e.id, e.title, e.duration_minutes, e.kind, e.status, e.starts_at, e.ends_at, e.use_token, e.show_score,
@@ -255,7 +262,7 @@ student.get("/s", async (c) => {
 
   type Ex = { id: string; title: string; duration_minutes: number; kind: string; status: string; starts_at: string | null; ends_at: string | null;
     use_token: boolean; show_score: boolean; qn: number; session_id: string | null; session_status: string | null; final_score: string | null };
-  const me = data.me as { name: string; class_name: string | null; class_id: string | null } | undefined;
+  const me = data.me as { name: string; class_name: string | null; class_id: string | null; school: string; has_logo: boolean } | undefined;
   const now = Date.now();
   const fmt = (d: string) => new Date(d).toLocaleString("id-ID", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" });
   const err = c.req.query("err"), errEx = c.req.query("ex");
@@ -291,7 +298,7 @@ student.get("/s", async (c) => {
 
   return c.html(page("Portal Siswa", `
     <section class="band">
-      <div class="band-top"><span class="brand">${LOGO}</span>
+      <div class="band-top">${schoolBrand(me?.school, me?.has_logo)}
         <div class="row" style="margin:0"><a class="btn ghostbtn" href="/s/me">Ganti PIN</a>
         <form method="post" action="/s/logout" style="margin:0"><button type="submit" class="ghostbtn">Keluar</button></form></div></div>
       <div class="who"><span class="avatar">${esc(initials)}</span>
@@ -348,6 +355,7 @@ student.get("/s/done/:sid", async (c) => {
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) => tx`
     select e.title, e.show_score, es.started_at, es.finished_at, sc.final_score, st.name, c.name as class_name,
+           (select logo_key is not null from schools where id = es.school_id) as has_logo, (select name from schools where id = es.school_id) as school,
            (select count(*) from answers a where a.session_id = es.id)::int as answered,
            coalesce(jsonb_array_length(case when jsonb_typeof(es.question_order) = 'object' then es.question_order->'order'
                                             when jsonb_typeof(es.question_order) = 'array' then es.question_order else '[]'::jsonb end), 0)::int as total,
@@ -356,7 +364,7 @@ student.get("/s/done/:sid", async (c) => {
     left join classes c on c.id = st.class_id left join scores sc on sc.session_id = es.id
     where es.id = ${sid} and es.student_id = ${stu.uid}`);
   const d = r[0] as undefined | { title: string; show_score: boolean; started_at: string; finished_at: string | null; final_score: string | null;
-    name: string; class_name: string | null; answered: number; total: number; has_essay: boolean };
+    name: string; class_name: string | null; answered: number; total: number; has_essay: boolean; has_logo: boolean; school: string };
   if (!d) return c.redirect("/s");
   const secs = d.finished_at ? Math.max(0, Math.round((new Date(d.finished_at).getTime() - new Date(d.started_at).getTime()) / 1000)) : 0;
   const lama = secs >= 3600 ? `${Math.floor(secs / 3600)}j ${Math.floor(secs % 3600 / 60)}m` : `${Math.floor(secs / 60)}m ${secs % 60}d`;
@@ -364,6 +372,7 @@ student.get("/s/done/:sid", async (c) => {
   const score = d.final_score != null ? String(Math.round(+d.final_score * 10) / 10) : "-";
   return c.html(page("Ujian selesai", `
     <div class="card done">
+      ${d.has_logo ? `<img src="/logo" alt="" style="width:56px;height:56px;object-fit:contain;display:block;margin:0 auto 6px">` : ""}<p class="muted" style="margin:0 0 12px;font-weight:700">${esc(d.school)}</p>
       <div class="ok">✓</div>
       <h1>Ujian selesai</h1>
       <p class="muted">Jawaban Anda sudah dikumpulkan dan tersimpan.</p>
@@ -960,7 +969,8 @@ student.get("/s/take/:sid", async (c) => {
     const s = await tx`
       select es.id, es.status, es.deadline_at, es.question_order,
              es.violation_count, es.paused_at, es.lock_count,
-             e.title, e.anticheat_level, e.lock_after_violations
+             e.title, e.anticheat_level, e.lock_after_violations,
+             (select logo_key is not null from schools where id = es.school_id) as has_logo
       from exam_sessions es join exams e on e.id = es.exam_id
       where es.id = ${sessionId} and es.student_id = ${stu.uid}`;
     if (s.length === 0) return null;
@@ -1021,6 +1031,7 @@ student.get("/s/take/:sid", async (c) => {
     return {
       title: sess.title, deadline: sess.deadline_at, questions, answers, flags,
       anticheat: sess.anticheat_level, limit: sess.lock_after_violations || 3,
+      has_logo: (sess as unknown as { has_logo: boolean }).has_logo,
       violations: sess.violation_count, locks: (sess as unknown as { lock_count: number }).lock_count,
       paused_at: (sess as unknown as { paused_at: string | null }).paused_at,
     };
@@ -1063,7 +1074,7 @@ student.get("/s/take/:sid", async (c) => {
     </dialog>
     <header class="exam-head">
       <div class="eh-row">
-        <h1>${esc(data.title!)}</h1>
+        <h1>${data.has_logo ? `<img class="ehlogo" src="/logo" alt="">` : ""}${esc(data.title!)}</h1>
         <span class="timer" id="t" aria-live="off">--:--</span>
       </div>
       <div class="eh-row">

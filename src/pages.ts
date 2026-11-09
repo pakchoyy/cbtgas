@@ -1284,13 +1284,13 @@ pages.get("/app/settings", async (c) => {
   const admin = sess.role === "admin";
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const [rows, pend] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => Promise.all([
-    tx`select name, level, npsn, color, operator_name, operator_phone, plan, created_at from schools where id = ${sess.sid}`,
+    tx`select name, level, npsn, color, operator_name, operator_phone, plan, created_at, logo_key is not null as has_logo from schools where id = ${sess.sid}`,
     tx`select count(*)::int as n from pin_resets where status = 'pending'`,
   ]));
   const pending = (pend[0] as { n: number }).n;
   const tile = (href: string, title: string, desc: string, d: string, badge = "") =>
     `<a class="tile" href="${href}"><span class="ti">${icon(d)}</span><span class="tt"><b>${title}${badge}</b><span>${desc}</span></span><span class="chev" aria-hidden="true">›</span></a>`;
-  const sc = rows[0] as { name: string; level: string; npsn: string | null; color: string; operator_name: string; operator_phone: string; plan: string; created_at: string };
+  const sc = rows[0] as { name: string; level: string; npsn: string | null; color: string; operator_name: string; operator_phone: string; plan: string; created_at: string; has_logo: boolean };
   const swatches = Object.entries(BRAND_COLORS).map(([k, v]) => `
     <label class="sw"><input type="radio" name="color" value="${k}" ${sc.color === k ? "checked" : ""}>
       <span style="--c:${v.hex}"></span>${v.label}</label>`).join("");
@@ -1299,7 +1299,7 @@ pages.get("/app/settings", async (c) => {
     <div class="page-head"><div><h1>Pengaturan</h1><p>${esc(sc.name)} · paket ${esc(sc.plan === "trial" ? "uji coba" : sc.plan)}</p></div></div>
     <div class="tiles">
       ${admin ? tile("#profil", "Profil sekolah", "Nama, jenjang, NPSN, dan kontak operator", "M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6") : ""}
-      ${admin ? tile("#tampilan", "Tampilan", "Warna merek sekolah untuk tombol dan menu", "M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.6 0-1-.8-1.4-.8-2.3 0-.9.7-1.6 1.6-1.6H17a4 4 0 0 0 4-4c0-4.7-4-8.5-9-8.5zM7.5 11.5h.01M10 7.5h.01M15 7.5h.01") : ""}
+      ${admin ? tile("#tampilan", "Tampilan", "Logo dan warna sekolah", "M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.6 0-1-.8-1.4-.8-2.3 0-.9.7-1.6 1.6-1.6H17a4 4 0 0 0 4-4c0-4.7-4-8.5-9-8.5zM7.5 11.5h.01M10 7.5h.01M15 7.5h.01") : ""}
       ${admin ? tile("/app/users", "Guru & admin", "Undang guru, pengawas, atau admin lain", "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0M19 8v6M16 11h6") : ""}
       ${tile("/app/pin-resets", "Reset PIN siswa", "Setujui permintaan siswa yang lupa PIN", "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4", pending ? ` <span class="pill closed">${pending}</span>` : "")}
       ${admin ? tile("/app/restore", "Backup & pulihkan", "Simpan cadangan data sekolah ke file", "M4 12a8 8 0 1 0 3-6.2M4 4v4h4") : ""}
@@ -1323,6 +1323,12 @@ pages.get("/app/settings", async (c) => {
     <dialog id="tamp" class="sheet" aria-labelledby="tampT"><form id="ft" style="display:flex;flex-direction:column;min-height:0;flex:1">
       <div class="sheet-head"><h2 id="tampT">Tampilan</h2><button type="button" class="x" data-x aria-label="Tutup">✕</button></div>
       <div class="sheet-body">
+        <h3 style="margin:4px 0 6px">Logo sekolah</h3>
+        <div class="lgrow"><img id="lgImg" alt="Logo sekolah" ${sc.has_logo ? `src="/logo?v=${Date.now()}"` : "hidden"}><span id="lgNone" class="muted" ${sc.has_logo ? "hidden" : ""}>Belum ada logo</span>
+          <label class="btn">Pilih gambar<input type="file" id="lgFile" accept="image/png,image/jpeg,image/webp" hidden></label>
+          <button type="button" id="lgDel" class="danger" ${sc.has_logo ? "" : "hidden"}>Hapus</button></div>
+        <p class="muted" style="margin:6px 0 16px;font-size:13px">Tampil di layar siswa: beranda, saat ujian, dan layar selesai. Gambar persegi lebih rapi.</p>
+        <h3 style="margin:0 0 6px">Warna merek</h3>
         <p class="muted" style="margin-top:0">Warna merek dipakai untuk tombol, menu, dan pilihan jawaban siswa.</p>
         <div class="sws">${swatches}</div>
         <div class="prev"><button type="button" class="primary" tabindex="-1">Tombol utama</button><span class="pill scheduled">Terjadwal</span><span class="pv-opt"><i>A</i>Jawaban terpilih</span></div>
@@ -1341,6 +1347,7 @@ pages.get("/app/settings", async (c) => {
       .seg { display:flex; flex-wrap: wrap; gap: 6px; }
       .seg button { border-radius: 999px; min-height: 40px; }
       .seg button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+      .lgrow { display:flex; align-items:center; gap: 10px; flex-wrap: wrap; } .lgrow img { width: 64px; height: 64px; object-fit: contain; border: 1px solid var(--line); border-radius: 14px; background: #fff; padding: 4px; }
       .sws { display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
       .sw { display:flex; align-items:center; gap:10px; border:1.5px solid var(--line); border-radius: 12px; padding: 10px 12px; margin:0; cursor:pointer; font-weight:600; }
       .sw input { position:absolute; opacity:0; }
@@ -1369,6 +1376,25 @@ pages.get("/app/settings", async (c) => {
       const fs = document.getElementById('fs'), ft = document.getElementById('ft');
       fs?.addEventListener('submit', (e) => { e.preventDefault(); save(fs, () => toast('Profil sekolah tersimpan.', 'ok')); });
       ft?.addEventListener('change', (e) => { if (e.target.name === 'color') document.documentElement.style.setProperty('--brand', HEX[e.target.value]); });
+      // Logo: diperkecil ke 256 px di browser supaya ringan, lalu langsung disimpan.
+      const setLogo = async (logo) => {
+        const r = await fetch('/api/school', { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ logo }) });
+        const j = await r.json().catch(() => ({})); if (!r.ok) return toast(j.error || 'Gagal menyimpan logo.', 'err');
+        const im = document.getElementById('lgImg'); im.hidden = !logo; if (logo) im.src = logo;
+        document.getElementById('lgNone').hidden = !!logo; document.getElementById('lgDel').hidden = !logo;
+        toast(logo ? 'Logo tersimpan.' : 'Logo dihapus.', 'ok');
+      };
+      document.getElementById('lgFile')?.addEventListener('change', (e) => {
+        const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+        const img = new Image(); img.onload = () => {
+          const k = Math.min(1, 256 / Math.max(img.width, img.height)), cv = document.createElement('canvas');
+          cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+          let d = cv.toDataURL('image/png'); if (d.length > 190000) d = cv.toDataURL('image/jpeg', 0.85);
+          URL.revokeObjectURL(img.src); setLogo(d);
+        };
+        img.onerror = () => toast('Gambar tidak bisa dibaca.', 'err'); img.src = URL.createObjectURL(f);
+      });
+      document.getElementById('lgDel')?.addEventListener('click', async () => { if (await ask('Hapus logo sekolah?')) setLogo(null); });
       ft?.addEventListener('submit', (e) => { e.preventDefault(); save(ft, () => { saved = true; toast('Warna tersimpan.', 'ok'); }); });
     </script>
   `, { role: sess.role }));
