@@ -48,7 +48,7 @@ export const student = new Hono<{ Bindings: Bindings }>();
 // ===== HTML helpers =====
 
 const page = (title: string, body: string) => `<!doctype html>
-<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="id" translate="no" class="notranslate"><head><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · CBT Yuk</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#F5F7FB">
@@ -158,6 +158,9 @@ const page = (title: string, body: string) => `<!doctype html>
   .legend { display:flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--mut); margin: -8px 0 16px; }
   .legend i { display:inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; border: 1.5px solid var(--line); }
   .legend i.a { background: var(--brand); border-color: var(--brand); } .legend i.f { background: #F59E0B; border-color: #F59E0B; }
+  /* Teks soal tidak bisa diblok/disalin (mencegah salin ke penerjemah). */
+  #qbox { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #qbox input, #qbox textarea { -webkit-user-select: text; user-select: text; }
   .qtip { background: var(--soft); color: var(--fg); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin: 4px 0 12px; }
   .qtip .n { float: right; font-weight: 800; color: var(--brand); }
   .bsw { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }

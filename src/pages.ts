@@ -3743,7 +3743,9 @@ Jawaban: B
         else if (type === 'uraian') b.innerHTML = '<label for="eRub">Pedoman penilaian <span class="muted">(opsional)</span></label><textarea id="eRub" rows="3" placeholder="Poin penting yang harus ada di jawaban">' + esc(cur && cur.rubric || '') + '</textarea>';
         else if (type === 'pgk_kategori') {
           const st = ct.statements || ['', '', ''], vs = k.values || [];
-          b.innerHTML = '<label>Pernyataan <span class="muted">(B = benar, S = salah)</span></label><div id="sts">' + st.map((t, j) => srow(t, vs[j] ?? 0)).join('') + '</div><button type="button" id="addSt" style="margin-top:4px">+ Tambah pernyataan</button>';
+          const cs = (ct.cats || ['Benar', 'Salah']).join(' / ');
+          b.innerHTML = '<label for="eCats">Pilihan kategori</label><select id="eCats">' + ['Benar / Salah', 'Sesuai / Tidak sesuai', 'Fakta / Opini', 'Ya / Tidak', 'Setuju / Tidak setuju', 'Tepat / Tidak tepat'].map((x) => '<option' + (x === cs ? ' selected' : '') + '>' + x + '</option>').join('') + '</select>' +
+            '<label>Pernyataan <span class="muted">(tombol kiri = kategori pertama, kanan = kedua)</span></label><div id="sts">' + st.map((t, j) => srow(t, vs[j] ?? 0)).join('') + '</div><button type="button" id="addSt" style="margin-top:4px">+ Tambah pernyataan</button>';
         }
         else if (type === 'menjodohkan') {
           const L2 = ct.left || ['', '', ''], pairs = k.pairs || [];
@@ -3855,7 +3857,7 @@ Jawaban: B
         if (type === 'uraian') b.rubric = $('eRub').value.trim();
         if (type === 'pgk_kategori') {
           const rows = [...document.querySelectorAll('#sts .srow')].map((r) => [r.querySelector('input').value.trim(), r.querySelector('[aria-pressed="true"]').dataset.b === '0']).filter(([t]) => t);
-          b.statements = rows.map((r) => r[0]); b.values = rows.map((r) => r[1]);
+          b.statements = rows.map((r) => r[0]); b.values = rows.map((r) => r[1]); b.cats = $('eCats').value.split(' / ');
         }
         if (type === 'menjodohkan') { const rows = c.left.map((l, j) => [l, c.right[j]]).filter(([l, r]) => l && r); b.left = rows.map((r) => r[0]); b.right = rows.map((r) => r[1]); }
         const btn = $('edSave'); btn.disabled = true;
