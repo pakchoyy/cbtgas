@@ -820,11 +820,13 @@ pages.get("/app/students", async (c) => {
   if (!sess) return c.redirect("/");
   const kelas = c.req.query("kelas") ?? "";
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const [classes, students] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => Promise.all([
+  const [classes, students, schoolRow] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => Promise.all([
     tx`select id, name, grade, year from classes order by year desc, grade nulls last, name`,
     tx`select s.id, s.name, s.username, s.gender, s.nisn, s.class_id, s.guardian_email
        from students s order by s.name limit 2000`,
+    tx`select name, logo_key is not null as has_logo from schools where id = ${sess.sid}`,
   ]));
+  const SCH = (schoolRow as unknown as Array<{ name: string; has_logo: boolean }>)[0] ?? { name: "", has_logo: false };
   type Cls = { id: string; name: string; grade: number | null; year: string };
   type Stu = { id: string; name: string; username: string; gender: "L" | "P" | null; nisn: string | null; class_id: string | null; guardian_email: string | null };
   const cl = classes as unknown as Cls[], st = students as unknown as Stu[];
@@ -966,8 +968,9 @@ pages.get("/app/students", async (c) => {
         } catch (x) { $('#errcls').textContent = x.message; $('#errcls').hidden = false; }
       });
       document.querySelector('[data-del-class]')?.addEventListener('click', async (e) => {
+        const cid = e.currentTarget.getAttribute('data-del-class');
         if (!(await ask('Hapus kelas ini? Siswanya tetap ada, tapi jadi tanpa kelas.'))) return;
-        try { await send('/api/classes/' + e.currentTarget.getAttribute('data-del-class'), 'DELETE'); toast('Kelas dihapus.', 'ok'); location.href = '/app/students'; } catch (x) { toast(x.message, 'err'); }
+        try { await send('/api/classes/' + cid, 'DELETE'); toast('Kelas dihapus.', 'ok'); location.href = '/app/students'; } catch (x) { toast(x.message, 'err'); }
       });
 
       // Akun login (username + PIN) yang baru dibuat
@@ -983,18 +986,20 @@ pages.get("/app/students", async (c) => {
       // Kartu login siap cetak: 2 kolom di kertas A4, potong lalu bagikan.
       $('#credPrint').addEventListener('click', () => {
         const w = window.open('', '_blank'); if (!w) return toast('Izinkan pop-up untuk mencetak.', 'err');
-        const card = (c) => '<div class="k"><div class="h"><b>CBT Yuk</b><span>' + esc(c.class || '') + '</span></div><p class="n">' + esc(c.name) + '</p>' +
+        const SCH = ${JSON.stringify(SCH).replace(/</g, "\\u003c")};
+        const mark = SCH.has_logo ? '<img src="' + location.origin + '/logo" alt="">' : ${JSON.stringify(LOGO_MARK)};
+        const card = (c) => '<div class="k"><div class="h">' + mark + '<span class="sc"><b>' + esc(SCH.name || 'CBT Yuk') + '</b><small>Kartu login ujian' + (c.class ? ' · ' + esc(c.class) : '') + '</small></span></div><p class="n">' + esc(c.name) + '</p>' +
           '<table><tr><td>Username</td><td><b>' + esc(c.username) + '</b></td></tr><tr><td>PIN</td><td><b>' + esc(c.pin) + '</b></td></tr></table><p class="u">Masuk di ' + esc(location.host) + '/s/login</p></div>';
         w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Kartu login siswa</title><style>' +
           'body{font-family:system-ui,sans-serif;margin:12mm}.g{display:grid;grid-template-columns:1fr 1fr;gap:6mm}' +
-          '.k{border:1.5px dashed #94A3B8;border-radius:10px;padding:10px 14px;break-inside:avoid}.h{display:flex;justify-content:space-between;color:#2563EB;font-size:13px}' +
+          '.k{border:1.5px dashed #94A3B8;border-radius:10px;padding:10px 14px;break-inside:avoid}.h{display:flex;align-items:center;gap:10px;border-bottom:1px solid #E2E8F0;padding-bottom:6px}.h img,.h svg{width:36px;height:36px;object-fit:contain;flex:0 0 auto}.h svg{--brand:#2563EB}.sc{display:flex;flex-direction:column;font-size:13px;line-height:1.3}.sc b{color:#0F172A}.sc small{color:#64748B}' +
           '.n{font-size:16px;font-weight:700;margin:6px 0}table{font-size:14px;border-collapse:collapse}td{padding:2px 12px 2px 0}td b{font-family:ui-monospace,monospace;font-size:16px;letter-spacing:.05em}.u{font-size:11px;color:#64748B;margin:6px 0 0}' +
           '</style></head><body><div class="g">' + creds.map(card).join('') + '</div><script>onload=()=>print()<\\/script></body></html>');
         w.document.close();
       });
       document.getElementById('btnCards')?.addEventListener('click', async (e) => {
-        if (!(await ask('Cetak kartu login untuk kelas ini? PIN semua siswa di kelas ini akan diganti dengan PIN baru.', 'Ganti PIN & cetak'))) return;
         const id = e.currentTarget.dataset.cls;
+        if (!(await ask('Cetak kartu login untuk kelas ini? PIN semua siswa di kelas ini akan diganti dengan PIN baru.', 'Ganti PIN & cetak'))) return;
         const r = await fetch('/api/classes/' + id + '/reset-pins', { method: 'POST', credentials: 'same-origin' });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) return toast(j.error || 'Gagal membuat PIN baru.', 'err');
