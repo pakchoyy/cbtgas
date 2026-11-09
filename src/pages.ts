@@ -68,7 +68,7 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
 <meta name="theme-color" content="#F5F7FB">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Naskh+Arabic:wght@400;600;700&display=swap" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous" media="print" onload="this.media='all'">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
@@ -306,7 +306,7 @@ const DOC_PARSER_JS = `
             const c = cnt[numId] = cnt[numId] || {}; c[ilvl] = (c[ilvl] || 0) + 1;
             Object.keys(c).forEach((k) => { if (+k > +ilvl) c[k] = 0; });
             const f = (fmt[numId] || {})[ilvl] || (ilvl === '0' ? 'decimal' : 'lowerLetter');
-            pre = /letter/i.test(f) ? L[(c[ilvl] - 1) % 6] + '. ' : f === 'bullet' || f === 'none' ? '' : c[ilvl] + '. ';
+            pre = /letter/i.test(f) || (ilvl !== '0' && /alpha|abjad/i.test(f)) ? L[(c[ilvl] - 1) % 6] + '. ' : f === 'bullet' || f === 'none' ? '' : c[ilvl] + '. ';
           }
           out.push(pre + text);
         }
@@ -333,6 +333,16 @@ const DOC_PARSER_JS = `
       function parseLines(raw) {
         let lines = raw.join('\\n').replace(/[\\r\\u200b\\ufeff]/g, '').split('\\n').map((l) => l.replace(/\\s+/g, ' ').trim()).filter(Boolean);
         lastText = lines;
+        // Soal Bahasa Arab: angka ١٢٣, pilihan أ ب ج د هـ, dan kunci "الجواب:" diubah ke pola biasa.
+        const AL = { 'أ': 'A', 'ا': 'A', 'ب': 'B', 'ج': 'C', 'د': 'D', 'ه': 'E', 'هـ': 'E' };
+        lines = lines.map((l) => {
+          l = l.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x6F0)).replace(/[٫]/g, '.');
+          let m = l.match(/^\\(?(هـ|أ|ا|ب|ج|د|ه)\\s*[.)\\-:]\\s*(.+)$/);
+          if (m) return AL[m[1]] + '. ' + m[2];
+          m = l.match(/^(?:الجواب الصحيح|الجواب|الإجابة|الاجابة)\\s*[:：]\\s*(.+)$/);
+          if (m) return 'Jawaban: ' + m[1].replace(/هـ|أ|ا|ب|ج|د|ه/g, (x) => AL[x]).replace(/\\s*[،,]\\s*/g, ', ');
+          return l;
+        });
         // Pilihan sebaris ("A. 3  B. 4  C. 5", juga menempel di baris soal) dipecah per baris.
         lines = lines.flatMap((l) => {
           const lower = /^\\(?[a-e]\\s*[.)]\\s/.test(l) && /\\s\\(?[b-e]\\s*[.)]\\s/.test(l);
@@ -3496,13 +3506,14 @@ Jawaban: B
             <li>Soal bernomor, pilihan diawali A–E. Pilihan boleh sebaris: <i>A. 3 B. 4 C. 5</i>.</li>
             <li>Kunci: tulis <b>Jawaban: B</b> di bawah soal, atau kumpulkan di akhir: <b>Kunci Jawaban: 1. B 2. C …</b></li>
             <li>Dua huruf atau lebih (A, C) jadi PG kompleks. Benar/Salah, teks isian, dan soal tanpa pilihan (uraian) juga dikenali.</li>
+            <li>Soal Bahasa Arab: pilihan boleh <b>أ ب ج د</b> dan kunci <b>الجواب: ب</b>.</li>
             <li>B/S tabel: tiap pernyataan diakhiri <b>(B)</b> atau <b>(S)</b>. Menjodohkan: tulis <b>Kiri -&gt; Kanan</b> per baris.</li>
             <li>Gambar dan rumus di dokumen belum ikut terbaca. Tambahkan lewat tombol Edit setelah disimpan.</li>
           </ul>
           <p class="hint" style="margin:10px 0 6px"><b>Template Word</b> (unduh, isi, lalu upload lagi):</p>
           <div class="tplw" id="tplW">
             <button type="button" data-tpl="pg">Pilihan ganda</button><button type="button" data-tpl="pgk">PG kompleks</button>
-            <button type="button" data-tpl="bs">Benar / Salah</button><button type="button" data-tpl="bst">B/S tabel</button><button type="button" data-tpl="mj">Menjodohkan</button><button type="button" data-tpl="isian">Isian &amp; uraian</button>
+            <button type="button" data-tpl="bs">Benar / Salah</button><button type="button" data-tpl="bst">B/S tabel</button><button type="button" data-tpl="mj">Menjodohkan</button><button type="button" data-tpl="isian">Isian &amp; uraian</button><button type="button" data-tpl="ar">Bahasa Arab</button>
             <button type="button" data-tpl="semua">Semua tipe</button>
           </div>
           <label class="btn primary" style="margin:12px 0 0">Pilih file Word atau PDF<input type="file" id="upDocFile" accept=".docx,.pdf" hidden></label>
@@ -3588,7 +3599,7 @@ Jawaban: B
       D.cats.forEach((c) => $('catList').insertAdjacentHTML('beforeend', '<option value="' + esc(c.name) + '">'));
       // Tampilan awal "Soal saya": kartu per kategori. Ketuk kartu → daftar soalnya.
       let catSel = null;
-      const CONTOH = [['contoh-ipa', 'Contoh IPA'], ['contoh-matematika', 'Contoh Matematika'], ['contoh-bahasa-indonesia', 'Contoh Bahasa Indonesia'], ['contoh-pancasila', 'Contoh Pendidikan Pancasila']];
+      const CONTOH = [['contoh-ipa', 'Contoh IPA'], ['contoh-matematika', 'Contoh Matematika'], ['contoh-bahasa-indonesia', 'Contoh Bahasa Indonesia'], ['contoh-pancasila', 'Contoh Pendidikan Pancasila'], ['contoh-bahasa-arab', 'Contoh Bahasa Arab']];
       const HUES = [217, 160, 262, 340, 25, 190, 45, 290];
       const hue = (s) => HUES[[...String(s)].reduce((a, ch) => a + ch.charCodeAt(0), 0) % HUES.length];
       const typeSum = (qs) => { const m = {}; qs.forEach((q) => m[q.type] = (m[q.type] || 0) + 1);
@@ -3880,6 +3891,7 @@ ${DOC_PARSER_JS}
         bs: ['TEMPLATE SOAL BENAR / SALAH', '', '1. Matahari terbit dari arah timur.', 'Jawaban: Benar', '', '2. Air mendidih pada suhu 50 °C.', 'Jawaban: Salah'],
         bst: ['TEMPLATE SOAL BENAR / SALAH TABEL (beberapa pernyataan)', '', '1. Tentukan benar atau salah pernyataan berikut.', 'Satuan SI untuk massa adalah kilogram. (B)', 'Watt adalah satuan energi. (S)', 'Kecepatan termasuk besaran vektor. (B)'],
         mj: ['TEMPLATE SOAL MENJODOHKAN', '', '1. Jodohkan tokoh dengan perannya.', 'Ki Hajar Dewantara -> Bapak Pendidikan Nasional', 'R.A. Kartini -> Pelopor emansipasi perempuan', 'Ir. Soekarno -> Proklamator kemerdekaan'],
+        ar: ['TEMPLATE SOAL BAHASA ARAB', '', '1. مَا مَعْنَى كَلِمَةِ "مَدْرَسَةٌ"؟', 'أ. Rumah', 'ب. Sekolah', 'ج. Masjid', 'د. Pasar', 'الجواب: ب', '', '2. اِخْتَرِ الْكَلِمَةَ الصَّحِيحَةَ: ذَهَبَ ... إِلَى الْمَدْرَسَةِ', 'أ. أَحْمَدُ', 'ب. أَحْمَدَ', 'ج. أَحْمَدِ', 'د. أَحْمَدٌ', 'الجواب: أ', '', '3. اُكْتُبْ تَرْجَمَةَ: "Saya pergi ke pasar"', '(soal tanpa pilihan = uraian)'],
         isian: ['TEMPLATE SOAL ISIAN SINGKAT DAN URAIAN', '', '1. Ibu kota Jawa Timur adalah …', 'Jawaban: Surabaya', '', '2. Jelaskan proses terjadinya hujan!', '(soal tanpa pilihan dan tanpa jawaban = uraian, dinilai guru)'],
       };
       TPL.semua = [].concat(TPL.pg, [''], TPL.pgk.slice(2).map((x) => x.replace(/^1\\\./, '3.')), [''], TPL.bs.slice(2).map((x) => x.replace(/^1\\\./, '4.').replace(/^2\\\./, '5.')), [''], TPL.isian.slice(2).map((x) => x.replace(/^1\\\./, '6.').replace(/^2\\\./, '7.')), [''], TPL.bst.slice(2).map((x) => x.replace(/^1\\\./, '8.')), [''], TPL.mj.slice(2).map((x) => x.replace(/^1\\\./, '9.')));
@@ -3889,7 +3901,10 @@ ${DOC_PARSER_JS}
         try {
           await loadJs('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', () => window.JSZip);
           const x = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-          const para = TPL[k].map((t, i) => '<w:p>' + (i === 0 ? '<w:pPr><w:jc w:val="center"/></w:pPr>' : '') + '<w:r>' + (i === 0 || /^Jawaban:/.test(t) ? '<w:rPr><w:b/></w:rPr>' : '') + '<w:t xml:space="preserve">' + x(t) + '</w:t></w:r></w:p>').join('');
+          const isAr = (t) => /[\\u0600-\\u06FF]/.test(t);
+          const para = TPL[k].map((t, i) => '<w:p>' + (i === 0 ? '<w:pPr><w:jc w:val="center"/></w:pPr>' : isAr(t) ? '<w:pPr><w:bidi/></w:pPr>' : '') + '<w:r>' +
+            (i === 0 || /^Jawaban:|^الجواب/.test(t) ? '<w:rPr><w:b/>' + (isAr(t) ? '<w:rtl/><w:sz w:val="32"/><w:szCs w:val="32"/>' : '') + '</w:rPr>' : isAr(t) ? '<w:rPr><w:rtl/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>' : '') +
+            '<w:t xml:space="preserve">' + x(t) + '</w:t></w:r></w:p>').join('');
           const zip = new window.JSZip();
           zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
           zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');

@@ -55,7 +55,7 @@ const page = (title: string, body: string) => `<!doctype html>
 <link rel="icon" href="/icon-192.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Naskh+Arabic:wght@400;600;700&display=swap" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous" media="print" onload="this.media='all'">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
@@ -1309,7 +1309,7 @@ student.get("/s/take/:sid", async (c) => {
             if (pick === null) { if (pairs.some((x) => x[1] === k)) { pairs = pairs.filter((x) => x[1] !== k); commit(); } return; }
             pairs = pairs.filter((x) => x[0] !== pick && x[1] !== k); pairs.push([pick, k]); pick = null; commit(); });
           el.appendChild(box);
-          setTimeout(paint, 0); addEventListener('resize', paint);
+          setTimeout(paint, 0); setTimeout(paint, 250); addEventListener('resize', paint);
         }
         // Tombol hint umum (semua tipe). Pakai hint kurangi 50% poin soal ini.
         if (q.content.hint) {

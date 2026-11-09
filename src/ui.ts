@@ -68,6 +68,19 @@ export const UI_JS = `<script>
     lastToast = { msg, kind, at: Date.now() };
     setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); }, 4200);
   }
+  // Bungkus huruf Arab dengan .ar (font Naskh, lebih besar). Dipanggil ulang saat isi berubah.
+  const AR = /[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]+(?:[\\s\\u064B-\\u065F\\u0670.,،؟!:()0-9٠-٩]*[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]+)*/g;
+  function arabize(root) {
+    const w = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT, { acceptNode: (n) =>
+      !n.parentNode || n.parentNode.closest('.ar, script, style, textarea, code, pre') || !/[\\u0600-\\u06FF]/.test(n.nodeValue) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    const todo = []; while (w.nextNode()) todo.push(w.currentNode);
+    todo.forEach((n) => { const f = document.createDocumentFragment(); let last = 0; const t = n.nodeValue;
+      t.replace(AR, (m, at) => { if (at > last) f.appendChild(document.createTextNode(t.slice(last, at))); const s = document.createElement('span'); s.className = 'ar'; s.textContent = m; f.appendChild(s); last = at + m.length; });
+      if (last < t.length) f.appendChild(document.createTextNode(t.slice(last))); n.replaceWith(f); });
+  }
+  window.arabize = arabize;
+  let arT = 0; const arRun = () => { clearTimeout(arT); arT = setTimeout(() => arabize(document.body), 60); };
+  addEventListener('DOMContentLoaded', () => { arabize(document.body); new MutationObserver((ms) => { if (ms.some((m) => m.addedNodes.length)) arRun(); }).observe(document.body, { childList: true, subtree: true }); });
   window.toast = toast; window.alert = (m) => toast(m);
   try { const f = JSON.parse(sessionStorage.getItem('yk_flash') || 'null'); sessionStorage.removeItem('yk_flash'); if (f) addEventListener('DOMContentLoaded', () => toast(f.msg, f.kind)); } catch (_) {}
   // Pesan hanya dibawa ke halaman berikutnya bila halaman ditinggal sesaat setelah muncul (mis. setelah simpan lalu muat ulang).
@@ -162,7 +175,11 @@ export const SHARED_CSS = `
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html { -webkit-text-size-adjust: 100%; }
-  body { margin:0; font: 15px/1.55 "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Teks Arab: arah kanan-ke-kiri ditentukan per paragraf, huruf lebih besar supaya harakat jelas. */
+  :where(p, li, td, th, label, textarea, input, .opt span, .ft b, .lt b, .bstx, .mjb span, .ut, .qtext) { unicode-bidi: plaintext; }
+  textarea, input { font-family: inherit; }
+  .ar { font-family: "Noto Naskh Arabic", "Amiri", serif; font-size: 1.3em; line-height: 2; }
+  body { margin:0; font: 15px/1.55 "Plus Jakarta Sans", "Noto Naskh Arabic", system-ui, -apple-system, "Segoe UI", sans-serif;
          color: var(--fg); background: var(--paper); font-feature-settings: "tnum" 0; }
   a { color: inherit; text-underline-offset: 3px; }
   main a:not(.btn) { color: var(--brand); text-decoration: none; font-weight: 500; }
