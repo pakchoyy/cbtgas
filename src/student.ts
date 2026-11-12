@@ -606,7 +606,13 @@ student.get("/s/history/:sid", async (c) => {
 
 student.get("/s/login", (c) => c.html(page("Masuk siswa", `
   <section class="band" style="padding-bottom:72px">
-    <div class="band-top"><a class="brand" href="/">${LOGO}</a><a class="chip" href="/masuk">Masuk sebagai guru</a></div>
+    <div class="band-top"><span class="brand" id="secret" style="cursor:default;-webkit-user-select:none;user-select:none">${LOGO}</span></div>
+    <script>
+      // Pintu masuk guru/admin tersembunyi: ketuk logo 5 kali dalam 3 detik.
+      (function () { let n = 0, t = 0; document.getElementById('secret').addEventListener('click', () => {
+        const now = Date.now(); n = now - t < 3000 ? n + 1 : 1; t = n === 1 ? now : t;
+        if (n >= 5) location.href = '/masuk'; }); })();
+    </script>
     <h1>Masuk siswa</h1>
     <p>Pakai username dan PIN yang diberikan guru.</p>
   </section>
