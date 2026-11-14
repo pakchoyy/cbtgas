@@ -5,7 +5,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connect, withTenant } from "./db";
 import { requireStaff, requireOwner, AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, schoolYear } from "./ui";
+import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -63,6 +63,7 @@ const base = (title: string, body: string, opts: { nav?: boolean; role?: string 
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · ${APP_NAME}</title>
 <link rel="manifest" href="/manifest.webmanifest">
+${FMT_JS}
 <link rel="icon" href="/icon-192.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icon-192.svg">
 <meta name="theme-color" content="#F5F7FB">
@@ -296,7 +297,19 @@ const DOC_PARSER_JS = `
         if (stX) all(stX, 'style').forEach((st) => { const np = all(st, 'numPr')[0]; if (np) styleNum[at(st, 'styleId')] = [at(all(np, 'numId')[0], 'val'), at(all(np, 'ilvl')[0], 'val') || '0']; });
         const cnt = {}, out = [];
         for (const p of all(docX, 'p')) {
-          const text = all(p, 't').map((t) => t.textContent).join('');
+          // Format huruf ikut terbawa: **tebal**, *miring*, __garis bawah__, ~~coret~~, ^pangkat^, ~indeks~.
+          const on = (rp, tag) => { const e = rp && all(rp, tag)[0]; if (!e) return false; const v = at(e, 'val'); return v !== '0' && v !== 'false' && v !== 'none'; };
+          const text = all(p, 'r').map((r) => {
+            const t = all(r, 't').map((x) => x.textContent).join(''); if (!t.trim()) return t;
+            const rp = all(r, 'rPr')[0], va = rp && all(rp, 'vertAlign')[0] ? at(all(rp, 'vertAlign')[0], 'val') : '';
+            const lead = t.match(/^\\s*/)[0], tail = t.match(/\\s*$/)[0]; let x = t.trim();
+            if (va === 'superscript') x = '^' + x + '^'; else if (va === 'subscript') x = '~' + x + '~';
+            if (on(rp, 'strike')) x = '~~' + x + '~~';
+            if (on(rp, 'u')) x = '__' + x + '__';
+            if (on(rp, 'i')) x = '*' + x + '*';
+            if (on(rp, 'b')) x = '**' + x + '**';
+            return lead + x + tail;
+          }).join('').replace(/(\\*\\*|__|~~)\\1/g, '').replace(/\\*\\*\\s*\\*\\*/g, ' ');
           let numId = null, ilvl = '0';
           const np = all(p, 'numPr')[0];
           if (np) { numId = at(all(np, 'numId')[0], 'val'); ilvl = at(all(np, 'ilvl')[0], 'val') || '0'; }
@@ -333,6 +346,14 @@ const DOC_PARSER_JS = `
       function parseLines(raw) {
         let lines = raw.join('\\n').replace(/[\\r\\u200b\\ufeff]/g, '').split('\\n').map((l) => l.replace(/\\s+/g, ' ').trim()).filter(Boolean);
         lastText = lines;
+        // Penanda format yang membungkus nomor/huruf/kunci ("**1.** …", "**A. Jakarta**", "**Jawaban: B**") digeser ke belakangnya.
+        lines = lines.map((l) => {
+          const m = l.match(/^((?:\\*\\*|__|\\*|~~)+)(\\s*(?:(?:no\\.?|nomor|soal)?\\s*\\d{1,3}|\\(?[A-Ea-e]|jawaban|kunci(?:\\s+jawaban)?)\\s*[.):\\-=]\\s*)/i);
+          if (!m) return l;
+          const rest = l.slice(m[0].length), close = m[1].split('').reverse().join('');
+          // Penanda hanya membungkus nomor ("**1.** soal") → buang; membungkus seluruh baris → pindah ke belakang nomor.
+          return rest.startsWith(close) ? m[2] + rest.slice(close.length) : m[2] + m[1] + rest;
+        }).map((l) => l.replace(/^(\\s*(?:\\d{1,3}|\\(?[A-Ea-e])\\s*[.):]\\s*)(\\*\\*|__|\\*|~~)\\2?\\s*$/, '$1'));
         // Soal Bahasa Arab: angka ١٢٣, pilihan أ ب ج د هـ, dan kunci "الجواب:" diubah ke pola biasa.
         const AL = { 'أ': 'A', 'ا': 'A', 'ب': 'B', 'ج': 'C', 'د': 'D', 'ه': 'E', 'هـ': 'E' };
         lines = lines.map((l) => {
@@ -373,7 +394,7 @@ const DOC_PARSER_JS = `
           if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text = (cur.text + ' ' + l).trim();
         }
         return qs.map((c, j) => {
-          const ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').trim();
+          const ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').replace(/[*_~^]/g, '').trim();
           const q = { row: j + 1, text: c.text.trim(), points: 1 };
           if (c.stmts && c.stmts.length >= 2) { q.type = 'pgk_kategori'; q.statements = c.stmts.map((x) => x[0]); q.values = c.stmts.map((x) => x[1]); return [q, '']; }
           if (c.pairs && c.pairs.length >= 2) { q.type = 'menjodohkan'; q.left = c.pairs.map((x) => x[0]); q.right = c.pairs.map((x) => x[1]); return [q, '']; }
@@ -2153,6 +2174,10 @@ pages.get("/app/exams/:id/admin", async (c) => {
   `, { role: sess.role }));
 });
 
+// Versi server dari window.fmtText (dipakai di cetak soal).
+const fmt = (t: string) => esc(t).replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>").replace(/__([^_]+?)__/g, "<u>$1</u>").replace(/~~([^~]+?)~~/g, "<s>$1</s>")
+  .replace(/\*([^*\s][^*]*?)\*/g, "<i>$1</i>").replace(/\^([^^\s]{1,20})\^/g, "<sup>$1</sup>").replace(/~([^~\s]{1,20})~/g, "<sub>$1</sub>");
+
 pages.get("/app/exams/:id/print", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
   if (!sess) return c.redirect("/");
@@ -2180,7 +2205,7 @@ pages.get("/app/exams/:id/print", async (c) => {
     answer_key: Record<string, unknown> | null; rubric: string | null;
     passage_title: string | null; passage_body: string | null };
   const list = (data.qs as unknown as Q[]).map((q) => {
-    let body = `<p class="qtext"><b>${q.position}. (${q.points} pts)</b> ${esc(q.content.text)}</p>`;
+    let body = `<p class="qtext"><b>${q.position}. (${q.points} pts)</b> ${fmt(q.content.text)}</p>`;
     if (q.passage_body) body = `<div class="passage"><b>${esc(q.passage_title ?? "Bacaan")}</b><br>${esc(q.passage_body)}</div>` + body;
     if (q.content.image) body += `<img src="${esc(q.content.image)}" style="max-width:300px; max-height:200px; display:block; margin:4px 0">`;
     if (q.type === "pg" || q.type === "benar_salah" || q.type === "pgk_centang") {
@@ -2190,7 +2215,7 @@ pages.get("/app/exams/:id/print", async (c) => {
             (q.type === "pgk_centang" && Array.isArray(q.answer_key.correct) && (q.answer_key.correct as number[]).includes(i)) ||
             (q.type !== "pgk_centang" && q.answer_key.index === i)
           );
-          return `<li ${marker ? "style=\"background:#dcfce7; font-weight:600\"" : ""}>${esc(o)}${marker ? " ✓" : ""}</li>`;
+          return `<li ${marker ? "style=\"background:#dcfce7; font-weight:600\"" : ""}>${fmt(o)}${marker ? " ✓" : ""}</li>`;
         }).join("") + `</ol>`;
     } else if (q.type === "pgk_kategori") {
       const st = ((q.content as { statements?: string[] }).statements ?? []), vs = (q.answer_key?.values as number[] | undefined) ?? [];
@@ -3672,11 +3697,11 @@ Jawaban: B
 
       function keyView(q) {
         const k = q.answer_key || {}, o = q.content.options || [];
-        if (q.type === 'pg' || q.type === 'benar_salah') return '<ul>' + o.map((x, j) => '<li class="' + (k.index === j ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + esc(x) + '</span></li>').join('') + '</ul>';
-        if (q.type === 'pgk_centang') return '<ul>' + o.map((x, j) => '<li class="' + ((k.correct || []).includes(j) ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + esc(x) + '</span></li>').join('') + '</ul>';
+        if (q.type === 'pg' || q.type === 'benar_salah') return '<ul>' + o.map((x, j) => '<li class="' + (k.index === j ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + fmtText(x) + '</span></li>').join('') + '</ul>';
+        if (q.type === 'pgk_centang') return '<ul>' + o.map((x, j) => '<li class="' + ((k.correct || []).includes(j) ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + fmtText(x) + '</span></li>').join('') + '</ul>';
         if (q.type === 'isian') return '<ul><li class="ok"><b>✓</b><span>' + esc((k.accepted || []).join(' / ')) + '</span></li></ul>';
-        if (q.type === 'pgk_kategori') return '<ul>' + (q.content.statements || []).map((x, j) => '<li class="ok"><b>' + ((k.values || [])[j] === 0 ? 'B' : 'S') + '</b><span>' + esc(x) + '</span></li>').join('') + '</ul>';
-        if (q.type === 'menjodohkan') return '<ul>' + (k.pairs || []).map(([a, b]) => '<li><b>' + (a + 1) + '.</b><span>' + esc(q.content.left[a]) + ' → ' + esc(q.content.right[b]) + '</span></li>').join('') + '</ul>';
+        if (q.type === 'pgk_kategori') return '<ul>' + (q.content.statements || []).map((x, j) => '<li class="ok"><b>' + ((k.values || [])[j] === 0 ? 'B' : 'S') + '</b><span>' + fmtText(x) + '</span></li>').join('') + '</ul>';
+        if (q.type === 'menjodohkan') return '<ul>' + (k.pairs || []).map(([a, b]) => '<li><b>' + (a + 1) + '.</b><span>' + fmtText(q.content.left[a]) + ' → ' + fmtText(q.content.right[b]) + '</span></li>').join('') + '</ul>';
         if (q.type === 'uraian') return '<p class="hint">Dinilai manual oleh guru.</p>';
         return '';
       }
@@ -3696,7 +3721,7 @@ Jawaban: B
           '<article class="qc"><div class="qc-top"><span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + (+q.points) + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
           (TYPES.some(([k]) => k === q.type) ? '<button type="button" data-ed="' + q.id + '">Edit</button>' : '') +
           (D.canDelete ? '<button type="button" class="danger" data-del="' + q.id + '">Hapus</button>' : '') + '</div>' +
-          '<p>' + esc(q.content.text || '(tanpa teks)') + '</p>' + keyView(q) + '</article>').join('')
+          '<p>' + fmtText(q.content.text || '(tanpa teks)') + '</p>' + keyView(q) + '</article>').join('')
           : '<div class="empty-q">' + (D.qs.length ? 'Tidak ada soal yang cocok.' : '<b>Bank soal masih kosong.</b><br>Mulai dengan <b>+ Tulis soal</b> atau <b>Upload soal</b> (Word, PDF, Excel).') + '</div>';
         math($('qlist'));
       }
@@ -3735,7 +3760,7 @@ Jawaban: B
           const r = await fetch('/public/banks/' + b.dataset.pv); const j = await r.json().catch(() => null);
           if (!j) { alert('Gagal memuat.'); return; }
           $('pvTitle').textContent = j.title;
-          $('pvBody').innerHTML = (j.payload.questions || []).map((q, k) => '<article class="qc"><div class="qc-top"><span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">No. ' + (k + 1) + '</span></div><p>' + esc(q.content.text || '') + '</p>' + keyView(q) + '</article>').join('');
+          $('pvBody').innerHTML = (j.payload.questions || []).map((q, k) => '<article class="qc"><div class="qc-top"><span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">No. ' + (k + 1) + '</span></div><p>' + fmtText(q.content.text || '') + '</p>' + keyView(q) + '</article>').join('');
           $('pv').showModal(); math($('pvBody'));
         }
       });

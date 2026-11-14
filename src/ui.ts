@@ -55,6 +55,15 @@ export const SITE_FOOTER = `
 
 // Toast (menggantikan alert bawaan) + tombol "Pasang aplikasi". Pesan yang
 // muncul tepat sebelum halaman dimuat ulang dibawa ke halaman berikutnya.
+// Format teks soal (dari Word atau ketikan): **tebal**, *miring*, __garis bawah__, ~~coret~~, ^pangkat^, ~indeks~.
+// Dimuat di <head> supaya siap sebelum script halaman merender soal.
+export const FMT_JS = `<script>
+  window.fmtText = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
+    .replace(/\\*\\*([^*]+?)\\*\\*/g, '<b>$1</b>').replace(/__([^_]+?)__/g, '<u>$1</u>').replace(/~~([^~]+?)~~/g, '<s>$1</s>')
+    .replace(/\\*([^*\\s][^*]*?)\\*/g, '<i>$1</i>').replace(/\\^([^\\^\\s]{1,20})\\^/g, '<sup>$1</sup>').replace(/~([^~\\s]{1,20})~/g, '<sub>$1</sub>')
+    .replace(/\\n/g, '<br>');
+</script>`;
+
 export const UI_JS = `<script>
 (function () {
   let box, lastToast = null;

@@ -9,7 +9,7 @@ import {
 } from "./session";
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
-import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA, UI_JS } from "./ui";
+import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA, UI_JS, FMT_JS } from "./ui";
 import { createSession, finalizeSession } from "./scoring";
 import { tokenValid } from "./token";
 
@@ -51,6 +51,7 @@ const page = (title: string, body: string) => `<!doctype html>
 <html lang="id" translate="no" class="notranslate"><head><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · CBT Yuk</title>
 <link rel="manifest" href="/manifest.webmanifest">
+${FMT_JS}
 <meta name="theme-color" content="#F5F7FB">
 <link rel="icon" href="/icon-192.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1135,14 +1136,7 @@ student.get("/s/take/:sid", async (c) => {
       function escapeHtml(s) { return (s||'').replace(/[&<>\"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]); }
       // Markdown ringan: **bold**, *italic*, \`code\`, newline <br>.
       // Math $...$ dan $$...$$ dilewati, lalu dirender ulang oleh KaTeX.
-      function mdRender(s) {
-        let t = escapeHtml(s);
-        t = t.replace(/\\*\\*([^*]+)\\*\\*/g, '<b>$1</b>');
-        t = t.replace(/\\*([^*]+)\\*/g, '<i>$1</i>');
-        t = t.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
-        t = t.replace(/\\n/g, '<br>');
-        return t;
-      }
+      const mdRender = (s) => window.fmtText(s);
       function renderMath(el) {
         if (window.renderMathInElement) renderMathInElement(el, {
           delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
@@ -1188,7 +1182,7 @@ student.get("/s/take/:sid", async (c) => {
           q.content.options.forEach((o, k) => {
             const b = document.createElement('button'); b.type = 'button'; b.className = 'bsb ' + (/salah/i.test(o) ? 'no' : 'yes');
             b.setAttribute('aria-pressed', String(!!(A[q.id] && A[q.id].index === k)));
-            b.innerHTML = '<i>' + (/salah/i.test(o) ? '✕' : '✓') + '</i>' + escapeHtml(o);
+            b.innerHTML = '<i>' + (/salah/i.test(o) ? '✕' : '✓') + '</i>' + mdRender(o);
             b.onclick = () => { wrap.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); save(q.id, { index: k }); };
             wrap.appendChild(b);
           });
@@ -1215,7 +1209,7 @@ student.get("/s/take/:sid", async (c) => {
             const checked = A[q.id] && A[q.id].index === k ? 'checked' : '';
             const row = document.createElement('label'); row.className = 'opt';
             const label = o;
-            row.innerHTML = '<input type="radio" name="'+q.id+'" value="'+k+'" '+checked+'><span>' + escapeHtml(label) + '</span>';
+            row.innerHTML = '<input type="radio" name="'+q.id+'" value="'+k+'" '+checked+'><span>' + mdRender(label) + '</span>';
             row.querySelector('input').addEventListener('change', () => save(q.id, { index: k }));
             el.appendChild(row);
           });
@@ -1280,7 +1274,7 @@ student.get("/s/take/:sid", async (c) => {
           q.content.options.forEach((o, k) => {
             const row = document.createElement('label'); row.className = 'opt';
             const checked = sel.includes(k) ? 'checked' : '';
-            row.innerHTML = '<input type="checkbox" value="'+k+'" '+checked+'><span>' + escapeHtml(o) + '</span>';
+            row.innerHTML = '<input type="checkbox" value="'+k+'" '+checked+'><span>' + mdRender(o) + '</span>';
             row.querySelector('input').addEventListener('change', (ev) => {
               const cur = (A[q.id] && A[q.id].selected) ? A[q.id].selected.slice() : [];
               if (ev.target.checked) { if (!cur.includes(k)) cur.push(k); }
@@ -1305,7 +1299,7 @@ student.get("/s/take/:sid", async (c) => {
           box.append(L, svg, R);
           let pick = null;
           const mk = (txt, tag, side, i) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'mjb ' + side; b.dataset.i = i;
-            b.innerHTML = '<i>' + tag + '</i><span>' + escapeHtml(txt) + '</span>'; return b; };
+            b.innerHTML = '<i>' + tag + '</i><span>' + mdRender(txt) + '</span>'; return b; };
           left.forEach((t, i) => L.appendChild(mk(t, i + 1, 'l', i)));
           right.forEach((t, k) => R.appendChild(mk(t, String.fromCharCode(65 + k), 'r', k)));
           function paint() {
