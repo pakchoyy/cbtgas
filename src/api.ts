@@ -9,7 +9,8 @@ import { sendEmail, inviteEmail, pinNotifyEmail } from "./email";
 function esc2(s: string): string { return s.replace(/[&<>"']/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[ch]!)); }
 import { audit, actorFromSession } from "./audit";
 import { distractorRows, itemRows } from "./analytics";
-import { BRAND_COLORS, schoolYear } from "./ui";
+import { BRAND_COLORS, schoolYear, kindLabel } from "./ui";
+import { type RawScore, detailRows, rekapSheets, toCsv, toXlsx, fileName } from "./rekap";
 import { createSession, finalizeSession, writeScore } from "./scoring";
 import { currentToken } from "./token";
 
@@ -1899,47 +1900,41 @@ api.get("/api/reports/backup.json", async (c) => {
 
 // Export CSV skor seluruh sekolah (semua ujian × siswa). Berguna untuk
 // rekap akhir semester. Query dibungkus withTenant → RLS tetap aktif.
-api.get("/api/reports/scores.csv", async (c) => {
+// Rekap nilai sekolah: .xlsx (lembar Detail Nilai + Rekap per Mapel), atau CSV ramah Excel Indonesia (?format=csv).
+// ?kelas=<id kelas> membatasi ke satu kelas.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function rekap(c: any, format: "xlsx" | "csv"): Promise<Response> {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const kelas = c.req.query("kelas") || null;
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`select e.title, e.kind, c.name as class_name,
-              st.name as student_name, st.username,
-              es.status, es.violation_count,
-              es.started_at, es.finished_at,
-              sc.auto_score, sc.manual_score, sc.final_score
+  const [rows, cls] = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) => Promise.all([
+    tx`select e.title, e.kind, c.name as class_name, st.name as student_name, st.username,
+              es.status, es.violation_count, es.started_at, es.finished_at,
+              sc.auto_score, sc.manual_score, sc.final_score,
+              exists(select 1 from exam_questions eq join questions q on q.id = eq.question_id
+                     where eq.exam_id = e.id and q.type in ('uraian','simulasi')) as has_essay
        from exam_sessions es
        join exams    e  on e.id  = es.exam_id
        join students st on st.id = es.student_id
        left join classes c on c.id = st.class_id
        left join scores  sc on sc.session_id = es.id
-       order by e.created_at desc, c.name, st.name`,
-  );
-  const header = ["ujian","jenis","kelas","nama","username","status","pelanggaran",
-    "mulai","selesai","auto","manual","final"];
-  const esc = (v: unknown) => {
-    if (v == null) return "";
-    const s = v instanceof Date ? v.toISOString() : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  type R = { title: string; kind: string; class_name: string|null;
-    student_name: string; username: string; status: string; violation_count: number;
-    started_at: string|null; finished_at: string|null;
-    auto_score: string|null; manual_score: string|null; final_score: string|null };
-  const lines = [header.join(",")];
-  for (const r of rows as unknown as R[]) {
-    lines.push([r.title, r.kind, r.class_name, r.student_name, r.username,
-      r.status, r.violation_count, r.started_at, r.finished_at,
-      r.auto_score, r.manual_score, r.final_score].map(esc).join(","));
+       where (${kelas}::uuid is null or st.class_id = ${kelas}::uuid)
+       order by e.created_at, c.name, st.name`,
+    kelas ? tx`select name from classes where id = ${kelas}::uuid` : Promise.resolve([]),
+  ]));
+  const raw = (rows as unknown as RawScore[]).map((r) => ({ ...r, kind: kindLabel(r.kind) }));
+  const kname = (cls as unknown as Array<{ name: string }>)[0]?.name ?? null;
+  if (format === "csv") {
+    return new Response(toCsv(detailRows(raw)), { headers: { "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${fileName(kname, new Date(), "csv")}"` } });
   }
-  return new Response(lines.join("\n") + "\n", {
-    headers: {
-      "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="rekap-skor-sekolah.csv"`,
-    },
-  });
-});
+  return new Response(toXlsx(rekapSheets(raw)) as unknown as BodyInit, { headers: {
+    "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "Content-Disposition": `attachment; filename="${fileName(kname)}"` } });
+}
+api.get("/api/reports/rekap.xlsx", (c) => rekap(c, "xlsx"));
+api.get("/api/reports/scores.csv", (c) => rekap(c, "csv"));
 
 // Distractor analysis: untuk soal pg, berapa % siswa memilih tiap opsi?
 // Berguna untuk cari distractor efektif dan opsi yang bikin bingung.

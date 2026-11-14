@@ -704,8 +704,8 @@ pages.get("/app", async (c) => {
   if (!sess) return c.redirect("/");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   // Query dikirim sekaligus (pipelined) dalam satu transaksi, bukan satu per satu.
-  const [school, n, live, recent, owner] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
-    const [sc, cnt, lv, rc, ow] = await Promise.all([tx`select name, code, level from schools where id = ${sess.sid}`, tx`select
+  const [school, n, live, recent, owner, dcls] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const [sc, cnt, lv, rc, ow, cl] = await Promise.all([tx`select name, code, level from schools where id = ${sess.sid}`, tx`select
         (select count(*) from classes)::int as classes,
         (select count(*) from students where active)::int as students,
         (select count(*) from questions)::int as questions,
@@ -723,8 +723,9 @@ pages.get("/app", async (c) => {
       from exams e where e.status = 'open' order by e.ends_at nulls last, e.title limit 6`,
       tx`select id, title, status, starts_at from exams
       where status in ('draft','scheduled') order by coalesce(starts_at, created_at) limit 4`,
-      tx`select 1 from system_owners where email = ${sess.email.toLowerCase()}`]);
-    return [sc[0] as { name: string; code: string; level: string } | undefined, cnt[0], lv, rc, ow.length > 0] as const;
+      tx`select 1 from system_owners where email = ${sess.email.toLowerCase()}`,
+      tx`select id, name from classes order by name`]);
+    return [sc[0] as { name: string; code: string; level: string } | undefined, cnt[0], lv, rc, ow.length > 0, cl] as const;
   });
   const k = n as { classes: number; students: number; questions: number; exams: number; published: number;
     online: number; week_submits: number; avg_score: string };
@@ -811,6 +812,7 @@ pages.get("/app", async (c) => {
       .quick .qi svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
       .quick a.ai .qi { background: linear-gradient(135deg, #A855F7, #EC4899); color: #fff; }
       @media (max-width: 560px) { .quick { grid-template-columns: 1fr 1fr; } }
+      .rkp { display:flex; gap: 8px; flex-wrap: wrap; width: 100%; } .rkp select { flex: 1 1 140px; width: auto; }
       .runh { margin: 4px 0 8px; font-size: 17px; } .runs { display:grid; gap: 10px; margin-bottom: 14px; }
       .runc { display:block; background: var(--surface); border: 1.5px solid color-mix(in srgb, var(--ok) 45%, var(--line)); border-radius: 18px; padding: 14px 16px; color: var(--fg); text-decoration: none; box-shadow: var(--shadow); }
       main a.runc { color: var(--fg); text-decoration: none; }
@@ -828,7 +830,7 @@ pages.get("/app", async (c) => {
         ${upcoming || `<p class="muted" style="margin:0">Tidak ada draf atau ujian terjadwal.</p>`}
         <h2 style="margin-top:22px">Unduh</h2>
         <div class="row" style="margin-top:0">
-          <a class="btn" href="/api/reports/scores.csv"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Unduh rekap nilai</a>
+          ${sess.role === "proctor" ? "" : `<form action="/api/reports/rekap.xlsx" method="get" class="rkp"><select name="kelas" aria-label="Kelas"><option value="">Semua kelas</option>${(dcls as unknown as Array<{ id: string; name: string }>).map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select><button type="submit"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Unduh rekap nilai (Excel)</button></form>`}
           ${sess.role === "admin" ? `<a class="btn" href="/api/reports/backup.json">Backup data</a>` : ""}
         </div>
       </div>
