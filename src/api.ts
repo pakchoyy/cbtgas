@@ -1362,9 +1362,25 @@ api.patch("/api/questions/:id", async (c) => {
   return c.json(r);
 });
 
+// Hapus banyak soal sekaligus (dipilih di Bank soal). Soal juga lepas dari ujian yang memakainya.
+api.post("/api/questions/delete-bulk", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null) as null | { ids?: unknown[] };
+  const ids = (body?.ids ?? []).filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 2000);
+  if (!ids.length) return c.json({ error: "Tidak ada soal yang dipilih." }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const n = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const r = await tx`delete from questions where id in ${tx(ids)} returning id`;
+    await audit(tx, actorFromSession(s), "question.delete_bulk", "question", null, { count: r.length });
+    return r.length;
+  });
+  return c.json({ ok: true, deleted: n });
+});
+
 api.delete("/api/questions/:id", async (c) => {
   const s = getSess(c);
-  if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`delete from questions where id = ${c.req.param("id")} returning id`,

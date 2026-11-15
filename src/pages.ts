@@ -3475,7 +3475,7 @@ pages.get("/app/questions", async (c) => {
              order by q.created_at desc limit 1000`,
     tx`select id, name from categories order by name`,
   ]));
-  const data = JSON.stringify({ qs, cats, canDelete: sess.role === "admin" }).replace(/</g, "\\u003c");
+  const data = JSON.stringify({ qs, cats, canDelete: sess.role !== "proctor" }).replace(/</g, "\\u003c");
   return c.html(base("Bank soal", `
     <div class="page-head">
       <div><h1>Bank soal</h1><p id="qsum">Semua soal sekolah Anda. Pakai ulang di ujian mana pun.</p></div>
@@ -3500,8 +3500,9 @@ pages.get("/app/questions", async (c) => {
         <select id="ft" aria-label="Tipe"><option value="">Semua tipe</option></select>
       </div>
       <div class="crumb" id="crumb" hidden><button type="button" id="back">‹ Semua kategori</button><b id="crumbName"></b>
-        <span class="acts" id="catActs"><button type="button" class="ibtn" id="catRen" title="Ubah nama kategori" aria-label="Ubah nama kategori">${ICON_EDIT}</button><button type="button" id="catMove" class="mvbtn">Pindahkan soal</button><button type="button" class="ibtn del" id="catDel" title="Hapus kategori" aria-label="Hapus kategori">${ICON_DEL}</button></span></div>
+        <span class="acts" id="catActs"><button type="button" class="ibtn" id="catRen" title="Ubah nama kategori" aria-label="Ubah nama kategori">${ICON_EDIT}</button><button type="button" id="catMove" class="mvbtn">Pindahkan soal</button>${sess.role !== "proctor" ? `<button type="button" id="catDelQ" class="mvbtn danger">Hapus semua soal</button>` : ""}<button type="button" class="ibtn del" id="catDel" title="Hapus kategori" aria-label="Hapus kategori">${ICON_DEL}</button></span></div>
       <div id="qlist"></div>
+      <div class="pickbar" id="pickBar" hidden><b id="pickN"></b><button type="button" id="pickAll">Pilih semua yang tampil</button><button type="button" id="pickNone">Batal</button><button type="button" class="primary dg" id="pickDel" style="background:var(--danger);border-color:var(--danger)">Hapus terpilih</button></div>
     </section>
     <section id="tabPub" hidden>
       <div class="pubhead"><p class="muted" style="margin:0">Kumpulan soal yang dibagikan sekolah lain. Simpan ke bank Anda, lalu edit sesukanya.</p>
@@ -3620,6 +3621,11 @@ Jawaban: B
       .pb .pt { flex: 1 1 220px; min-width: 0; } .pb .pt > b, .pb .pt > span { display:block; } .pb .pt span { color: var(--mut); font-size: 13.5px; }
       .pb .row { margin: 0; }
       .qc { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; margin-bottom: 10px; box-shadow: var(--shadow); }
+      .qc.on { border-color: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 25%, transparent); }
+      .qpk { width: 20px; height: 20px; }
+      .pickbar { position: sticky; bottom: 76px; z-index: 30; display:flex; gap: 8px; align-items:center; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; box-shadow: 0 10px 30px rgba(15,23,42,.18); margin-top: 12px; }
+      .pickbar b { flex: 1; } .pickbar button { min-height: 40px; }
+      @media (min-width: 901px) { .pickbar { bottom: 16px; } }
       .qc-top { display:flex; gap: 8px; align-items:center; flex-wrap: wrap; margin-bottom: 8px; }
       .qc-top .sp { flex: 1; }
       .qc-top button { min-height: 36px; padding: 4px 12px; font-size: 13px; }
@@ -3740,13 +3746,37 @@ Jawaban: B
         const v = D.qs.filter((q) => (!ty || q.type === ty) && inCat(q) && (!t || (q.content.text || '').toLowerCase().includes(t)));
         $('qsum').textContent = v.length !== D.qs.length ? v.length + ' dari ' + D.qs.length + ' soal tampil.' : 'Simpan soal sekali, pakai di ujian mana pun.';
         $('qlist').innerHTML = v.length ? v.map((q) =>
-          '<article class="qc"><div class="qc-top"><span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + (+q.points) + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
+          '<article class="qc' + (picked.has(q.id) ? ' on' : '') + '"><div class="qc-top">' + (D.canDelete ? '<input type="checkbox" class="qpk" data-pk="' + q.id + '" aria-label="Pilih soal"' + (picked.has(q.id) ? ' checked' : '') + '>' : '') + '<span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + (+q.points) + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
           (TYPES.some(([k]) => k === q.type) ? '<button type="button" data-ed="' + q.id + '">Edit</button>' : '') +
           (D.canDelete ? '<button type="button" class="danger" data-del="' + q.id + '">Hapus</button>' : '') + '</div>' +
           '<p>' + fmtText(q.content.text || '(tanpa teks)') + '</p>' + keyView(q) + '</article>').join('')
           : '<div class="empty-q">' + (D.qs.length ? 'Tidak ada soal yang cocok.' : '<b>Bank soal masih kosong.</b><br>Mulai dengan <b>+ Tulis soal</b> atau <b>Upload soal</b> (Word, PDF, Excel).') + '</div>';
+        shown = v.map((q) => q.id); bar();
         math($('qlist'));
       }
+      // ===== Pilih banyak soal lalu hapus sekaligus =====
+      const picked = new Set(); let shown = [];
+      function bar() {
+        const b = $('pickBar'); if (!b) return;
+        b.hidden = !picked.size; $('pickN').textContent = picked.size + ' soal dipilih';
+      }
+      $('qlist').addEventListener('change', (e) => {
+        const c = e.target.closest('.qpk'); if (!c) return;
+        c.checked ? picked.add(c.dataset.pk) : picked.delete(c.dataset.pk);
+        c.closest('.qc').classList.toggle('on', c.checked); bar();
+      });
+      const delPicked = async (ids, label) => {
+        if (!ids.length) return;
+        if (!(await ask('Hapus ' + label + '? Soal juga hilang dari ujian yang memakainya. Tindakan ini tidak bisa dibatalkan.', 'Ya, hapus ' + ids.length + ' soal'))) return;
+        const r = await fetch('/api/questions/delete-bulk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return toast(j.error || 'Gagal menghapus.', 'err');
+        const gone = new Set(ids); D.qs = D.qs.filter((q) => !gone.has(q.id)); picked.clear(); draw(); toast(j.deleted + ' soal dihapus.', 'ok');
+      };
+      $('pickAll').onclick = () => { shown.forEach((id) => picked.add(id)); draw(); };
+      $('pickNone').onclick = () => { picked.clear(); draw(); };
+      $('pickDel').onclick = () => delPicked([...picked], picked.size + ' soal yang dipilih');
+      if ($('catDelQ')) $('catDelQ').onclick = () => delPicked(shown.slice(), 'SEMUA ' + shown.length + ' soal di "' + $('crumbName').textContent + '"');
       ['fq','ft'].forEach((id) => $(id).addEventListener('input', draw));
       $('nMine').textContent = D.qs.length;
       draw();
