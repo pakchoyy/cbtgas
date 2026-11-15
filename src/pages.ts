@@ -3310,7 +3310,7 @@ pages.get("/app/exams/:id/live", async (c) => {
           tick();
         } catch (x) { toast(x.message, 'err'); }
       });
-      tick(); setInterval(tick, 5000);
+      tick(); setInterval(() => { if (document.visibilityState === "visible") tick(); }, 8000);
 
       // Chat
       const chatDlg = document.getElementById('chatDlg'), chatBox2 = document.getElementById('chatBox2'), chatInput2 = document.getElementById('chatInput2');
@@ -3337,7 +3337,7 @@ pages.get("/app/exams/:id/live", async (c) => {
           if (activeSid && chatDlg.open) await loadChat();
         } catch (_) {}
       }
-      pollChats(); setInterval(pollChats, 6000);
+      pollChats(); setInterval(() => { if (document.visibilityState === "visible") pollChats(); }, 12000);
     </script>
   `, { role: sess.role }));
 });

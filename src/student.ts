@@ -1,7 +1,7 @@
 // Portal siswa: login dengan username + PIN; kerjakan ujian.
 // Cookie sesi siswa terpisah (cbt_sstu) agar tidak campur dengan sesi staf.
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { connect, withTenant } from "./db";
 import { verifyPin, hashPin } from "./hash";
 import {
@@ -1370,23 +1370,34 @@ student.get("/s/take/:sid", async (c) => {
       function queueSet(m) {
         try { localStorage.setItem(QKEY, JSON.stringify(m)); } catch(_) {}
       }
+      // Jawaban dikirim berkelompok (tiap ~4 detik, saat pindah halaman, dan sebelum kumpul)
+      // supaya database tidak dihubungi setiap ketukan.
+      let flushing = null, flushT = 0;
+      function scheduleFlush() { clearTimeout(flushT); flushT = setTimeout(flushQueue, 4000); }
       async function flushQueue() {
-        const m = queueGet();
-        for (const [qid, payload] of Object.entries(m)) {
+        if (flushing) return flushing;
+        const m = queueGet(), items = Object.values(m);
+        if (!items.length) { updateBadge(); return; }
+        flushing = (async () => {
           try {
-            const r = await fetch('/s/take/' + D.sessionId + '/answer', {
-              method:'POST', credentials:'same-origin',
-              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-            });
-            if (r.ok) { const cur = queueGet(); delete cur[qid]; queueSet(cur); }
-          } catch (_) { return; } // berhenti saat gagal, coba lagi nanti
-        }
-        updateBadge();
+            const r = await fetch('/s/take/' + D.sessionId + '/answers', { method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: items }) });
+            if (r.ok) { const cur = queueGet(); for (const [k, v] of Object.entries(m)) if (JSON.stringify(cur[k]) === JSON.stringify(v)) delete cur[k]; queueSet(cur); }
+            else scheduleFlush();
+          } catch (_) { scheduleFlush(); }
+          finally { flushing = null; updateBadge(); }
+        })();
+        return flushing;
       }
+      // Kirim sisa jawaban saat halaman ditutup/disembunyikan.
+      const beacon = () => { const items = Object.values(queueGet()); if (items.length && navigator.sendBeacon)
+        navigator.sendBeacon('/s/take/' + D.sessionId + '/answers', new Blob([JSON.stringify({ answers: items })], { type: 'application/json' })); };
+      addEventListener('pagehide', beacon);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') beacon(); });
       function updateBadge() {
         const n = Object.keys(queueGet()).length;
         const b = document.getElementById('qbadge'); if (!b) return;
-        b.textContent = n ? (n + ' jawaban belum terkirim') : '';
+        b.textContent = n && !navigator.onLine ? (n + ' jawaban belum terkirim') : '';
       }
       async function save(qid, payload) {
         A[qid] = Object.assign({}, A[qid] || {}, payload); render();
@@ -1402,18 +1413,13 @@ student.get("/s/take/:sid", async (c) => {
             if (nextIdx >= 0 && nextIdx !== i) { i = nextIdx; setTimeout(render, 150); }
           }
         }
-        try {
-          const r = await fetch('/s/take/' + D.sessionId + '/answer', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(outPayload),
-          });
-          if (!r.ok) throw new Error('http ' + r.status);
-        } catch (_) {
-          // Simpan ke antrian untuk retry nanti.
-          const cur = queueGet(); cur[qid] = outPayload; queueSet(cur); updateBadge();
-        }
+        // Masuk antrian (localStorage, aman bila koneksi putus), dikirim berkelompok.
+        // _c = bentuk jawaban di layar (sebelum diacak balik), untuk ditampilkan lagi bila halaman dimuat ulang.
+        const cur = queueGet(); cur[qid] = Object.assign(cur[qid] || {}, outPayload, { _c: Object.assign({}, (cur[qid] || {})._c, payload) }); queueSet(cur); scheduleFlush();
       }
       window.addEventListener('online', flushQueue);
+      // Jawaban yang belum sempat terkirim tetap tampil setelah halaman dimuat ulang.
+      for (const [qid, v] of Object.entries(queueGet())) if (v && v._c) A[qid] = Object.assign({}, A[qid] || {}, v._c);
       updateBadge(); if (navigator.onLine) flushQueue();
       document.getElementById('gridBtn').onclick = () => document.getElementById('grid').showModal();
       document.getElementById('gridX').onclick = () => document.getElementById('grid').close();
@@ -1457,7 +1463,7 @@ student.get("/s/take/:sid", async (c) => {
       document.getElementById('doneBtn').onclick = () => openFinish();
       document.getElementById('exitBtn').onclick = async () => {
         if (!(await ask('Keluar sementara? Jawaban sudah tersimpan, tapi waktu ujian tetap berjalan. Masuk lagi untuk melanjutkan. Untuk menyelesaikan ujian, pakai tombol Kumpulkan.', 'Ya, keluar'))) return;
-        submitting = true; try { if (document.fullscreenElement) await document.exitFullscreen(); } catch (_) {}
+        submitting = true; await flushQueue(); try { if (document.fullscreenElement) await document.exitFullscreen(); } catch (_) {}
         location.href = '/s';
       };
       async function submitExam(auto) {
@@ -1560,9 +1566,11 @@ student.get("/s/take/:sid", async (c) => {
           }
         } catch(_) {}
       }
-      setInterval(pollChat, 5000); pollChat();
+      // Chat hanya diambil saat panel dibuka; ada pesan baru diketahui dari ping.
+      setInterval(() => { if (!document.getElementById('chat').hidden) pollChat(); }, 8000); pollChat();
+      let staffMsgs = -1;
 
-      // Heartbeat 15 dtk + cek status pause.
+      // Heartbeat 20 dtk: status online, cek jeda, dan apakah ada pesan baru dari pengawas.
       function applyPause() {
         document.getElementById('pauseOverlay').hidden = !isPaused;
       }
@@ -1571,10 +1579,11 @@ student.get("/s/take/:sid", async (c) => {
         try {
           const r = await fetch('/s/take/' + D.sessionId + '/ping', { method:'POST', credentials:'same-origin' });
           if (r.ok) { const j = await r.json().catch(() => ({}));
+            if (typeof j.staff_msgs === 'number') { if (staffMsgs >= 0 && j.staff_msgs > staffMsgs) { if (document.getElementById('chat').hidden) chatBadge.hidden = false; pollChat(); } staffMsgs = j.staff_msgs; }
             if (typeof j.paused === 'boolean' && j.paused !== isPaused) { isPaused = j.paused; applyPause(); if (!isPaused && j.deadline) { D.deadline = j.deadline; dl = new Date(D.deadline).getTime(); } }
           }
         } catch(_) {}
-        setTimeout(heartbeat, 15000);
+        setTimeout(heartbeat, 20000);
       }
       heartbeat();
 
@@ -1646,39 +1655,52 @@ student.post("/s/take/:sid/flag", async (c) => {
 // Simpan jawaban. Payload:
 //   {question_id, index}        pg / benar_salah
 //   {question_id, text}         isian / uraian
-student.post("/s/take/:sid/answer", async (c) => {
+type AnswerIn = { question_id: string; index?: number; text?: string; selected?: number[]; pairs?: [number, number][];
+  cats?: Array<number | null>; hint_used?: boolean; note?: string };
+// Bersihkan isi jawaban dari klien; null bila kosong/tidak sah.
+function cleanAnswer(b: AnswerIn): Record<string, unknown> | null {
+  if (!b || typeof b.question_id !== "string") return null;
+  const ans: Record<string, unknown> = {};
+  if (typeof b.index === "number") ans.index = b.index;
+  if (typeof b.text === "string") ans.text = b.text.slice(0, 20000);
+  if (typeof b.note === "string") ans.note = b.note.slice(0, 5000);
+  if (Array.isArray(b.selected)) ans.selected = b.selected.filter((n) => Number.isInteger(n));
+  if (Array.isArray(b.pairs)) ans.pairs = b.pairs.filter((p) => Array.isArray(p) && p.length === 2);
+  if (Array.isArray(b.cats)) ans.cats = b.cats.slice(0, 30).map((v) => (v === 0 || v === 1 ? v : null));
+  if (b.hint_used === true) ans.hint_used = true;
+  return Object.keys(ans).length ? ans : null;
+}
+
+// Simpan banyak jawaban sekaligus dalam satu transaksi (dipakai klien ujian).
+async function saveAnswers(c: Context<{ Bindings: Bindings }>, list: AnswerIn[]) {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.json({ error: "unauthorized" }, 401);
-  const sessionId = c.req.param("sid");
-  const body = await c.req.json().catch(() => null) as null | {
-    question_id: string; index?: number; text?: string;
-    selected?: number[]; pairs?: [number, number][]; cats?: Array<number | null>;
-    hint_used?: boolean; note?: string;
-  };
-  if (!body?.question_id) return c.json({ error: "bad body" }, 400);
-  const ans: Record<string, unknown> = {};
-  if (typeof body.index === "number") ans.index = body.index;
-  if (typeof body.text === "string") ans.text = body.text;
-  if (typeof body.note === "string") ans.note = body.note;
-  if (Array.isArray(body.selected)) ans.selected = body.selected.filter((n) => Number.isInteger(n));
-  if (Array.isArray(body.pairs)) ans.pairs = body.pairs.filter((p) => Array.isArray(p) && p.length === 2);
-  if (Array.isArray(body.cats)) ans.cats = body.cats.slice(0, 30).map((v) => (v === 0 || v === 1 ? v : null));
-  if (body.hint_used === true) ans.hint_used = true;
-  if (Object.keys(ans).length === 0) return c.json({ error: "jawaban kosong" }, 400);
-
+  const sessionId = c.req.param("sid") ?? "";
+  const items = list.slice(0, 200).map((b) => [b?.question_id, cleanAnswer(b)] as const).filter((x): x is [string, Record<string, unknown>] => !!x[1]);
+  if (!items.length) return c.json({ error: "jawaban kosong" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
-    tx`insert into answers (session_id, question_id, school_id, answer, updated_at)
-       select ${sessionId}, ${body.question_id}, ${stu.sid},
-              ${ans as unknown as string}, now()
-       where exists (select 1 from exam_sessions
-                     where id = ${sessionId} and student_id = ${stu.uid} and status = 'active'
-                       and deadline_at > now() and paused_at is null)
-       on conflict (session_id, question_id)
-       do update set answer = coalesce(answers.answer, '{}'::jsonb) || ${ans as unknown as string},
-                     updated_at = now()`,
-  );
-  return c.json({ ok: true });
+  const saved = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
+    const ok = await tx`select 1 from exam_sessions where id = ${sessionId} and student_id = ${stu.uid} and status = 'active'
+                        and deadline_at > now() and paused_at is null`;
+    if (!ok.length) return 0;
+    for (const [qid, ans] of items) {
+      await tx`insert into answers (session_id, question_id, school_id, answer, updated_at)
+         values (${sessionId}, ${qid}, ${stu.sid}, ${ans as unknown as string}, now())
+         on conflict (session_id, question_id)
+         do update set answer = coalesce(answers.answer, '{}'::jsonb) || ${ans as unknown as string}, updated_at = now()`;
+    }
+    return items.length;
+  });
+  return c.json({ ok: true, saved });
+}
+student.post("/s/take/:sid/answers", async (c) => {
+  const body = await c.req.json().catch(() => null) as null | { answers?: AnswerIn[] };
+  return saveAnswers(c, Array.isArray(body?.answers) ? body!.answers! : []);
+});
+// Satu jawaban (klien lama yang masih terbuka).
+student.post("/s/take/:sid/answer", async (c) => {
+  const body = await c.req.json().catch(() => null) as AnswerIn | null;
+  return saveAnswers(c, body ? [body] : []);
 });
 
 // Chat: siswa kirim pesan ke pengawas (mis. minta izin ke toilet, lapor
@@ -1723,11 +1745,12 @@ student.post("/s/take/:sid/ping", async (c) => {
   const r = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
     tx`update exam_sessions set last_seen_at = now()
        where id = ${sessionId} and student_id = ${stu.uid}
-       returning paused_at, deadline_at`,
+       returning paused_at, deadline_at,
+         (select count(*) from exam_messages m where m.session_id = exam_sessions.id and m.from_role = 'staff')::int as staff_msgs`,
   );
   if (r.length === 0) return c.json({ ok: true });
-  const row = r[0] as { paused_at: string | null; deadline_at: string };
-  return c.json({ ok: true, paused: !!row.paused_at, deadline: row.deadline_at });
+  const row = r[0] as { paused_at: string | null; deadline_at: string; staff_msgs: number };
+  return c.json({ ok: true, paused: !!row.paused_at, deadline: row.deadline_at, staff_msgs: row.staff_msgs });
 });
 
 // Anti-cheat: catat pelanggaran, naikkan counter, lock sesi bila mencapai
