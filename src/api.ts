@@ -1362,6 +1362,20 @@ api.patch("/api/questions/:id", async (c) => {
   return c.json(r);
 });
 
+// Samakan poin banyak soal sekaligus (tombol "Atur poin" di Bank soal).
+api.post("/api/questions/points", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null) as null | { ids?: unknown[]; points?: unknown };
+  const ids = (body?.ids ?? []).filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 2000);
+  const pts = Number(body?.points);
+  if (!ids.length || !(pts > 0) || pts > 1000) return c.json({ error: "Poin harus angka lebih dari 0." }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const n = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) =>
+    (await tx`update questions set points = ${pts} where id in ${tx(ids)} returning id`).length);
+  return c.json({ ok: true, updated: n });
+});
+
 // Hapus banyak soal sekaligus (dipilih di Bank soal). Soal juga lepas dari ujian yang memakainya.
 api.post("/api/questions/delete-bulk", async (c) => {
   const s = getSess(c);

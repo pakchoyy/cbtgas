@@ -390,12 +390,13 @@ const DOC_PARSER_JS = `
           if ((m = l.match(/^[-•*]?\\s*(.+?)\\s*\\((B|S|Benar|Salah)\\)\\s*$/i))) { (cur.stmts = cur.stmts || []).push([m[1], /^b/i.test(m[2])]); continue; }
           // Menjodohkan: "Kiri -> Kanan" (juga =>, →).
           if ((m = l.match(/^[-•*]?\\s*(.+?)\\s+(?:->|=>|→)\\s+(.+)$/))) { (cur.pairs = cur.pairs || []).push([m[1], m[2]]); continue; }
+          if ((m = l.match(/^(?:poin|skor|bobot|nilai)\\s*[:=]\\s*(\\d+(?:[.,]\\d+)?)\\s*$/i))) { cur.pts = +m[1].replace(',', '.'); continue; }
           if ((m = l.match(/^(jawaban|kunci|jawab|jwb|ans)\\s*[:=]\\s*(.+)$/i))) { cur.ans = m[2].trim(); continue; }
           if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text = (cur.text + ' ' + l).trim();
         }
         return qs.map((c, j) => {
           const ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').replace(/[*_~^]/g, '').trim();
-          const q = { row: j + 1, text: c.text.trim(), points: 1 };
+          const q = { row: j + 1, text: c.text.trim(), points: c.pts > 0 ? c.pts : 1 };
           if (c.stmts && c.stmts.length >= 2) { q.type = 'pgk_kategori'; q.statements = c.stmts.map((x) => x[0]); q.values = c.stmts.map((x) => x[1]); return [q, '']; }
           if (c.pairs && c.pairs.length >= 2) { q.type = 'menjodohkan'; q.left = c.pairs.map((x) => x[0]); q.right = c.pairs.map((x) => x[1]); return [q, '']; }
           if (c.opts.length >= 2) {
@@ -3500,7 +3501,7 @@ pages.get("/app/questions", async (c) => {
         <select id="ft" aria-label="Tipe"><option value="">Semua tipe</option></select>
       </div>
       <div class="crumb" id="crumb" hidden><button type="button" id="back">‹ Semua kategori</button><b id="crumbName"></b>
-        <span class="acts" id="catActs"><button type="button" class="ibtn" id="catRen" title="Ubah nama kategori" aria-label="Ubah nama kategori">${ICON_EDIT}</button><button type="button" id="catMove" class="mvbtn">Pindahkan soal</button>${sess.role !== "proctor" ? `<button type="button" id="catDelQ" class="mvbtn danger">Hapus semua soal</button>` : ""}<button type="button" class="ibtn del" id="catDel" title="Hapus kategori" aria-label="Hapus kategori">${ICON_DEL}</button></span></div>
+        <span class="acts" id="catActs"><button type="button" class="ibtn" id="catRen" title="Ubah nama kategori" aria-label="Ubah nama kategori">${ICON_EDIT}</button><button type="button" id="catMove" class="mvbtn">Pindahkan soal</button>${sess.role !== "proctor" ? `<button type="button" id="catPts" class="mvbtn">Atur poin</button><button type="button" id="catDelQ" class="mvbtn danger">Hapus semua soal</button>` : ""}<button type="button" class="ibtn del" id="catDel" title="Hapus kategori" aria-label="Hapus kategori">${ICON_DEL}</button></span></div>
       <div id="qlist"></div>
       <div class="pickbar" id="pickBar" hidden><b id="pickN"></b><button type="button" id="pickAll">Pilih semua yang tampil</button><button type="button" id="pickNone">Batal</button><button type="button" class="primary dg" id="pickDel" style="background:var(--danger);border-color:var(--danger)">Hapus terpilih</button></div>
     </section>
@@ -3564,6 +3565,7 @@ Jawaban: B
 2. Jelaskan proses fotosintesis.</pre>
           <ul class="howto">
             <li>Soal bernomor, pilihan diawali A–E. Pilihan boleh sebaris: <i>A. 3 B. 4 C. 5</i>.</li>
+            <li>Poin (opsional): tulis <b>Poin: 5</b> di bawah soal. Tanpa baris ini, poin = 1.</li>
             <li>Kunci: tulis <b>Jawaban: B</b> di bawah soal, atau kumpulkan di akhir: <b>Kunci Jawaban: 1. B 2. C …</b></li>
             <li>Dua huruf atau lebih (A, C) jadi PG kompleks. Benar/Salah, teks isian, dan soal tanpa pilihan (uraian) juga dikenali.</li>
             <li>Soal Bahasa Arab: pilihan boleh <b>أ ب ج د</b> dan kunci <b>الجواب: ب</b>.</li>
@@ -3588,7 +3590,8 @@ Jawaban: B
       .srow { display:flex; gap: 6px; align-items:center; margin-bottom: 6px; } .srow input { flex: 1; } .srow .seg { flex: 0 0 auto; display:flex; gap: 4px; }
       .srow .seg button { min-height: 40px; min-width: 40px; padding: 0 10px; } .srow .seg button[aria-pressed="true"][data-b="0"] { background: #16A34A; border-color: #16A34A; color: #fff; }
       .srow .seg button[aria-pressed="true"][data-b="1"] { background: #DC2626; border-color: #DC2626; color: #fff; } .srow .rm { min-height: 40px; min-width: 40px; padding: 0; }
-      #catActs { margin-left: auto; display:flex; gap: 6px; align-items:center; } .mvbtn { min-height: 38px; padding: 6px 12px; font-size: 13.5px; }
+      #catActs { margin-left: auto; display:flex; gap: 6px; align-items:center; flex-wrap: wrap; }
+      @media (max-width: 640px) { #catActs { margin-left: 0; width: 100%; justify-content: flex-start; } } .mvbtn { min-height: 38px; padding: 6px 12px; font-size: 13.5px; }
       .tplw { display:flex; flex-wrap: wrap; gap: 6px; } .tplw button { min-height: 38px; padding: 6px 12px; font-size: 13.5px; border-radius: 999px; }
       .howbank { background: var(--soft); border-radius: 16px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
       .howbank ol { margin: 0; padding-left: 20px; } .howbank li { margin: 3px 0; }
@@ -3621,6 +3624,7 @@ Jawaban: B
       .pb .pt { flex: 1 1 220px; min-width: 0; } .pb .pt > b, .pb .pt > span { display:block; } .pb .pt span { color: var(--mut); font-size: 13.5px; }
       .pb .row { margin: 0; }
       .qc { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; margin-bottom: 10px; box-shadow: var(--shadow); }
+      .ptot { color: var(--brand); }
       .qc.on { border-color: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 25%, transparent); }
       .qpk { width: 20px; height: 20px; }
       .pickbar { position: sticky; bottom: 76px; z-index: 30; display:flex; gap: 8px; align-items:center; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; box-shadow: 0 10px 30px rgba(15,23,42,.18); margin-top: 12px; }
@@ -3665,7 +3669,9 @@ Jawaban: B
       TYPES.forEach(([k, v]) => $('ft').insertAdjacentHTML('beforeend', '<option value="' + k + '">' + v + '</option>'));
       D.cats.forEach((c) => $('catList').insertAdjacentHTML('beforeend', '<option value="' + esc(c.name) + '">'));
       // Tampilan awal "Soal saya": kartu per kategori. Ketuk kartu → daftar soalnya.
-      let catSel = null;
+      // Kategori yang sedang dibuka disimpan di alamat (#k=…) supaya tetap terbuka setelah simpan/muat ulang.
+      let catSel = (location.hash.match(/k=([\\w-]+)/) || [])[1] || null;
+      if (catSel && catSel !== '__none' && !D.cats.some((c) => c.id === catSel)) catSel = null;
       const CONTOH = [['contoh-ipa', 'Contoh IPA'], ['contoh-matematika', 'Contoh Matematika'], ['contoh-bahasa-indonesia', 'Contoh Bahasa Indonesia'], ['contoh-pancasila', 'Contoh Pendidikan Pancasila'], ['contoh-bahasa-arab', 'Contoh Bahasa Arab']];
       const HUES = [217, 160, 262, 340, 25, 190, 45, 290];
       const hue = (s) => HUES[[...String(s)].reduce((a, ch) => a + ch.charCodeAt(0), 0) % HUES.length];
@@ -3719,7 +3725,7 @@ Jawaban: B
       };
       $('catDel').onclick = async () => {
         if (!(await ask('Hapus kategori "' + CAT[catSel] + '"? Soal di dalamnya tidak ikut terhapus, tapi pindah ke "Tanpa kategori".'))) return;
-        try { await catApi('/api/categories/' + catSel, 'DELETE'); toast('Kategori dihapus.', 'ok'); softReload(); } catch (x) { toast(x.message, 'err'); }
+        try { await catApi('/api/categories/' + catSel, 'DELETE'); toast('Kategori dihapus.', 'ok'); catSel = null; history.replaceState(null, '', location.pathname); softReload(); } catch (x) { toast(x.message, 'err'); }
       };
 
       function keyView(q) {
@@ -3734,6 +3740,7 @@ Jawaban: B
       }
       function draw() {
         const t = $('fq').value.trim().toLowerCase(), ty = $('ft').value, ca = catSel;
+        history.replaceState(null, '', location.pathname + location.search + (ca ? '#k=' + ca : ''));
         if (ca === null && !t && !ty) {
           $('crumb').hidden = true; $('qsum').textContent = D.qs.length + ' soal dalam ' + D.cats.length + ' kategori.';
           $('qlist').innerHTML = folders(); return;
@@ -3744,9 +3751,11 @@ Jawaban: B
         $('crumbName').textContent = ca ? (ca === '__none' ? 'Tanpa kategori' : CAT[ca] || '') : 'Hasil pencarian';
         $('catActs').hidden = !ca; $('catRen').hidden = $('catDel').hidden = !ca || ca === '__none';
         const v = D.qs.filter((q) => (!ty || q.type === ty) && inCat(q) && (!t || (q.content.text || '').toLowerCase().includes(t)));
-        $('qsum').textContent = v.length !== D.qs.length ? v.length + ' dari ' + D.qs.length + ' soal tampil.' : 'Simpan soal sekali, pakai di ujian mana pun.';
+        const tot = Math.round(v.reduce((a, q) => a + (+q.points || 0), 0) * 100) / 100;
+        $('qsum').innerHTML = (v.length !== D.qs.length ? v.length + ' dari ' + D.qs.length + ' soal tampil' : D.qs.length + ' soal') +
+          ' · <b class="ptot">Total ' + String(tot).replace('.', ',') + ' poin</b>';
         $('qlist').innerHTML = v.length ? v.map((q) =>
-          '<article class="qc' + (picked.has(q.id) ? ' on' : '') + '"><div class="qc-top">' + (D.canDelete ? '<input type="checkbox" class="qpk" data-pk="' + q.id + '" aria-label="Pilih soal"' + (picked.has(q.id) ? ' checked' : '') + '>' : '') + '<span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + (+q.points) + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
+          '<article class="qc' + (picked.has(q.id) ? ' on' : '') + '"><div class="qc-top">' + (D.canDelete ? '<input type="checkbox" class="qpk" data-pk="' + q.id + '" aria-label="Pilih soal"' + (picked.has(q.id) ? ' checked' : '') + '>' : '') + '<span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + String(+q.points).replace('.', ',') + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
           (TYPES.some(([k]) => k === q.type) ? '<button type="button" data-ed="' + q.id + '">Edit</button>' : '') +
           (D.canDelete ? '<button type="button" class="danger" data-del="' + q.id + '">Hapus</button>' : '') + '</div>' +
           '<p>' + fmtText(q.content.text || '(tanpa teks)') + '</p>' + keyView(q) + '</article>').join('')
@@ -3776,6 +3785,20 @@ Jawaban: B
       $('pickAll').onclick = () => { shown.forEach((id) => picked.add(id)); draw(); };
       $('pickNone').onclick = () => { picked.clear(); draw(); };
       $('pickDel').onclick = () => delPicked([...picked], picked.size + ' soal yang dipilih');
+      // Atur poin semua soal yang tampil: sama rata, atau dibagi supaya totalnya pas (mis. 100).
+      if ($('catPts')) $('catPts').onclick = async () => {
+        const ids = shown.slice(); if (!ids.length) return;
+        const v = await askText('Atur poin ' + ids.length + ' soal. Ketik angka poin per soal (mis. 2), atau "total 100" supaya totalnya 100.', 'mis. 2 atau total 100'); if (!v) return;
+        const m = v.toLowerCase().match(/^(total\\s*)?(\\d+(?:[.,]\\d+)?)$/); if (!m) return toast('Ketik angka, mis. 2 atau total 100.', 'err');
+        const n = +m[2].replace(',', '.'), per = m[1] ? Math.floor(n / ids.length * 100) / 100 : n;
+        // Mode total: sisa pembulatan masuk ke soal terakhir supaya jumlahnya pas.
+        const last = m[1] ? Math.round((n - per * (ids.length - 1)) * 100) / 100 : per;
+        const put = async (list, points) => { const r = await fetch('/api/questions/points', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: list, points }) });
+          const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Gagal mengatur poin.'); };
+        try { if (last === per) await put(ids, per); else { await put(ids.slice(0, -1), per); await put(ids.slice(-1), last); } } catch (x) { return toast(x.message, 'err'); }
+        D.qs.forEach((q) => { const k = ids.indexOf(q.id); if (k >= 0) q.points = k === ids.length - 1 ? last : per; }); draw();
+        toast(ids.length + ' soal: ' + String(per).replace('.', ',') + ' poin per soal' + (last !== per ? ' (soal terakhir ' + String(last).replace('.', ',') + ')' : '') + '.', 'ok');
+      };
       if ($('catDelQ')) $('catDelQ').onclick = () => delPicked(shown.slice(), 'SEMUA ' + shown.length + ' soal di "' + $('crumbName').textContent + '"');
       ['fq','ft'].forEach((id) => $(id).addEventListener('input', draw));
       $('nMine').textContent = D.qs.length;
@@ -3997,13 +4020,13 @@ ${DOC_PARSER_JS}
       }
       // Template Word (.docx) dibuat langsung di browser.
       const TPL = {
-        pg: ['TEMPLATE SOAL PILIHAN GANDA', '', '1. Ibu kota Indonesia adalah …', 'A. Bandung', 'B. Jakarta', 'C. Surabaya', 'D. Medan', 'Jawaban: B', '', '2. Hasil dari 7 × 8 adalah …', 'A. 54', 'B. 56', 'C. 58', 'D. 64', 'Jawaban: B'],
-        pgk: ['TEMPLATE SOAL PILIHAN GANDA KOMPLEKS (jawaban lebih dari satu)', '', '1. Manakah yang termasuk hewan mamalia?', 'A. Kucing', 'B. Ayam', 'C. Paus', 'D. Katak', 'Jawaban: A, C'],
+        pg: ['TEMPLATE SOAL PILIHAN GANDA', '', '1. Ibu kota Indonesia adalah …', 'A. Bandung', 'B. Jakarta', 'C. Surabaya', 'D. Medan', 'Jawaban: B', 'Poin: 2', '', '2. Hasil dari 7 × 8 adalah …', 'A. 54', 'B. 56', 'C. 58', 'D. 64', 'Jawaban: B', 'Poin: 2'],
+        pgk: ['TEMPLATE SOAL PILIHAN GANDA KOMPLEKS (jawaban lebih dari satu)', '', '1. Manakah yang termasuk hewan mamalia?', 'A. Kucing', 'B. Ayam', 'C. Paus', 'D. Katak', 'Jawaban: A, C', 'Poin: 3'],
         bs: ['TEMPLATE SOAL BENAR / SALAH', '', '1. Matahari terbit dari arah timur.', 'Jawaban: Benar', '', '2. Air mendidih pada suhu 50 °C.', 'Jawaban: Salah'],
         bst: ['TEMPLATE SOAL BENAR / SALAH TABEL (beberapa pernyataan)', '', '1. Tentukan benar atau salah pernyataan berikut.', 'Satuan SI untuk massa adalah kilogram. (B)', 'Watt adalah satuan energi. (S)', 'Kecepatan termasuk besaran vektor. (B)'],
         mj: ['TEMPLATE SOAL MENJODOHKAN', '', '1. Jodohkan tokoh dengan perannya.', 'Ki Hajar Dewantara -> Bapak Pendidikan Nasional', 'R.A. Kartini -> Pelopor emansipasi perempuan', 'Ir. Soekarno -> Proklamator kemerdekaan'],
         ar: ['TEMPLATE SOAL BAHASA ARAB', '', '1. مَا مَعْنَى كَلِمَةِ "مَدْرَسَةٌ"؟', 'أ. Rumah', 'ب. Sekolah', 'ج. Masjid', 'د. Pasar', 'الجواب: ب', '', '2. اِخْتَرِ الْكَلِمَةَ الصَّحِيحَةَ: ذَهَبَ ... إِلَى الْمَدْرَسَةِ', 'أ. أَحْمَدُ', 'ب. أَحْمَدَ', 'ج. أَحْمَدِ', 'د. أَحْمَدٌ', 'الجواب: أ', '', '3. اُكْتُبْ تَرْجَمَةَ: "Saya pergi ke pasar"', '(soal tanpa pilihan = uraian)'],
-        isian: ['TEMPLATE SOAL ISIAN SINGKAT DAN URAIAN', '', '1. Ibu kota Jawa Timur adalah …', 'Jawaban: Surabaya', '', '2. Jelaskan proses terjadinya hujan!', '(soal tanpa pilihan dan tanpa jawaban = uraian, dinilai guru)'],
+        isian: ['TEMPLATE SOAL ISIAN SINGKAT DAN URAIAN', '', '1. Ibu kota Jawa Timur adalah …', 'Jawaban: Surabaya', 'Poin: 2', '', '2. Jelaskan proses terjadinya hujan!', 'Poin: 10', '(soal tanpa pilihan dan tanpa jawaban = uraian, dinilai guru)'],
       };
       TPL.semua = [].concat(TPL.pg, [''], TPL.pgk.slice(2).map((x) => x.replace(/^1\\\./, '3.')), [''], TPL.bs.slice(2).map((x) => x.replace(/^1\\\./, '4.').replace(/^2\\\./, '5.')), [''], TPL.isian.slice(2).map((x) => x.replace(/^1\\\./, '6.').replace(/^2\\\./, '7.')), [''], TPL.bst.slice(2).map((x) => x.replace(/^1\\\./, '8.')), [''], TPL.mj.slice(2).map((x) => x.replace(/^1\\\./, '9.')));
       TPL.semua[0] = 'TEMPLATE SOAL CBT YUK (SEMUA TIPE)';
