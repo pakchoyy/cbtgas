@@ -3503,7 +3503,7 @@ pages.get("/app/questions", async (c) => {
       <div class="crumb" id="crumb" hidden><button type="button" id="back">‹ Semua kategori</button><b id="crumbName"></b>
         <span class="acts" id="catActs"><button type="button" class="ibtn" id="catRen" title="Ubah nama kategori" aria-label="Ubah nama kategori">${ICON_EDIT}</button><button type="button" id="catMove" class="mvbtn">Pindahkan soal</button>${sess.role !== "proctor" ? `<button type="button" id="catPts" class="mvbtn">Atur poin</button><button type="button" id="catDelQ" class="mvbtn danger">Hapus semua soal</button>` : ""}<button type="button" class="ibtn del" id="catDel" title="Hapus kategori" aria-label="Hapus kategori">${ICON_DEL}</button></span></div>
       <div id="qlist"></div>
-      <div class="pickbar" id="pickBar" hidden><b id="pickN"></b><button type="button" id="pickAll">Pilih semua yang tampil</button><button type="button" id="pickNone">Batal</button><button type="button" class="primary dg" id="pickDel" style="background:var(--danger);border-color:var(--danger)">Hapus terpilih</button></div>
+      <div class="pickbar" id="pickBar" hidden><b id="pickN"></b><button type="button" id="pickAll">Pilih semua yang tampil</button><button type="button" id="pickNone">Batal</button><button type="button" id="pickMove">Pindahkan</button><button type="button" class="primary dg" id="pickDel" style="background:var(--danger);border-color:var(--danger)">Hapus terpilih</button></div>
     </section>
     <section id="tabPub" hidden>
       <div class="pubhead"><p class="muted" style="margin:0">Kumpulan soal yang dibagikan sekolah lain. Simpan ke bank Anda, lalu edit sesukanya.</p>
@@ -3625,7 +3625,7 @@ Jawaban: B
       .pb .row { margin: 0; }
       .qc { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; margin-bottom: 10px; box-shadow: var(--shadow); }
       .ptot { color: var(--brand); }
-      .qc.on { border-color: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 25%, transparent); }
+      .qc.on { border-color: var(--brand); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 25%, transparent); }
       .qpk { width: 20px; height: 20px; }
       .pickbar { position: sticky; bottom: 76px; z-index: 30; display:flex; gap: 8px; align-items:center; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; box-shadow: 0 10px 30px rgba(15,23,42,.18); margin-top: 12px; }
       .pickbar b { flex: 1; } .pickbar button { min-height: 40px; }
@@ -3785,6 +3785,15 @@ Jawaban: B
       $('pickAll').onclick = () => { shown.forEach((id) => picked.add(id)); draw(); };
       $('pickNone').onclick = () => { picked.clear(); draw(); };
       $('pickDel').onclick = () => delPicked([...picked], picked.size + ' soal yang dipilih');
+      $('pickMove').onclick = async () => {
+        const ids = [...picked]; if (!ids.length) return;
+        const to = await askText('Pindahkan ' + ids.length + ' soal ke kategori:', 'Ketik nama kategori (baru atau yang sudah ada)'); if (!to) return;
+        const r = await fetch('/api/questions/move', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, to_name: to }) });
+        const j = await r.json().catch(() => ({})); if (!r.ok) return toast(j.error || 'Gagal memindahkan.', 'err');
+        if (j.created) { D.cats.push({ id: j.category_id, name: to }); CAT[j.category_id] = to; }
+        const set = new Set(ids); D.qs.forEach((q) => { if (set.has(q.id)) q.category_id = j.category_id; });
+        picked.clear(); draw(); toast(j.moved + ' soal dipindah ke "' + (CAT[j.category_id] || to) + '".', 'ok');
+      };
       // Atur poin semua soal yang tampil: sama rata, atau dibagi supaya totalnya pas (mis. 100).
       if ($('catPts')) $('catPts').onclick = async () => {
         const ids = shown.slice(); if (!ids.length) return;

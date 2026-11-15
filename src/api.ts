@@ -1362,6 +1362,25 @@ api.patch("/api/questions/:id", async (c) => {
   return c.json(r);
 });
 
+// Pindahkan soal terpilih ke kategori lain (dibuat bila belum ada).
+api.post("/api/questions/move", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null) as null | { ids?: unknown[]; to_name?: string };
+  const ids = (body?.ids ?? []).filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 2000);
+  const to = body?.to_name?.trim();
+  if (!ids.length || !to) return c.json({ error: "Pilih soal dan isi kategori tujuan." }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const hit = await tx`select id from categories where lower(name) = lower(${to}) limit 1`;
+    const toId = hit.length ? (hit[0] as { id: string }).id
+      : ((await tx`insert into categories (school_id, name) values (${s.sid}, ${to}) returning id`)[0] as { id: string }).id;
+    const u = await tx`update questions set category_id = ${toId} where id in ${tx(ids)} returning id`;
+    return { moved: u.length, category_id: toId, created: !hit.length };
+  });
+  return c.json({ ok: true, ...r });
+});
+
 // Samakan poin banyak soal sekaligus (tombol "Atur poin" di Bank soal).
 api.post("/api/questions/points", async (c) => {
   const s = getSess(c);
