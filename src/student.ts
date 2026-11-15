@@ -12,6 +12,7 @@ import { checkOrLimit } from "./ratelimit";
 import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA, UI_JS, FMT_JS } from "./ui";
 import { createSession, finalizeSession } from "./scoring";
 import { tokenValid } from "./token";
+import { catchUp } from "./catchup";
 
 type Bindings = {
   HYPERDRIVE: Hyperdrive;
@@ -243,6 +244,7 @@ student.get("/s", async (c) => {
   if (!stu) return c.redirect("/s/login");
 
   const sql = connect(c.env.HYPERDRIVE.connectionString);
+  await catchUp(sql, stu.sid);
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const me = await tx`select s.name, c.name as class_name, s.class_id, sc.name as school, sc.logo_key is not null as has_logo
                         from students s left join classes c on c.id = s.class_id join schools sc on sc.id = s.school_id where s.id = ${stu.uid}`;
@@ -941,6 +943,7 @@ student.post("/s/exams/:id/start", async (c) => {
   const form = await c.req.parseBody().catch(() => ({} as Record<string, unknown>));
   const token = String(form.token ?? "");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
+  await catchUp(sql, stu.sid);
   const sessionId = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     // Pastikan ujian open, dalam jendela waktu, dan menargetkan kelas siswa.
     const ok = await tx`
@@ -972,6 +975,7 @@ student.get("/s/take/:sid", async (c) => {
   if (!stu) return c.redirect("/s/login");
   const sessionId = c.req.param("sid");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
+  await catchUp(sql, stu.sid);
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const s = await tx`
       select es.id, es.status, es.deadline_at, es.question_order,

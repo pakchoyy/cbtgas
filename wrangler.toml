@@ -20,7 +20,9 @@ id = "71378b2863a647df8b716a1ca5eef9be"
 
 # Cron trigger: flip exam.status setiap menit berdasarkan starts_at/ends_at.
 [triggers]
-crons = ["* * * * *"]
+# Tiap 6 jam saja (bersih-bersih). Transisi jadwal ujian diproses saat aplikasi dibuka (src/catchup.ts),
+# supaya database Neon bisa tidur saat sepi dan jatah komputasi gratis tidak habis.
+crons = ["17 */6 * * *"]
 
 [vars]
 APP_ENV = "production"

@@ -186,7 +186,8 @@ app.get("/api/students", async (c) => {
   return c.json(rows);
 });
 
-// Scheduled handler: jalan tiap menit via cron trigger di wrangler.toml.
+// Scheduled handler: tiap 6 jam (lihat wrangler.toml), untuk bersih-bersih dan menyusul transisi yang terlewat.
+// Transisi saat aplikasi dipakai diproses oleh catchUp() (src/catchup.ts).
 // Transisi otomatis status ujian berdasarkan jadwal.
 async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed: number; expired: number }> {
   const sql = connect(env.HYPERDRIVE.connectionString);

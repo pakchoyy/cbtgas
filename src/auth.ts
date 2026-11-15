@@ -17,6 +17,7 @@
 import { Hono } from "hono";
 import { SHARED_CSS } from "./ui";
 import { connect, withTenant } from "./db";
+import { catchUp } from "./catchup";
 import {
   Session, sign, verify, cookieHeader, clearCookie, readCookie, randomState,
 } from "./session";
@@ -272,6 +273,8 @@ export async function requireStaff(
   // shortcut: hasil cek akun aktif disimpan 60 dtk per isolate Worker; staf yang
   // dinonaktifkan kehilangan akses paling lambat 1 menit kemudian.
   const key = `${s.uid}:${s.sid}`, hit = staffOk.get(key);
+  // Jadwal ujian (buka/tutup) dan sesi kedaluwarsa diproses saat aplikasi dipakai.
+  await catchUp(connect(hyperdrive.connectionString), s.sid);
   if (hit && hit > Date.now()) return s;
   const sql = connect(hyperdrive.connectionString);
   const rows = await sql`select 1 from find_staff_by_email(${s.email}) where user_id = ${s.uid} and school_id = ${s.sid}`;
