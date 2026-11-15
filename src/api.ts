@@ -417,9 +417,44 @@ api.post("/api/categories", async (c) => {
   return c.json(r[0], 201);
 });
 
+// Ganti nama kategori.
+api.patch("/api/categories/:id", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null) as null | { name?: string };
+  const name = body?.name?.trim();
+  if (!name) return c.json({ error: "Nama kategori kosong." }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`update categories set name = ${name} where id = ${c.req.param("id")} returning id, name`);
+  return r.length ? c.json(r[0]) : c.json({ error: "Kategori tidak ditemukan." }, 404);
+});
+
+// Pindahkan semua soal dari satu kategori (atau "none" = tanpa kategori) ke kategori lain (dibuat bila belum ada).
+api.post("/api/categories/:id/move", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
+  const from = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as null | { to_name?: string };
+  const to = body?.to_name?.trim();
+  if (!to) return c.json({ error: "Kategori tujuan kosong." }, 400);
+  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const n = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const hit = await tx`select id from categories where lower(name) = lower(${to}) limit 1`;
+    const toId = hit.length ? (hit[0] as { id: string }).id
+      : ((await tx`insert into categories (school_id, name) values (${s.sid}, ${to}) returning id`)[0] as { id: string }).id;
+    const u = from === "none"
+      ? await tx`update questions set category_id = ${toId} where category_id is null or category_id not in (select id from categories)`
+      : await tx`update questions set category_id = ${toId} where category_id = ${from} and ${from} <> ${toId}`;
+    return u.count;
+  });
+  return c.json({ ok: true, moved: n });
+});
+
+// Hapus kategori; soalnya tidak ikut terhapus, jadi "Tanpa kategori".
 api.delete("/api/categories/:id", async (c) => {
   const s = getSess(c);
-  if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
+  if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`delete from categories where id = ${c.req.param("id")} returning id`,

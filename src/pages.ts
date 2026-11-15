@@ -3499,7 +3499,8 @@ pages.get("/app/questions", async (c) => {
         <input type="search" id="fq" placeholder="Cari soal…" aria-label="Cari soal">
         <select id="ft" aria-label="Tipe"><option value="">Semua tipe</option></select>
       </div>
-      <div class="crumb" id="crumb" hidden><button type="button" id="back">‹ Semua kategori</button><b id="crumbName"></b></div>
+      <div class="crumb" id="crumb" hidden><button type="button" id="back">‹ Semua kategori</button><b id="crumbName"></b>
+        <span class="acts" id="catActs"><button type="button" class="ibtn" id="catRen" title="Ubah nama kategori" aria-label="Ubah nama kategori">${ICON_EDIT}</button><button type="button" id="catMove" class="mvbtn">Pindahkan soal</button><button type="button" class="ibtn del" id="catDel" title="Hapus kategori" aria-label="Hapus kategori">${ICON_DEL}</button></span></div>
       <div id="qlist"></div>
     </section>
     <section id="tabPub" hidden>
@@ -3577,6 +3578,7 @@ Jawaban: B
           <label class="btn primary" style="margin:12px 0 0">Pilih file Word atau PDF<input type="file" id="upDocFile" accept=".docx,.pdf" hidden></label>
         </div>
         <div id="upPrev"></div>
+        <div id="upCatBox" hidden style="margin-top:14px"><label for="upCat">Simpan ke kategori</label><input id="upCat" list="catList" placeholder="mis. IPAS Kelas 6 (kosongkan = Tanpa kategori)"></div>
       </div>
       <div class="sheet-foot"><button type="button" id="upCancel">Batal</button><span class="spacer"></span><button type="button" class="primary" id="upGo" disabled>Simpan soal</button></div>
     </dialog>
@@ -3585,6 +3587,7 @@ Jawaban: B
       .srow { display:flex; gap: 6px; align-items:center; margin-bottom: 6px; } .srow input { flex: 1; } .srow .seg { flex: 0 0 auto; display:flex; gap: 4px; }
       .srow .seg button { min-height: 40px; min-width: 40px; padding: 0 10px; } .srow .seg button[aria-pressed="true"][data-b="0"] { background: #16A34A; border-color: #16A34A; color: #fff; }
       .srow .seg button[aria-pressed="true"][data-b="1"] { background: #DC2626; border-color: #DC2626; color: #fff; } .srow .rm { min-height: 40px; min-width: 40px; padding: 0; }
+      #catActs { margin-left: auto; display:flex; gap: 6px; align-items:center; } .mvbtn { min-height: 38px; padding: 6px 12px; font-size: 13.5px; }
       .tplw { display:flex; flex-wrap: wrap; gap: 6px; } .tplw button { min-height: 38px; padding: 6px 12px; font-size: 13.5px; border-radius: 999px; }
       .howbank { background: var(--soft); border-radius: 16px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
       .howbank ol { margin: 0; padding-left: 20px; } .howbank li { margin: 3px 0; }
@@ -3696,6 +3699,22 @@ Jawaban: B
         }
       });
       $('crumb').addEventListener('click', (e) => { if (e.target.closest('#back')) { catSel = null; $('fq').value = ''; $('ft').value = ''; draw(); } });
+      // Kelola kategori: ganti nama, pindahkan semua soalnya, hapus.
+      const catApi = async (url, method, body) => { const r = await fetch(url, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+        const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Gagal.'); return j; };
+      $('catRen').onclick = async () => {
+        const name = await askText('Nama baru kategori', 'mis. IPAS Kelas 6', CAT[catSel]); if (!name) return;
+        try { await catApi('/api/categories/' + catSel, 'PATCH', { name }); toast('Nama kategori diganti.', 'ok'); softReload(); } catch (x) { toast(x.message, 'err'); }
+      };
+      $('catMove').onclick = async () => {
+        const from = catSel === '__none' ? 'none' : catSel, nm = catSel === '__none' ? 'Tanpa kategori' : CAT[catSel];
+        const to = await askText('Pindahkan semua soal "' + nm + '" ke kategori:', 'Ketik nama kategori tujuan (baru atau yang sudah ada)'); if (!to) return;
+        try { const j = await catApi('/api/categories/' + from + '/move', 'POST', { to_name: to }); toast(j.moved + ' soal dipindah ke "' + to + '".', 'ok'); softReload(); } catch (x) { toast(x.message, 'err'); }
+      };
+      $('catDel').onclick = async () => {
+        if (!(await ask('Hapus kategori "' + CAT[catSel] + '"? Soal di dalamnya tidak ikut terhapus, tapi pindah ke "Tanpa kategori".'))) return;
+        try { await catApi('/api/categories/' + catSel, 'DELETE'); toast('Kategori dihapus.', 'ok'); softReload(); } catch (x) { toast(x.message, 'err'); }
+      };
 
       function keyView(q) {
         const k = q.answer_key || {}, o = q.content.options || [];
@@ -3717,6 +3736,7 @@ Jawaban: B
         const inCat = (q) => !ca || (ca === '__none' ? !q.category_id || !known.has(q.category_id) : q.category_id === ca);
         $('crumb').hidden = false;
         $('crumbName').textContent = ca ? (ca === '__none' ? 'Tanpa kategori' : CAT[ca] || '') : 'Hasil pencarian';
+        $('catActs').hidden = !ca; $('catRen').hidden = $('catDel').hidden = !ca || ca === '__none';
         const v = D.qs.filter((q) => (!ty || q.type === ty) && inCat(q) && (!t || (q.content.text || '').toLowerCase().includes(t)));
         $('qsum').textContent = v.length !== D.qs.length ? v.length + ' dari ' + D.qs.length + ' soal tampil.' : 'Simpan soal sekali, pakai di ujian mana pun.';
         $('qlist').innerHTML = v.length ? v.map((q) =>
@@ -3930,7 +3950,8 @@ Jawaban: B
 
       // ===== Upload Excel =====
       const up = $('up'); let rows = []; let lastText = [];
-      $('btnUp').onclick = () => { $('upPrev').innerHTML = ''; $('upGo').disabled = true; up.showModal(); };
+      $('btnUp').onclick = () => { $('upPrev').innerHTML = ''; $('upGo').disabled = true; $('upCatBox').hidden = true;
+        $('upCat').value = catSel && catSel !== '__none' && CAT[catSel] ? CAT[catSel] : ''; up.showModal(); };
       ['upX', 'upCancel'].forEach((id) => $(id).onclick = () => up.close());
 ${DOC_PARSER_JS}
       function showParsed(parsed, unit) {
@@ -3942,7 +3963,7 @@ ${DOC_PARSER_JS}
           : '<p class="err">Tidak ada soal yang dikenali. Pastikan soal bernomor (1. 2. 3.) dan pilihan diawali A. B. C.</p>' +
             (lastText.length ? '<details open><summary>Teks yang terbaca dari file (' + lastText.length + ' baris)</summary><pre class="sample">' + esc(lastText.slice(0, 40).join('\\n')) + '</pre></details>'
               : '<p class="hint">Tidak ada teks yang bisa dibaca. Jika PDF berupa hasil scan/foto, ketik ulang di Word atau ekspor dari Word ke PDF.</p>');
-        $('upGo').disabled = !rows.length;
+        $('upGo').disabled = !rows.length; $('upCatBox').hidden = !rows.length;
       }
       // Template Word (.docx) dibuat langsung di browser.
       const TPL = {
@@ -3984,10 +4005,11 @@ ${DOC_PARSER_JS}
       });
       $('upGo').onclick = async () => {
         $('upGo').disabled = true;
-        const r = await fetch('/api/questions/bulk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: rows }) });
+        const cn = $('upCat').value.trim();
+        const r = await fetch('/api/questions/bulk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: rows.map((q) => cn ? { ...q, category_name: cn } : q) }) });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { alert('Gagal: ' + (j.error || r.status)); $('upGo').disabled = false; return; }
-        alert(j.ok + ' soal tersimpan.' + (j.fail && j.fail.length ? '\\n' + j.fail.length + ' gagal: ' + j.fail.slice(0, 5).map((x) => 'baris ' + x.row + ' (' + x.error + ')').join(', ') : ''));
+        alert(j.ok + ' soal tersimpan' + (cn ? ' di kategori "' + cn + '"' : ' di "Tanpa kategori"') + '.' + (j.fail && j.fail.length ? '\\n' + j.fail.length + ' gagal: ' + j.fail.slice(0, 5).map((x) => 'baris ' + x.row + ' (' + x.error + ')').join(', ') : ''));
         softReload();
       };
     </script>
