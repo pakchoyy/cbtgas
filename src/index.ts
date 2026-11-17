@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { publicBank, incrementBankDownload } from "./dbfn";
 import { connect, withTenant, edgeCache } from "./db";
 import { auth, requireStaff, AuthBindings } from "./auth";
 import { pages } from "./pages";
@@ -62,8 +63,8 @@ app.get("/public/banks/:slug", async (c) => {
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   // Set konteks owner agar function call diizinkan grant-nya ke cbt_app.
   const rows = await withTenant(sql, { schoolId: "", role: "owner" }, async (tx) => {
-    const r = await tx`select * from public_bank(${slug})`;
-    if (r.length) await tx`select increment_bank_download(${slug})`;
+    const r = await publicBank(tx, slug);
+    if (r.length) await incrementBankDownload(tx, slug);
     return r;
   });
   if (rows.length === 0) return c.json({ error: "bank tidak ditemukan" }, 404);

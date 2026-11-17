@@ -1,6 +1,7 @@
 // Portal siswa: login dengan username + PIN; kerjakan ujian.
 // Cookie sesi siswa terpisah (cbt_sstu) agar tidak campur dengan sesi staf.
 
+import { findStudentsByUsername, resolveSchool } from "./dbfn";
 import { Hono, type Context } from "hono";
 import { connect, withTenant } from "./db";
 import { verifyPin, hashPin } from "./hash";
@@ -655,7 +656,7 @@ student.post("/s/login", async (c) => {
   // Tanpa kode sekolah: cari username di semua sekolah aktif, cocokkan PIN.
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   type Cand = { id: string; school_id: string; name: string; pin_hash: string; locked_until: string | null; pin_failed_count: number };
-  const cands = await sql`select * from find_students_by_username(${body.username})` as unknown as Cand[];
+  const cands = await findStudentsByUsername(sql, body.username) as unknown as Cand[];
   if (cands.length === 0) return c.json({ error: "Username atau PIN salah." }, 401);
   let u: Cand | null = null;
   for (const x of cands) {
@@ -701,7 +702,7 @@ student.post("/s/forgot", async (c) => {
   const body = await c.req.json().catch(() => null) as null | { username: string };
   if (!body?.username) return c.json({ error: "Isi username." }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const found = await sql`select school_id from find_students_by_username(${body.username})`;
+  const found = await findStudentsByUsername(sql, body.username);
   const contacts: Array<{ school: string; name: string; wa: string }> = [];
   // Username yang sama bisa ada di beberapa sekolah: ajukan ke semuanya.
   for (const { school_id: sid } of found as unknown as Array<{ school_id: string }>) {
@@ -848,7 +849,7 @@ student.post("/demo/siswa", async (c) => {
   const rl = await checkOrLimit(c.env, c.req.raw.headers, "demo_siswa", 20);
   if (rl) return rl;
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const sch = await sql`select id from resolve_school('demo-sma')`;
+  const sch = await resolveSchool(sql, 'demo-sma');
   if (sch.length === 0) return c.text("Sekolah demo belum disiapkan.", 503);
   const sid = (sch[0] as { id: string }).id;
   const rand = crypto.getRandomValues(new Uint8Array(4));

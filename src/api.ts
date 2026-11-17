@@ -1,5 +1,6 @@
 // REST API staf: kelas & siswa. Semua di-guard sesi staf dan dibungkus withTenant.
 
+import { usernameTaken, listPublicBanks, publicBank, incrementBankDownload } from "./dbfn";
 import { Hono } from "hono";
 import type postgres from "postgres";
 import { connect, withTenant, edgeCache } from "./db";
@@ -234,13 +235,12 @@ function gradeOf(cls: string): number | null {
 // Bila NISN ada, NISN dipakai sebagai username (mudah diingat siswa).
 async function newUsername(tx: postgres.TransactionSql, name: string, taken: Set<string>, nisn?: string | null): Promise<string> {
   const ni = String(nisn ?? "").replace(/\s/g, "");
-  if (/^\d{4,20}$/.test(ni) && !taken.has(ni) && !(await tx`select 1 from find_students_by_username(${ni}) limit 1`).length) return ni;
+  if (/^\d{4,20}$/.test(ni) && !taken.has(ni) && !(await usernameTaken(tx, ni))) return ni;
   const base = name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9 ]/g, "").trim().split(/\s+/).slice(0, 2).join(".").slice(0, 24) || "siswa";
   for (let n = 1; n < 200; n++) {
     const u = n === 1 ? base : `${base}${n}`;
     if (taken.has(u)) continue;
-    const hit = await tx`select 1 from find_students_by_username(${u}) limit 1`;
-    if (hit.length === 0) return u;
+    if (!(await usernameTaken(tx, u))) return u;
   }
   return `${base}${Date.now() % 100000}`;
 }
@@ -1081,7 +1081,7 @@ api.get("/api/public-banks", async (c) => {
   const s = getSess(c);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`select * from list_public_banks()`);
+    listPublicBanks(tx));
   return c.json(rows);
 });
 
@@ -1111,7 +1111,7 @@ api.post("/api/public-banks/:slug/save", async (c) => {
   const slug = c.req.param("slug");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const out = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
-    const r = await tx`select title, payload from public_bank(${slug})`;
+    const r = await publicBank(tx, slug);
     if (r.length === 0) return null;
     const bank = r[0] as { title: string; payload: { questions: Array<{ type: string; content: Record<string, unknown>; answer_key: Record<string, unknown> | null; rubric: string | null; points: unknown }> } };
     const cat = await tx`select id from categories where lower(name) = lower(${bank.title})`;
@@ -1127,7 +1127,7 @@ api.post("/api/public-banks/:slug/save", async (c) => {
         values (${(ins[0] as { id: string }).id}, ${s.sid}, ${q.answer_key as unknown as string}, ${q.rubric})`;
       ok++;
     }
-    await tx`select increment_bank_download(${slug})`;
+    await incrementBankDownload(tx, slug);
     await audit(tx, actorFromSession(s), "bank.save", "shared_bank", null, { slug, ok, skip });
     return { ok, skip, category: bank.title };
   });

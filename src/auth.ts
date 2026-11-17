@@ -14,6 +14,7 @@
 // Env/secret yang dibutuhkan di Worker:
 //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (secret), SESSION_SECRET (secret), APP_ORIGIN.
 
+import { findStaffByEmail, registerSchool, resolveSchool } from "./dbfn";
 import { Hono } from "hono";
 import { SHARED_CSS } from "./ui";
 import { connect, withTenant } from "./db";
@@ -125,7 +126,7 @@ auth.get("/auth/google/callback", async (c) => {
 
   // mode = login: cari staf yang email-nya diundang di sekolah manapun.
   const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const staff = await sql`select user_id, school_id, role from find_staff_by_email(${email})`;
+  const staff = await findStaffByEmail(sql, email);
   if (staff.length === 0) {
     // Pemilik layanan tanpa sekolah: langsung ke halaman pemantauan.
     if ((await sql`select 1 from system_owners where email = ${email}`).length) {
@@ -184,11 +185,11 @@ auth.post("/auth/register-school", async (c) => {
   for (let attempt = 0; attempt < 6 && !schoolId; attempt++) {
     const code = attempt === 0 ? baseCode : `${baseCode}-${1000 + Math.floor(Math.random() * 9000)}`;
     try {
-      const r = await sql`select register_school(
-        ${code}, ${body.name.trim()}, ${body.level}, ${body.npsn?.trim() || null},
-        ${body.operator_name.trim()}, ${body.operator_phone.trim()}, ${pending.email}, ${googleSub}
-      ) as id`;
-      schoolId = (r[0] as { id: string }).id;
+      schoolId = await registerSchool(sql, {
+        code, name: body.name.trim(), level: body.level, npsn: body.npsn?.trim() || null,
+        operator_name: body.operator_name.trim(), operator_phone: body.operator_phone.trim(),
+        admin_email: pending.email, google_sub: googleSub,
+      });
     } catch (e) {
       const err = e as { code?: string; constraint_name?: string; message?: string };
       // Bentrok kode → coba lagi dengan akhiran acak. Galat lain langsung dilaporkan.
@@ -230,7 +231,7 @@ auth.post("/auth/dev-login", async (c) => {
   }
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   // resolve_school SECURITY DEFINER → aman tanpa RLS context.
-  const sch = await sql`select id from resolve_school('demo-sma')`;
+  const sch = await resolveSchool(sql, 'demo-sma');
   if (sch.length === 0) return c.json({ error: "demo school not seeded" }, 404);
   const sid = (sch[0] as { id: string }).id;
   const row = await withTenant(sql, { schoolId: sid, role: "admin" }, (tx) =>
@@ -277,7 +278,7 @@ export async function requireStaff(
   await catchUp(connect(hyperdrive.connectionString), s.sid);
   if (hit && hit > Date.now()) return s;
   const sql = connect(hyperdrive.connectionString);
-  const rows = await sql`select 1 from find_staff_by_email(${s.email}) where user_id = ${s.uid} and school_id = ${s.sid}`;
+  const rows = (await findStaffByEmail(sql, s.email)).filter((r) => r.user_id === s.uid && r.school_id === s.sid);
   if (!rows.length) { staffOk.delete(key); return null; }
   if (staffOk.size > 5000) staffOk.clear();
   staffOk.set(key, Date.now() + 60_000);
