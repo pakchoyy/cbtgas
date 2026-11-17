@@ -64,22 +64,39 @@ function chunks(str) {
   return out;
 }
 
+// Kunci baris untuk UPDATE bertahap (kolom yang mengidentifikasi satu baris).
+const KEYS = { question_keys: ["question_id"], answers: ["session_id", "question_id"], scores: ["session_id"] };
+const keyOf = (table) => (table.cols.some((c) => c.name === "id") ? ["id"] : KEYS[table.name] ?? null);
+
 export function insertSql(table, rows) {
   const cols = table.cols;
   const names = cols.map((c) => c.name).join(", ");
-  const hasId = cols.some((c) => c.name === "id");
+  const key = keyOf(table);
   const stmts = [];
   for (const r of rows) {
     const rest = [];
+    const where = () => key.map((k) => `${k} = ${q(r[k])}`).join(" AND ");
     const vals = cols.map((c) => {
       const v = r[c.name];
-      if (typeof v === "string" && v.length > CHUNK && c.type === "text" && !c.json) {
-        if (!hasId) throw new Error(`nilai terlalu panjang di ${table.name}.${c.name} (tabel tanpa id)`);
-        const [first, ...more] = chunks(v);
-        rest.push(...more.map((part) => `UPDATE ${table.name} SET ${c.name} = ${c.name} || ${q(part)} WHERE id = ${q(r.id)};`));
+      const text = c.json ? (v === null || v === undefined ? null : JSON.stringify(v)) : typeof v === "string" ? v : null;
+      if (text === null || text.length <= CHUNK || (c.type !== "text")) return literal(v, c);
+      if (!key) throw new Error(`nilai terlalu panjang di ${table.name}.${c.name} (tabel tanpa kunci baris)`);
+      const [first, ...more] = chunks(text);
+      if (!c.json) {
+        // teks biasa: sambung langsung di kolomnya
+        rest.push(...more.map((part) => `UPDATE ${table.name} SET ${c.name} = ${c.name} || ${q(part)} WHERE ${where()};`));
         return q(first);
       }
-      return literal(v, c);
+      // JSON: potongan tak valid sebagai JSON (CHECK json_valid), jadi dirakit di tabel penampung tanpa CHECK lalu dipindah utuh.
+      const k = q(`${table.name}.${c.name}.${key.map((x) => r[x]).join("/")}`);
+      rest.push(
+        "CREATE TABLE IF NOT EXISTS _mig_buf (k TEXT PRIMARY KEY, v TEXT NOT NULL);",
+        `INSERT INTO _mig_buf (k, v) VALUES (${k}, ${q(first)});`,
+        ...more.map((part) => `UPDATE _mig_buf SET v = v || ${q(part)} WHERE k = ${k};`),
+        `UPDATE ${table.name} SET ${c.name} = (SELECT v FROM _mig_buf WHERE k = ${k}) WHERE ${where()};`,
+        "DROP TABLE _mig_buf;",
+      );
+      return "'null'"; // JSON sah sementara; diganti nilai utuh oleh UPDATE di atas
     });
     stmts.push(`INSERT INTO ${table.name} (${names}) VALUES (${vals.join(", ")});`, ...rest);
   }

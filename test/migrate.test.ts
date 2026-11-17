@@ -113,3 +113,21 @@ test("teks sangat panjang (logo data URI) dipecah agar tiap statement < 100 KB, 
   for (const s of stmts) { assert.ok(Buffer.byteLength(s) < 100_000); db.exec(s); }
   assert.equal((db.prepare("select logo_key from schools").get() as any).logo_key, logo);
 });
+
+test("JSON sangat panjang (gambar/audio soal, isi bank publik) dirakit bertahap: tiap statement < 100 KB, CHECK json_valid lolos, hasil utuh", () => {
+  const db = new DatabaseSync(":memory:"); db.exec("PRAGMA foreign_keys=ON"); db.exec(schemaSql);
+  db.exec("insert into schools (id,code,name,level,operator_name,operator_phone) values ('s1','sma-x','X','SMA','o','1')");
+  const img = "data:image/png;base64," + "Qm9v".repeat(60000); // ~240 KB
+  const content = { text: "Perhatikan gambar 'ini' 😀", image: img, audio: "data:audio/mpeg;base64," + "QUFB".repeat(40000), options: ["a", "b"] };
+  const stmts = [
+    ...insertSql(T("questions"), [{ id: "q1", school_id: "s1", type: "pg", content, points: 1, created_at: new Date(), updated_at: new Date() }]),
+    ...insertSql(T("question_keys"), [{ question_id: "q1", school_id: "s1", answer_key: { index: 0, note: "x".repeat(150000) }, rubric: null }]),
+    ...insertSql(T("shared_banks"), [{ id: "b1", school_id: "s1", slug: "bank-1", title: "B", payload: { questions: [content, content] }, download_count: 0, created_at: new Date() }]),
+  ];
+  assert.ok(stmts.length > 20);
+  for (const st of stmts) { assert.ok(Buffer.byteLength(st) < 100_000, `statement ${Buffer.byteLength(st)} byte`); db.exec(st); }
+  assert.deepEqual(JSON.parse((db.prepare("select content from questions").get() as any).content), content);
+  assert.equal(JSON.parse((db.prepare("select answer_key from question_keys").get() as any).answer_key).note.length, 150000);
+  assert.deepEqual(JSON.parse((db.prepare("select payload from shared_banks").get() as any).payload), { questions: [content, content] });
+  assert.equal((db.prepare("select count(*) as n from sqlite_master where name = '_mig_buf'").get() as any).n, 0); // penampung dibersihkan
+});
