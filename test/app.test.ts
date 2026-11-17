@@ -233,3 +233,51 @@ test("catchUp D1: sesi kedaluwarsa diproses bertahap (5 per permintaan), semuany
   try { await catchUp(sql, SID); await catchUp(sql, SID); } finally { Date.now = realNow; }
   assert.equal(await done(), 12);
 });
+
+test("isolasi antar sekolah lewat rute asli: guru/siswa sekolah A tidak bisa membaca atau mengubah data sekolah B", async () => {
+  const w = await boot();
+  const B = "bbbbbbbb-0000-4000-8000-000000000002";
+  await w.open`insert into schools (id,code,name,level,operator_name,operator_phone) values (${B},'sek-b','Sekolah B','SMA','Op','081')`;
+  await w.open`insert into classes (id,school_id,name,year) values ('clB',${B},'B-1','2026')`;
+  await w.open`insert into students (id,school_id,class_id,name,username,pin_hash) values ('stB',${B},'clB','Siswa B','siswab','h')`;
+  await w.open`insert into exams (id,school_id,title,kind,duration_minutes,status) values ('EB',${B},'Rahasia B','harian',30,'open')`;
+  await w.open`insert into exam_classes (exam_id,class_id,school_id) values ('EB','clB',${B})`;
+  await w.open`insert into questions (id,school_id,type,content,points) values ('qB',${B},'pg',${{ text: "SOAL RAHASIA B" }},1)`;
+  await w.open`insert into question_keys (question_id,school_id,answer_key) values ('qB',${B},${{ index: 0 }})`;
+  await w.open`insert into exam_questions (exam_id,question_id,school_id,position) values ('EB','qB',${B},1)`;
+  await w.open`insert into exam_sessions (id,school_id,exam_id,student_id,deadline_at) values ('sesB',${B},'EB','stB',now())`;
+
+  const staff = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" })); // admin sekolah A
+  const leaks: string[] = [];
+  for (const p of ["/app/exams/EB", "/app/exams/EB/live", "/app/exams/EB/items", "/app/exams/EB/print", "/app/students/stB/report",
+    "/app/sessions/sesB/grade", "/api/exams/EB/scores", "/api/exams/EB/live", "/api/exams/EB/summary", "/api/questions/qB", "/api/students/stB/analytics"]) {
+    const r = await w.call(p, { cookie: staff });
+    const t = await r.text();
+    if (/Rahasia B|SOAL RAHASIA B|Siswa B/.test(t)) leaks.push(`${p} membocorkan data B (status ${r.status})`);
+  }
+  assert.deepEqual(leaks, []);
+  assert.ok(!(await (await w.call("/api/exams", { cookie: staff })).text()).includes("Rahasia B"));
+  assert.ok(!(await (await w.call("/api/questions", { cookie: staff })).text()).includes("SOAL RAHASIA B"));
+  assert.ok(!(await (await w.call("/api/students", { cookie: staff })).text()).includes("Siswa B"));
+
+  // menulis ke data B juga ditolak/tak berpengaruh
+  const json = (m: string, b: unknown) => ({ method: m, headers: { "Content-Type": "application/json" }, body: JSON.stringify(b), cookie: staff });
+  await w.call("/api/exams/EB", json("PATCH", { title: "DIBAJAK" }));
+  await w.call("/api/exams/EB/questions", json("POST", { question_ids: [] }));
+  await w.call("/api/exams/EB", { method: "DELETE", cookie: staff });
+  await w.call("/api/questions/qB", { method: "DELETE", cookie: staff });
+  assert.equal((await w.open`select title from exams where id = 'EB'`)[0].title, "Rahasia B");
+  assert.equal((await w.open`select count(*) as n from exam_questions where exam_id = 'EB'`)[0].n, 1);
+  assert.equal((await w.open`select count(*) as n from questions where id = 'qB'`)[0].n, 1);
+
+  // siswa A tidak bisa masuk ke sesi/ujian B
+  const stu = w.cookieOf(await w.call("/s/login", json("POST", { username: "siswa1", pin: "123456" })));
+  const take = await w.call("/s/take/sesB", { cookie: stu });
+  assert.ok(!(await take.text()).includes("SOAL RAHASIA B"));
+  const sub = await w.call("/s/take/sesB/submit", { method: "POST", cookie: stu });
+  assert.notEqual(sub.status, 200);
+  assert.equal((await w.open`select status from exam_sessions where id = 'sesB'`)[0].status, "active");
+  const start = await w.call("/s/exams/EB/start", { method: "POST", cookie: stu, headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" });
+  assert.match(start.headers.get("location") ?? "", /err=/); // ditolak: ujian bukan untuk kelas siswa A
+  assert.equal((await w.open`select count(*) as n from exam_sessions where exam_id = 'EB' and student_id = 'st'`)[0].n, 0);
+});
