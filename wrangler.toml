@@ -19,10 +19,10 @@ binding = "HYPERDRIVE"
 id = "71378b2863a647df8b716a1ca5eef9be"
 
 # Cloudflare D1 (migrasi dari Neon). Tidak aktif sebelum blok ini dibuka DAN DB_BACKEND="d1" diset (lihat db/d1/README.md).
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "cbt-yuk"
-# database_id = "ISI-DENGAN-ID-DARI-wrangler-d1-create"
+[[d1_databases]]
+binding = "DB"
+database_name = "cbt-yuk"
+database_id = "59225b67-351f-4083-b591-f767c7344063"
 
 # Cron trigger: flip exam.status setiap menit berdasarkan starts_at/ends_at.
 [triggers]
@@ -35,8 +35,8 @@ APP_ENV = "production"
 # Tombol "Coba demo" + /auth/dev-login (masuk sebagai admin sekolah demo-sma). Hapus untuk mematikan.
 DEMO_LOGIN = "1"
 APP_ORIGIN = "https://cbt-yuk.web.id"
-# Backend database: kosong = Neon (bawaan). "d1" = Cloudflare D1. Jangan diisi sebelum D1 teruji.
-# DB_BACKEND = "d1"
+# Backend database: kosong = Neon (bawaan). "d1" = Cloudflare D1. Jalan mundur: hapus baris ini lalu deploy.
+DB_BACKEND = "d1"
 
 # Secrets (set via `wrangler secret put`):
 #   GOOGLE_CLIENT_ID       — OAuth 2.0 Client ID (Web application) di Google Cloud
