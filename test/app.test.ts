@@ -161,3 +161,75 @@ test("penulisan staf lewat rute asli: ganti soal/kelas ujian (atomik), impor soa
   await post(`/api/exams/${id}`, { starts_at: "2026-11-19T10:00:00+07:00" }, "PATCH");
   assert.equal((await w.open`select starts_at from exams where id = ${id}`)[0].starts_at, "2026-11-19T03:00:00.000Z");
 });
+
+// Anggaran query per permintaan. D1 paket gratis: 50, berbayar: 1000 (per invokasi Worker). Statement dalam batch() dihitung satu per satu.
+test("jumlah query D1 per rute (laporan + anggaran paket gratis 50)", async () => {
+  const w = await boot();
+  const staff = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const stu = w.cookieOf(await w.call("/s/login", json({ username: "siswa1", pin: "123456" })));
+  const form = { "Content-Type": "application/x-www-form-urlencoded" };
+  const rows: Array<[string, number]> = [];
+  const measure = async (label: string, path: string, init: RequestInit & { cookie?: string }) => {
+    const before = w.stats.queries;
+    const r = await w.call(path, init);
+    await r.text();
+    rows.push([`${init.method ?? "GET"} ${label}`, w.stats.queries - before]);
+    return r;
+  };
+  const st = await measure("/s/exams/:id/start", "/s/exams/E/start", { method: "POST", cookie: stu, headers: form, body: "token=" });
+  const sid = st.headers.get("location")!.split("/").pop()!;
+  await measure("/s", "/s", { cookie: stu });
+  await measure("/s/take/:sid", `/s/take/${sid}`, { cookie: stu });
+  await measure("/s/take/:sid/answers", `/s/take/${sid}/answers`, { ...json({ answers: [{ question_id: "q1", index: 1 }, { question_id: "q2", text: "x" }, { question_id: "q3", selected: [0] }] }), cookie: stu });
+  await measure("/s/take/:sid/ping", `/s/take/${sid}/ping`, { method: "POST", cookie: stu });
+  await measure("/s/take/:sid/violation", `/s/take/${sid}/violation`, { ...json({ kind: "tab_blur" }), cookie: stu });
+  await measure("/s/take/:sid/submit", `/s/take/${sid}/submit`, { method: "POST", cookie: stu });
+  await measure("/s/done/:sid", `/s/done/${sid}`, { cookie: stu });
+  for (const p of ["/app", "/app/students", "/app/exams", "/app/exams/E", "/app/exams/E/live", "/app/exams/E/insights", "/app/exams/E/items",
+    "/app/bank", "/app/questions", "/app/students/st/report", "/app/restore", "/api/overview", "/api/exams/E/live", "/api/exams/E/scores", "/api/reports/backup.json", "/owner"]) {
+    await measure(p, p, { cookie: staff });
+  }
+  rows.sort((a, b) => b[1] - a[1]);
+  console.log("\nQUERY PER RUTE (terbanyak dulu):\n" + rows.map(([k, n]) => `${String(n).padStart(4)}  ${k}`).join("\n"));
+  const over = rows.filter(([, n]) => n > 50);
+  assert.deepEqual(over, [], "rute melebihi 50 query (batas paket gratis D1)");
+});
+
+test("simpan jawaban: 120 jawaban = sedikit query (insert banyak baris), tetap menggabung kunci lama", async () => {
+  const w = await boot();
+  for (let i = 0; i < 120; i++) {
+    await w.open`insert into questions (id,school_id,type,content,points) values (${"x" + i},${SID},'pg','{}',1)`;
+    await w.open`insert into exam_questions (exam_id,question_id,school_id,position) values ('E',${"x" + i},${SID},${10 + i})`;
+  }
+  const stu = w.cookieOf(await w.call("/s/login", json({ username: "siswa1", pin: "123456" })));
+  const st = await w.call("/s/exams/E/start", { method: "POST", cookie: stu, headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" });
+  const sid = st.headers.get("location")!.split("/").pop()!;
+  await w.call(`/s/take/${sid}/answers`, { ...json({ answers: [{ question_id: "x0", index: 1, note: "a" }] }), cookie: stu });
+  const before = w.stats.queries;
+  const body = { answers: Array.from({ length: 120 }, (_, i) => ({ question_id: "x" + i, index: 0 })) };
+  assert.deepEqual(await jsonOf(await w.call(`/s/take/${sid}/answers`, { ...json(body), cookie: stu })), { ok: true, saved: 120 });
+  const used = w.stats.queries - before;
+  assert.ok(used <= 12, `120 jawaban memakai ${used} query`);
+  assert.equal((await w.open`select count(*) as n from answers where session_id = ${sid}`)[0].n, 120);
+  assert.deepEqual((await w.open`select answer from answers where session_id = ${sid} and question_id = 'x0'`)[0].answer, { index: 0, note: "a" });
+});
+
+test("catchUp D1: sesi kedaluwarsa diproses bertahap (5 per permintaan), semuanya akhirnya selesai", async () => {
+  const w = await boot();
+  const { catchUp } = await import("../src/catchup.ts");
+  const sql = connectD1(w.d1);
+  for (let i = 0; i < 12; i++) {
+    await w.open`insert into students (id,school_id,class_id,name,username,pin_hash) values (${"s" + i},${SID},'cl','N',${"u" + i},'h')`;
+    await w.open`insert into exam_sessions (id,school_id,exam_id,student_id,deadline_at,status) values (${"se" + i},${SID},'E',${"s" + i},'2020-01-01T00:00:00.000Z','active')`;
+  }
+  const done = async () => (await w.open`select count(*) as n from exam_sessions where status = 'expired'`)[0].n;
+  // catchUp menahan diri 20 detik per sekolah per proses; majukan jam palsu supaya tiap panggilan benar-benar jalan
+  const realNow = Date.now; let t = realNow() + 3_600_000;
+  Date.now = () => (t += 30_000);
+  const q0 = w.stats.queries;
+  await catchUp(sql, SID);
+  assert.equal(await done(), 5);
+  assert.ok(w.stats.queries - q0 <= 50, `catchUp memakai ${w.stats.queries - q0} query`);
+  try { await catchUp(sql, SID); await catchUp(sql, SID); } finally { Date.now = realNow; }
+  assert.equal(await done(), 12);
+});

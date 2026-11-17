@@ -1724,6 +1724,16 @@ async function saveAnswers(c: Context<{ Bindings: Bindings }>, list: AnswerIn[])
     const ok = await tx`select 1 from exam_sessions where id = ${sessionId} and student_id = ${stu.uid} and status = 'active'
                         and deadline_at > now() - interval '10 minutes' and paused_at is null`;
     if (!ok.length) return 0;
+    if (isD1(tx)) {
+      // D1 membatasi jumlah query per permintaan: satu insert banyak baris (dipecah per 100 parameter), bukan satu per jawaban.
+      // json_patch = penggabungan kunci seperti "|| jsonb" di jalur Neon di bawah.
+      const at = new Date().toISOString();
+      const rows = items.map(([qid, ans]) => ({ session_id: sessionId, question_id: qid, school_id: stu.sid, answer: ans, updated_at: at }));
+      await atomic(tx, [(q) => q`insert into answers ${q(rows, "session_id", "question_id", "school_id", "answer", "updated_at")}
+        on conflict (session_id, question_id)
+        do update set answer = json_patch(coalesce(answers.answer, '{}'), excluded.answer), updated_at = excluded.updated_at`]);
+      return items.length;
+    }
     for (const [qid, ans] of items) {
       await tx`insert into answers (session_id, question_id, school_id, answer, updated_at)
          values (${sessionId}, ${qid}, ${stu.sid}, ${ans as unknown as string}, now())

@@ -151,8 +151,14 @@ function build(strings: TemplateStringsArray, values: unknown[]): Fragment {
       text += `"${v.name}"`;
     } else if (v instanceof List) {
       if (!v.items.length) throw new Error("d1: tx(list) kosong ('in ()' tidak valid)");
-      text += `(${v.items.map(() => "?").join(",")})`;
-      params.push(...v.items.map(bind));
+      // Daftar id panjang (mis. ujian 120 soal) melewati batas 100 parameter: sisipkan sebagai literal. Aman karena hanya
+      // string id (huruf/angka/_/-) yang boleh; selain itu tetap parameter dan kena batas.
+      if (v.items.length > 40 && v.items.every((x) => typeof x === "string" && /^[\w-]{1,64}$/.test(x))) {
+        text += `(${v.items.map((x) => `'${x}'`).join(",")})`;
+      } else {
+        text += `(${v.items.map(() => "?").join(",")})`;
+        params.push(...v.items.map(bind));
+      }
     } else if (v instanceof Json) {
       text += "?";
       params.push(JSON.stringify(v.v));

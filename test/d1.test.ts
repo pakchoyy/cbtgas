@@ -87,3 +87,14 @@ test("cast operan berkurung/fungsi, greatest null-aman, jsonb_array_length(x->'k
   const [b] = await sql`select jsonb_array_length(payload->'questions') as n from shared_banks`;
   assert.equal(b.n, 4);
 });
+
+test("daftar id panjang (>100) disisipkan sebagai literal; angka/teks aneh tetap kena batas parameter", async () => {
+  const sql = connectD1(fakeD1()).unscoped();
+  await sql`insert into schools (id,code,name,level,operator_name,operator_phone) values ('s','abc','n','SMA','o','1')`;
+  const ids = Array.from({ length: 250 }, (_, i) => `id-${i}`);
+  await sql`insert into categories ${sql(ids.map((id) => ({ id, school_id: "s", name: id })), "id", "school_id", "name")}`;
+  assert.equal((await sql`select count(*) as n from categories where id in ${sql(ids)}`)[0].n, 250);
+  assert.equal((await sql`update categories set name = 'x' where id in ${sql(ids.slice(0, 120))} returning id`).length, 120);
+  // string berbahaya tidak pernah disisipkan: jatuh ke parameter lalu ditolak karena melewati batas
+  await assert.rejects(sql`select 1 where 'a' in ${sql([...ids, "x' or '1'='1"])}`, /melebihi batas/);
+});
