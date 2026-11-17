@@ -1,22 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
+import { fakeD1 } from "./fake-d1.ts";
 import { connectD1 } from "../src/d1.ts";
 import { scoreItems, scoreItem, jsonEq, type Item } from "../src/score.ts";
 
 const it = (o: Partial<Item> & { type: string }): Item => ({ points: 1, weight: 1, penalty: 0, key: null, ans: null, ...o });
 
-function fakeD1() {
-  const db = new DatabaseSync(":memory:");
-  db.exec("PRAGMA foreign_keys=ON");
-  db.exec(readFileSync(new URL("../db/d1/0001_init.sql", import.meta.url), "utf8"));
-  return { prepare: (sql: string) => ({ bind: (...p: unknown[]) => ({ all: async () => {
-    const st = db.prepare(sql);
-    if (st.columns().length) return { results: st.all(...(p as never[])), meta: { changes: 0 } };
-    return { results: [], meta: { changes: Number(st.run(...(p as never[])).changes) } };
-  } }) }) } as unknown as D1Database;
-}
 
 // Fixture sama dengan db/tests/score_session.sql; hasil acuan: got 5.25, total 13, pending 2.
 test("fixture db/tests/score_session.sql di D1 = 5.25 / 13 / 2", async () => {

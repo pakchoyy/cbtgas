@@ -1,5 +1,6 @@
 // REST API staf: kelas & siswa. Semua di-guard sesi staf dan dibungkus withTenant.
 
+import { atomic } from "./dbfn";
 import { isD1 } from "./d1";
 import { categoryStatsD1 } from "./statsd1";
 import { orderLength } from "./score";
@@ -1302,6 +1303,33 @@ api.post("/api/questions/bulk", async (c) => {
     const cats = new Map<string, string>();
     for (const r of await tx`select id, name from categories` as unknown as Array<{ id: string; name: string }>) cats.set(r.name.toLowerCase(), r.id);
     let ok = 0; const ids: string[] = []; const fail: Array<{ row: number; error: string }> = [];
+    if (isD1(tx)) {
+      // D1: dibatasi jumlah query per permintaan dan tak punya "returning" antar langkah, jadi: id dibuat di sini,
+      // lalu kategori + soal + kunci masuk sebagai insert banyak baris dalam SATU transaksi (semua soal atau tidak sama sekali).
+      const newCats: Array<Record<string, unknown>> = [], qRows: Array<Record<string, unknown>> = [], kRows: Array<Record<string, unknown>> = [];
+      for (let i = 0; i < body.questions.length; i++) {
+        const row = { ...body.questions[i] };
+        const cname = typeof row.category_name === "string" ? row.category_name.trim() : "";
+        if (cname) {
+          let cid = cats.get(cname.toLowerCase());
+          if (!cid) { cid = crypto.randomUUID(); cats.set(cname.toLowerCase(), cid); newCats.push({ id: cid, school_id: s.sid, name: cname }); }
+          row.category_id = cid;
+        }
+        const q = buildQuestion(row);
+        if ("error" in q) { fail.push({ row: Number(row.row ?? i + 2), error: q.error }); continue; }
+        const qid = crypto.randomUUID();
+        qRows.push({ id: qid, school_id: s.sid, author_id: s.uid, type: q.type, content: q.content, points: q.points, category_id: q.categoryId });
+        kRows.push({ question_id: qid, school_id: s.sid, answer_key: q.answer_key, rubric: q.rubric });
+        ids.push(qid); ok++;
+      }
+      await atomic(tx, [
+        ...(newCats.length ? [(x: typeof tx) => x`insert into categories ${x(newCats, "id", "school_id", "name")}`] : []),
+        ...(qRows.length ? [(x: typeof tx) => x`insert into questions ${x(qRows, "id", "school_id", "author_id", "type", "content", "points", "category_id")}`] : []),
+        ...(kRows.length ? [(x: typeof tx) => x`insert into question_keys ${x(kRows, "question_id", "school_id", "answer_key", "rubric")}`] : []),
+      ]);
+      await audit(tx, actorFromSession(s), "question.bulk", "question", null, { ok, fail: fail.length });
+      return { ok, ids, fail };
+    }
     for (let i = 0; i < body.questions.length; i++) {
       const row = { ...body.questions[i] };
       const cname = typeof row.category_name === "string" ? row.category_name.trim() : "";
@@ -2088,11 +2116,12 @@ api.post("/api/exams/:id/questions", async (c) => {
   if (!body || !Array.isArray(body.question_ids)) return c.json({ error: "bad body" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
-    await tx`delete from exam_questions where exam_id = ${id}`;
-    if (body.question_ids.length) {
-      const rows = body.question_ids.map((qid, i) => ({ exam_id: id, question_id: qid, school_id: s.sid, position: i + 1 }));
-      await tx`insert into exam_questions ${tx(rows, "exam_id", "question_id", "school_id", "position")}`;
-    }
+    // Hapus lalu isi ulang harus atomik: kalau berhenti di tengah, ujian tak boleh kehilangan semua soalnya.
+    const rows = body.question_ids.map((qid, i) => ({ exam_id: id, question_id: qid, school_id: s.sid, position: i + 1 }));
+    await atomic(tx, [
+      (q) => q`delete from exam_questions where exam_id = ${id}`,
+      ...(rows.length ? [(q: typeof tx) => q`insert into exam_questions ${q(rows, "exam_id", "question_id", "school_id", "position")}`] : []),
+    ]);
   });
   return c.json({ ok: true, count: body.question_ids.length });
 });
@@ -2105,11 +2134,11 @@ api.post("/api/exams/:id/classes", async (c) => {
   if (!body || !Array.isArray(body.class_ids)) return c.json({ error: "bad body" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
-    await tx`delete from exam_classes where exam_id = ${id}`;
-    if (body.class_ids.length) {
-      const rows = body.class_ids.map((cid) => ({ exam_id: id, class_id: cid, school_id: s.sid }));
-      await tx`insert into exam_classes ${tx(rows, "exam_id", "class_id", "school_id")}`;
-    }
+    const rows = body.class_ids.map((cid) => ({ exam_id: id, class_id: cid, school_id: s.sid }));
+    await atomic(tx, [
+      (q) => q`delete from exam_classes where exam_id = ${id}`,
+      ...(rows.length ? [(q: typeof tx) => q`insert into exam_classes ${q(rows, "exam_id", "class_id", "school_id")}`] : []),
+    ]);
   });
   return c.json({ ok: true, count: body.class_ids.length });
 });

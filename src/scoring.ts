@@ -2,22 +2,50 @@
 // cron, kumpul paksa, dan penilaian manual. Satu tempat = satu aturan.
 
 import { scoreSession } from "./score";
+import { atomic } from "./dbfn";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Tx = any;
 
-// Hitung nilai lewat fungsi database score_session(), tulis ke scores.
+type Step = (q: Tx) => unknown;
+
+// Hitung nilai lewat fungsi database score_session() (Neon) atau src/score.ts (D1), tulis ke scores.
 // status: 'submitted' (siswa/guru menutup) atau 'expired' (waktu habis).
+// before: penulisan yang harus ikut atomik dengan penutupan sesi (mis. catatan pelanggaran). Di D1 semuanya satu batch;
+// di Neon dijalankan berurutan di dalam transaksi withTenant.
 export async function finalizeSession(
-  tx: Tx, sessionId: string, status: "submitted" | "expired",
+  tx: Tx, sessionId: string, status: "submitted" | "expired", before: Step[] = [],
 ): Promise<{ score: number; needs_manual: boolean }> {
   const ses = await tx`select exam_id, student_id, school_id from exam_sessions where id = ${sessionId}`;
   if (ses.length === 0) throw new Error("sesi tidak ditemukan");
   const { exam_id, student_id, school_id } = ses[0] as { exam_id: string; student_id: string; school_id: string };
-  await tx`update exam_sessions set status = ${status}, finished_at = coalesce(finished_at, now())
+  const closeSql: Step = (q) => q`update exam_sessions set status = ${status}, finished_at = coalesce(finished_at, now())
            where id = ${sessionId} and status in ('active', 'locked')`;
+  if (tx.isD1) {
+    // Hitung dulu (hanya membaca), lalu tutup sesi + simpan nilai dalam SATU transaksi: tak pernah "submitted tanpa nilai".
+    const { score, needs_manual } = toScore(await scoreSession(tx, sessionId));
+    await atomic(tx, [...before, closeSql, (q) => upsertScore(q, sessionId, exam_id, student_id, school_id, score, null)]);
+    return { score, needs_manual };
+  }
+  for (const b of before) await b(tx);
+  await closeSql(tx);
   return writeScore(tx, sessionId, exam_id, student_id, school_id);
 }
+
+const toScore = (r: { got: unknown; total: unknown; manual_pending: unknown }) => {
+  const t = parseFloat(String(r.total));
+  const score = t > 0 ? (parseFloat(String(r.got)) / t) * 100 : 0;
+  return { score, needs_manual: parseFloat(String(r.manual_pending)) > 0 };
+};
+
+const upsertScore = (q: Tx, sessionId: string, examId: string, studentId: string, schoolId: string, score: number, approvedBy: string | null) =>
+  q`insert into scores (session_id, school_id, exam_id, student_id, auto_score, final_score, approved_by, approved_at)
+           values (${sessionId}, ${schoolId}, ${examId}, ${studentId}, ${score}, ${score},
+                   ${approvedBy}, ${approvedBy ? new Date().toISOString() : null})
+           on conflict (session_id) do update set
+             auto_score = excluded.auto_score, final_score = excluded.final_score,
+             approved_by = coalesce(excluded.approved_by, scores.approved_by),
+             approved_at = coalesce(excluded.approved_at, scores.approved_at)`;
 
 // Hitung ulang dan simpan nilai (dipakai juga setelah guru menilai uraian).
 export async function writeScore(
@@ -27,17 +55,9 @@ export async function writeScore(
   // D1 tak punya fungsi SQL: rumus yang sama dihitung di TypeScript (src/score.ts). Neon tetap pakai fungsinya.
   const r = tx.isD1 ? [await scoreSession(tx, sessionId)]
     : await tx`select got, total, manual_pending from score_session(${sessionId})`;
-  const { got, total, manual_pending } = r[0] as { got: string; total: string; manual_pending: string };
-  const t = parseFloat(total);
-  const score = t > 0 ? (parseFloat(got) / t) * 100 : 0;
-  await tx`insert into scores (session_id, school_id, exam_id, student_id, auto_score, final_score, approved_by, approved_at)
-           values (${sessionId}, ${schoolId}, ${examId}, ${studentId}, ${score}, ${score},
-                   ${approvedBy}, ${approvedBy ? new Date().toISOString() : null})
-           on conflict (session_id) do update set
-             auto_score = excluded.auto_score, final_score = excluded.final_score,
-             approved_by = coalesce(excluded.approved_by, scores.approved_by),
-             approved_at = coalesce(excluded.approved_at, scores.approved_at)`;
-  return { score, needs_manual: parseFloat(manual_pending) > 0 };
+  const { score, needs_manual } = toScore(r[0] as { got: unknown; total: unknown; manual_pending: unknown });
+  await upsertScore(tx, sessionId, examId, studentId, schoolId, score, approvedBy);
+  return { score, needs_manual };
 }
 
 const shuffle = <T>(arr: T[]): T[] => {
@@ -94,6 +114,18 @@ export async function createSession(
 
   const end = Math.min(Date.now() + e.duration_minutes * 60_000,
     e.ends_at ? new Date(e.ends_at).getTime() : Number.POSITIVE_INFINITY);
+  if (tx.isD1) {
+    // Sesi + angka acak soal dinamis dalam satu transaksi; id dibuat di sini karena tak ada "returning" antar langkah.
+    const id = crypto.randomUUID();
+    await atomic(tx, [
+      (q) => q`insert into exam_sessions (id, school_id, exam_id, student_id, deadline_at, question_order)
+        values (${id}, ${schoolId}, ${examId}, ${studentId}, ${new Date(end).toISOString()}, ${{ order, perms } as unknown as string})`,
+      ...dyn.map((d) => (q: Tx) => q`insert into answers (session_id, question_id, school_id, answer, updated_at)
+             values (${id}, ${d.id}, ${schoolId}, ${{ vars: { a: d.a, b: d.b } } as unknown as string}, now())
+             on conflict (session_id, question_id) do nothing`),
+    ]);
+    return id;
+  }
   const ins = await tx`insert into exam_sessions (school_id, exam_id, student_id, deadline_at, question_order)
     values (${schoolId}, ${examId}, ${studentId}, ${new Date(end).toISOString()}, ${{ order, perms } as unknown as string})
     returning id`;

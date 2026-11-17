@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
+import { fakeD1Db } from "./fake-d1.ts";
 import { connectD1, withTenantD1, translateSql } from "../src/d1.ts";
 import { scopeSql, TENANT_TABLES } from "../src/tenant.ts";
 
@@ -20,18 +20,7 @@ function placeholders(q: string): string {
   return out;
 }
 
-const schema = readFileSync(new URL("../db/d1/0001_init.sql", import.meta.url), "utf8");
-function fakeDb() {
-  const db = new DatabaseSync(":memory:");
-  db.exec("PRAGMA foreign_keys=ON");
-  db.exec(schema);
-  const d1 = { prepare: (sql: string) => ({ bind: (...p: unknown[]) => ({ all: async () => {
-    const st = db.prepare(sql);
-    if (st.columns().length) return { results: st.all(...(p as never[])), meta: { changes: 0 } };
-    return { results: [], meta: { changes: Number(st.run(...(p as never[])).changes) } };
-  } }) }) } as unknown as D1Database;
-  return { db, d1 };
-}
+const fakeDb = fakeD1Db;
 const A = "aaaaaaaa-0000-4000-8000-000000000001", B = "bbbbbbbb-0000-4000-8000-000000000002";
 
 async function world() {

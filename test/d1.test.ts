@@ -1,25 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
+import { fakeD1 } from "./fake-d1.ts";
 import { connectD1, withTenantD1 } from "../src/d1.ts";
 
-// D1 palsu di atas node:sqlite: cukup prepare().bind().all() seperti API D1.
-function fakeD1() {
-  const db = new DatabaseSync(":memory:");
-  db.exec("PRAGMA foreign_keys=ON");
-  db.exec(readFileSync(new URL("../db/d1/0001_init.sql", import.meta.url), "utf8"));
-  return {
-    prepare(sql: string) {
-      return { bind: (...p: unknown[]) => ({ all: async () => {
-        const st = db.prepare(sql);
-        if (st.columns().length) return { results: st.all(...(p as never[])), meta: { changes: 0 } };
-        const r = st.run(...(p as never[]));
-        return { results: [], meta: { changes: Number(r.changes) } };
-      } }) };
-    },
-  } as unknown as D1Database;
-}
 const school = { code: "demo-sma", name: "Demo", level: "SMA", operator_name: "a", operator_phone: "1" };
 
 async function seed(sql: ReturnType<typeof connectD1>) {

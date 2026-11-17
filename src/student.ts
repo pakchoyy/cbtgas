@@ -1,6 +1,7 @@
 // Portal siswa: login dengan username + PIN; kerjakan ujian.
 // Cookie sesi siswa terpisah (cbt_sstu) agar tidak campur dengan sesi staf.
 
+import { atomic } from "./dbfn";
 import { isD1 } from "./d1";
 import { weakCategoriesD1 } from "./statsd1";
 import { orderLength } from "./score";
@@ -1814,7 +1815,8 @@ student.post("/s/take/:sid/violation", async (c) => {
     const row = sess[0] as { id: string; status: string; violation_count: number; lock_count: number;
       anticheat_level: "log"|"warn"|"lock"; lock_after_violations: number | null };
 
-    await tx`insert into violations (school_id, session_id, kind)
+    // Catatan pelanggaran + perubahan sesi harus satu kesatuan (D1: satu batch).
+    const logViolation = (q: typeof tx) => q`insert into violations (school_id, session_id, kind)
              values (${stu.sid}, ${sessionId}, ${kind})`;
     const nextCount = row.violation_count + 1;
     const limit = row.lock_after_violations || 3; // kosong di ujian lama → bawaan 3
@@ -1822,17 +1824,19 @@ student.post("/s/take/:sid/violation", async (c) => {
     const shouldLock = row.anticheat_level !== "log" && limit > 0 && nextCount >= limit && row.status === "active";
     // Sudah pernah dikunci lalu dibuka pengawas → batas tercapai lagi = dikumpulkan otomatis.
     if (shouldLock && row.lock_count >= 1) {
-      await tx`update exam_sessions set violation_count = ${nextCount}, lock_count = lock_count + 1 where id = ${sessionId}`;
-      await finalizeSession(tx, sessionId, "submitted");
+      await finalizeSession(tx, sessionId, "submitted", [
+        logViolation,
+        (q) => q`update exam_sessions set violation_count = ${nextCount}, lock_count = lock_count + 1 where id = ${sessionId}`,
+      ]);
       return { ok: true, count: nextCount, locked: false, submitted: true, level: row.anticheat_level };
     }
     if (shouldLock) {
       const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
-      await tx`update exam_sessions set violation_count = ${nextCount}, status = 'locked', unlock_code = ${code}, unlock_tries = 0, lock_count = lock_count + 1
-               where id = ${sessionId}`;
+      await atomic(tx, [logViolation, (q) => q`update exam_sessions set violation_count = ${nextCount}, status = 'locked', unlock_code = ${code}, unlock_tries = 0, lock_count = lock_count + 1
+               where id = ${sessionId}`]);
     } else {
-      await tx`update exam_sessions set violation_count = ${nextCount}
-               where id = ${sessionId}`;
+      await atomic(tx, [logViolation, (q) => q`update exam_sessions set violation_count = ${nextCount}
+               where id = ${sessionId}`]);
     }
     return { ok: true, count: nextCount, locked: shouldLock, level: row.anticheat_level, locks: row.lock_count };
   });

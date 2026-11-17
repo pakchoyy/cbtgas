@@ -109,6 +109,14 @@ function build(strings: TemplateStringsArray, values: unknown[]): Fragment {
   return { text: translateSql(text), params };
 }
 
+class Pending { strings: TemplateStringsArray; values: unknown[]; constructor(s: TemplateStringsArray, v: unknown[]) { this.strings = s; this.values = v; } }
+export type Lazy = {
+  (strings: TemplateStringsArray, ...values: unknown[]): unknown;
+  (rows: Row[], ...cols: string[]): unknown;
+  (list: unknown[]): unknown;
+  json(v: unknown): unknown;
+};
+
 export interface D1Sql {
   (strings: TemplateStringsArray, ...values: unknown[]): Promise<Rows>;
   (list: unknown[]): List;
@@ -118,8 +126,10 @@ export interface D1Sql {
   json(v: unknown): Json;
   begin<T>(fn: (tx: D1Sql) => Promise<T>): Promise<T>;
   savepoint<T>(fn: (sp: D1Sql) => Promise<T>): Promise<T>;
-  /** Hanya D1: jalankan beberapa query secara atomik (satu-satunya cara atomik di D1). */
-  batch(queries: Promise<Rows>[]): never;
+  /** Pembentuk query tertunda untuk batch(): lazy`...` tidak dijalankan sampai dikirim lewat batch(). */
+  lazy: Lazy;
+  /** Jalankan beberapa query lazy sebagai SATU transaksi D1 (semua berhasil atau semua batal). Hasil: satu Rows per item. */
+  batch(items: unknown[]): Promise<Rows[]>;
   readonly ctx?: Ctx;
   /** Versi tanpa pembatasan sekolah (padanan SECURITY DEFINER); hanya untuk dbfn.ts. */
   unscoped(): D1Sql;
@@ -196,7 +206,11 @@ function make(db: D1Database, ctx?: Ctx, open = false): D1Sql {
   self.json = (v: unknown) => new Json(v);
   self.begin = (f) => f(make(db, ctx, open));
   self.savepoint = (f) => f(self as D1Sql);
-  self.batch = (() => { throw new Error("d1: batch() belum dipasang (langkah 3)"); }) as never;
+  const lazy = ((first: unknown, ...rest: unknown[]) =>
+    Array.isArray(first) && "raw" in first ? new Pending(first as unknown as TemplateStringsArray, rest) : fn(first, ...rest)) as unknown as Lazy;
+  lazy.json = (v: unknown) => new Json(v);
+  self.lazy = lazy;
+  self.batch = (items) => runBatch(db, items, mode);
   self.unscoped = () => make(db, ctx, true);
   self.ctx = ctx;
   self.isD1 = true;
@@ -204,26 +218,55 @@ function make(db: D1Database, ctx?: Ctx, open = false): D1Sql {
   return self as D1Sql;
 }
 
-async function insertRows(db: D1Database, strings: TemplateStringsArray, values: unknown[], mode: Mode): Promise<Rows> {
+function insertFrags(strings: TemplateStringsArray, values: unknown[]): Fragment[] {
   const idx = values.findIndex((v) => v instanceof Values);
   const vals = values[idx] as Values;
   const before = build(strings.slice(0, idx + 1) as unknown as TemplateStringsArray, values.slice(0, idx));
-  const afterStrings = strings.slice(idx + 1);
-  const after = build(afterStrings as unknown as TemplateStringsArray, values.slice(idx + 1));
-  if (!vals.rows.length) { const r = [] as unknown as Rows; r.count = 0; return r; }
+  const after = build(strings.slice(idx + 1) as unknown as TemplateStringsArray, values.slice(idx + 1));
+  if (!vals.rows.length) return [];
   const per = Math.max(1, Math.floor((MAX_PARAMS - before.params.length - after.params.length) / vals.cols.length));
-  const out = [] as unknown as Rows;
-  let count = 0;
+  const out: Fragment[] = [];
   for (let i = 0; i < vals.rows.length; i += per) {
     const chunk = vals.rows.slice(i, i + per);
     const cols = vals.cols.map((c) => `"${c}"`).join(",");
     const tuples = chunk.map(() => `(${vals.cols.map(() => "?").join(",")})`).join(",");
-    const params = [...before.params, ...chunk.flatMap((r) => vals.cols.map((c) => bind(r[c]))), ...after.params];
-    const r = await run(db, { text: `${before.text}(${cols}) values ${tuples}${after.text}`, params }, mode);
+    out.push({
+      text: `${before.text}(${cols}) values ${tuples}${after.text}`,
+      params: [...before.params, ...chunk.flatMap((r) => vals.cols.map((c) => bind(r[c]))), ...after.params],
+    });
+  }
+  return out;
+}
+
+async function insertRows(db: D1Database, strings: TemplateStringsArray, values: unknown[], mode: Mode): Promise<Rows> {
+  const out = [] as unknown as Rows;
+  let count = 0;
+  for (const f of insertFrags(strings, values)) { // tidak atomik; pakai batch() bila harus atomik
+    const r = await run(db, f, mode);
     out.push(...r);
     count += r.count;
   }
   out.count = count;
+  return out;
+}
+
+async function runBatch(db: D1Database, items: unknown[], mode: Mode): Promise<Rows[]> {
+  const frags: Fragment[] = [], owner: number[] = [];
+  items.forEach((it, i) => {
+    if (!(it instanceof Pending)) throw new Error("d1: batch() hanya menerima query lazy`...`");
+    const fs = it.values.some((v) => v instanceof Values) ? insertFrags(it.strings, it.values) : [build(it.strings, it.values)];
+    for (const f of fs) { const g = guard(f, mode); if (g.params.length > MAX_PARAMS) throw new Error(`d1: ${g.params.length} parameter melebihi batas ${MAX_PARAMS} per query`); frags.push(g); owner.push(i); }
+  });
+  const out = items.map(() => { const r = [] as unknown as Rows; r.count = 0; return r; });
+  if (!frags.length) return out;
+  const res = await db.batch(frags.map((f) => db.prepare(f.text).bind(...f.params))); // satu transaksi implisit
+  res.forEach((r, k) => {
+    const rows = (r.results ?? []) as Row[];
+    parseJsonCols(rows, frags[k].text);
+    const o = out[owner[k]];
+    o.push(...rows);
+    o.count += rows.length ? rows.length : (r.meta?.changes ?? 0);
+  });
   return out;
 }
 

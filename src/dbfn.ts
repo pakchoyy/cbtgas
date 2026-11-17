@@ -94,3 +94,14 @@ export async function registerSchool(sql: Sql, s: NewSchool): Promise<string> {
   }
   return id;
 }
+
+// Jalankan beberapa penulisan sebagai satu kesatuan.
+// D1: satu batch() (satu transaksi). Neon: dijalankan berurutan seperti biasa, sudah di dalam transaksi withTenant.
+// Tiap langkah menerima pembentuk query q: gunakan q`...` dan q(rows, ...kolom) (di D1 query-nya tertunda sampai batch).
+// Langkah tidak boleh bergantung pada hasil langkah sebelumnya: buat id di JS (crypto.randomUUID()), jangan "returning id".
+export async function atomic(tx: Sql, steps: Array<(q: Sql) => unknown>): Promise<Row[][]> {
+  if (tx.isD1) return tx.batch(steps.map((s) => s(tx.lazy)));
+  const out: Row[][] = [];
+  for (const s of steps) out.push((await s(tx)) as Row[]);
+  return out;
+}
