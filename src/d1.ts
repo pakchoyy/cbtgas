@@ -4,7 +4,8 @@
 // Yang ditiru:  sql`...${v}...`, tx`...`, tx(list) untuk "in ${tx(ids)}", tx(rows, ...kolom) untuk
 //               "insert into t ${tx(rows, ...)}", tx(namaTabel), tx.json(v), begin(), savepoint(), hasil
 //               berupa array baris dengan properti .count.
-// Terjemahan:   now() -> waktu ISO UTC; now() - interval 'N unit' -> strftime(...,'-N unit'); cast ::uuid/::text/
+// Terjemahan:   greatest/least -> max/min; make_interval -> strftime; coalesce(x,'{}'::jsonb) || ? -> json_patch;
+//               now() -> waktu ISO UTC; now() - interval 'N unit' -> strftime(...,'-N unit'); cast ::uuid/::text/
 //               ::jsonb/::json dibuang; boolean -> 0/1; Date -> ISO string.
 // Ditolak jelas (harus ditulis ulang manual di langkah 3): cast ::int/::numeric/::bigint, "for update",
 //               "ilike", "= any(", jsonb_* / ? / @> dan fungsi Postgres lain yang tidak ada di SQLite.
@@ -42,6 +43,18 @@ function bind(v: unknown): unknown {
 
 export function translateSql(text: string): string {
   let t = text;
+  // X +/- make_interval(mins|hours|days|secs => N)  ->  strftime(..., X, '+N unit')
+  t = t.replace(/(now\(\)|[a-z_][\w.]*)\s*([+-])\s*make_interval\(\s*(mins|hours|days|secs)\s*=>\s*(\?|\d+)\s*\)/gi,
+    (_m, base, sign, unit, n) => {
+      const u = ({ mins: "minutes", hours: "hours", days: "days", secs: "seconds" } as Record<string, string>)[unit.toLowerCase()];
+      const val = sign === "-" ? `-(${n})` : `(${n})`;
+      return `strftime('%Y-%m-%dT%H:%M:%fZ', ${/^now/i.test(base) ? "'now'" : base}, printf('%+d ${u}', ${val}))`;
+    });
+  // greatest/least -> max/min skalar. Beda: SQLite memberi NULL bila salah satu argumen NULL (Postgres mengabaikan NULL).
+  t = t.replace(/\bgreatest\s*\(/gi, "max(").replace(/\bleast\s*\(/gi, "min(");
+  // coalesce(kolom, '{}'::jsonb) || ?  ->  json_patch(...). Setara dengan || jsonb untuk patch berisi nilai skalar/array
+  // (kasus di aplikasi ini); beda: json_patch menggabung objek bersarang dan membuang kunci bernilai null.
+  t = t.replace(/coalesce\(\s*([\w.]+)\s*,\s*'\{\}'::jsonb\s*\)\s*\|\|\s*\?/gi, "json_patch(coalesce($1, '{}'), ?)");
   t = t.replace(/\bnow\(\)\s*-\s*interval\s+'(\d+)\s+(second|minute|hour|day)s?'/gi,
     (_m, n, u) => `strftime('%Y-%m-%dT%H:%M:%fZ','now','-${n} ${u}s')`);
   t = t.replace(/\bnow\(\)\s*\+\s*interval\s+'(\d+)\s+(second|minute|hour|day)s?'/gi,
@@ -53,7 +66,7 @@ export function translateSql(text: string): string {
     [/\bfor\s+update\b/i, "for update"],
     [/\bilike\b/i, "ilike (pakai lower(a) like lower(b))"],
     [/=\s*any\s*\(/i, "= any(...) (pakai in ${tx(list)})"],
-    [/\binterval\b/i, "interval yang tidak dikenal"],
+    [/\binterval\b|make_interval/i, "interval yang tidak dikenal"],
     [/\bjsonb_[a-z_]+\s*\(|\bto_jsonb\s*\(|\bjsonb_typeof\b/i, "fungsi jsonb_*/to_jsonb (pakai json_* SQLite)"],
     [/\bgen_random_uuid\s*\(/i, "gen_random_uuid() (default kolom D1 sudah membuat uuid)"],
     [/\bdate_trunc\s*\(|\bto_char\s*\(|\bextract\s*\(/i, "date_trunc/to_char/extract (pakai strftime)"],
@@ -173,3 +186,6 @@ export function connectD1(db: D1Database): D1Sql {
 export function withTenantD1<T>(sql: D1Sql, ctx: Ctx, fn: (tx: D1Sql) => Promise<T>): Promise<T> {
   return fn(make(dbOf(sql), ctx));
 }
+
+// Untuk kode yang tx-nya bertipe postgres.js: true bila backend-nya D1.
+export const isD1 = (tx: unknown): boolean => !!(tx as { isD1?: boolean }).isD1;

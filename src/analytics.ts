@@ -1,10 +1,12 @@
 // Query analisis butir yang dipakai API (/api/exams/:id/...) dan halaman guru.
 
+import { distractorD1, itemD1 } from "./statsd1";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Tx = any;
 
 // Distribusi pilihan per opsi untuk soal pg/benar_salah.
-export const distractorRows = (tx: Tx, examId: string) =>
+const distractorRowsSql = (tx: Tx, examId: string) =>
   tx`with per_option as (
          select q.id as qid, substring(q.content->>'text', 1, 100) as text,
                 q.content->'options' as options, (k.answer_key->>'index')::int as correct_index,
@@ -25,7 +27,7 @@ export const distractorRows = (tx: Tx, examId: string) =>
        order by qid`;
 
 // p-value (proporsi benar) + daya pembeda D (kuartil atas − bawah).
-export const itemRows = (tx: Tx, examId: string) =>
+const itemRowsSql = (tx: Tx, examId: string) =>
   tx`with
       sessions as (
         select es.id, sc.final_score,
@@ -66,3 +68,7 @@ export const itemRows = (tx: Tx, examId: string) =>
       left join answered ans on ans.question_id = q.id
       group by q.id, q.type, q.content->>'text'
       order by discrimination desc nulls last, p_value asc`;
+
+// Neon: query SQL (jsonb/ntile); D1: dihitung di TypeScript (statsd1.ts).
+export const distractorRows = (tx: Tx, examId: string) => (tx.isD1 ? distractorD1(tx, examId) : distractorRowsSql(tx, examId));
+export const itemRows = (tx: Tx, examId: string) => (tx.isD1 ? itemD1(tx, examId) : itemRowsSql(tx, examId));

@@ -1,6 +1,9 @@
 // Portal siswa: login dengan username + PIN; kerjakan ujian.
 // Cookie sesi siswa terpisah (cbt_sstu) agar tidak campur dengan sesi staf.
 
+import { isD1 } from "./d1";
+import { weakCategoriesD1 } from "./statsd1";
+import { orderLength } from "./score";
 import { findStudentsByUsername, resolveSchool } from "./dbfn";
 import { Hono, type Context } from "hono";
 import { connect, withTenant } from "./db";
@@ -253,7 +256,7 @@ student.get("/s", async (c) => {
     // Semua ujian untuk kelas siswa (kecuali draf), beserta sesi dan nilainya.
     const exams = await tx`
       select e.id, e.title, e.duration_minutes, e.kind, e.status, e.starts_at, e.ends_at, e.use_token, e.show_score,
-             (select count(*) from exam_questions q where q.exam_id = e.id)::int as qn,
+             cast((select count(*) from exam_questions q where q.exam_id = e.id) as integer) as qn,
              es.id as session_id, es.status as session_status, sc.final_score
       from exams e
       join exam_classes ec on ec.exam_id = e.id
@@ -361,14 +364,14 @@ student.get("/s/done/:sid", async (c) => {
   const r = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) => tx`
     select e.title, e.show_score, es.started_at, es.finished_at, sc.final_score, st.name, c.name as class_name,
            (select logo_key is not null from schools where id = es.school_id) as has_logo, (select name from schools where id = es.school_id) as school,
-           (select count(*) from answers a where a.session_id = es.id)::int as answered,
-           coalesce(jsonb_array_length(case when jsonb_typeof(es.question_order) = 'object' then es.question_order->'order'
-                                            when jsonb_typeof(es.question_order) = 'array' then es.question_order else '[]'::jsonb end), 0)::int as total,
+           cast((select count(*) from answers a where a.session_id = es.id) as integer) as answered,
+           es.question_order,
            exists(select 1 from exam_questions eq join questions q on q.id = eq.question_id where eq.exam_id = e.id and q.type = 'uraian') as has_essay
     from exam_sessions es join exams e on e.id = es.exam_id join students st on st.id = es.student_id
     left join classes c on c.id = st.class_id left join scores sc on sc.session_id = es.id
     where es.id = ${sid} and es.student_id = ${stu.uid}`);
-  const d = r[0] as undefined | { title: string; show_score: boolean; started_at: string; finished_at: string | null; final_score: string | null;
+  const d0 = r[0] as undefined | (Record<string, unknown> & { question_order?: unknown });
+  const d = (d0 ? { ...d0, total: orderLength(d0.question_order) } : undefined) as undefined | { title: string; show_score: boolean; started_at: string; finished_at: string | null; final_score: string | null;
     name: string; class_name: string | null; answered: number; total: number; has_essay: boolean; has_logo: boolean; school: string };
   if (!d) return c.redirect("/s");
   const secs = d.finished_at ? Math.max(0, Math.round((new Date(d.finished_at).getTime() - new Date(d.started_at).getTime()) / 1000)) : 0;
@@ -449,7 +452,7 @@ student.get("/s/rekomendasi", async (c) => {
   if (!stu) return c.redirect("/s/login");
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
-    const weak = await tx`
+    const weak = isD1(tx) ? await weakCategoriesD1(tx, stu.uid) : await tx`
       select cat.id as cat_id, coalesce(cat.name, '(tanpa kategori)') as category,
              count(*)::int as total,
              sum(case
@@ -883,7 +886,7 @@ student.get("/demo/konfirmasi", async (c) => {
                         from students s left join classes c on c.id = s.class_id join schools sc on sc.id = s.school_id
                         where s.id = ${stu.uid}`,
       tx`select e.id, e.title, e.duration_minutes,
-                          (select count(*) from exam_questions where exam_id = e.id)::int as n
+                          cast((select count(*) from exam_questions where exam_id = e.id) as integer) as n
                         from exams e where e.title = ${DEMO_EXAM} and e.status = 'open' limit 1`,
     ]);
     return { me: me[0], ex: ex[0] };
@@ -1781,7 +1784,7 @@ student.post("/s/take/:sid/ping", async (c) => {
     tx`update exam_sessions set last_seen_at = now()
        where id = ${sessionId} and student_id = ${stu.uid}
        returning paused_at, deadline_at,
-         (select count(*) from exam_messages m where m.session_id = exam_sessions.id and m.from_role = 'staff')::int as staff_msgs`,
+         cast((select count(*) from exam_messages m where m.session_id = exam_sessions.id and m.from_role = 'staff') as integer) as staff_msgs`,
   );
   if (r.length === 0) return c.json({ ok: true });
   const row = r[0] as { paused_at: string | null; deadline_at: string; staff_msgs: number };

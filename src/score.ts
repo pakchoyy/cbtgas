@@ -24,12 +24,12 @@ export function parseJson(v: unknown): Json {
 }
 
 // Padanan SQL: (x)::numeric / ::int. Null bila kosong atau bukan angka.
-const num = (v: unknown): number | null => {
+export const num = (v: unknown): number | null => {
   if (v === null || v === undefined || v === "") return null;
   const n = typeof v === "number" ? v : Number(String(v).trim());
   return Number.isFinite(n) ? n : null;
 };
-const isObj = (v: unknown): v is Record<string, Json> => !!v && typeof v === "object" && !Array.isArray(v);
+export const isObj = (v: unknown): v is Record<string, Json> => !!v && typeof v === "object" && !Array.isArray(v);
 
 // Kesetaraan jsonb: urutan kunci objek tidak berpengaruh, urutan array berpengaruh.
 export function jsonEq(a: Json, b: Json): boolean {
@@ -166,4 +166,10 @@ export async function scoreSession(tx: Tx, sessionId: string): Promise<Score> {
     });
   }
   return scoreItems(items);
+}
+
+// Padanan jsonb_array_length(order) di query live/selesai: question_order bisa array atau {order: [...]}.
+export function orderLength(v: unknown): number {
+  const qo = parseJson(v);
+  return Array.isArray(qo) ? qo.length : isObj(qo) && Array.isArray(qo.order) ? qo.order.length : 0;
 }

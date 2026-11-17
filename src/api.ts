@@ -1,5 +1,8 @@
 // REST API staf: kelas & siswa. Semua di-guard sesi staf dan dibungkus withTenant.
 
+import { isD1 } from "./d1";
+import { categoryStatsD1 } from "./statsd1";
+import { orderLength } from "./score";
 import { usernameTaken, listPublicBanks, publicBank, incrementBankDownload } from "./dbfn";
 import { Hono } from "hono";
 import type postgres from "postgres";
@@ -280,9 +283,16 @@ api.get("/api/overview", async (c) => {
       tx`select id, title, status, duration_minutes,
                 (select count(*) from exam_sessions where exam_id = e.id and status = 'active') as active_now
          from exams e where e.status = 'open' order by created_at desc limit 10`,
-      tx`select count(*)::int as n from exam_sessions
+      tx`select cast(count(*) as integer) as n from exam_sessions
          where status = 'active' and last_seen_at > now() - interval '2 minutes'`,
-      tx`select date_trunc('day', started_at)::date as day,
+      isD1(tx)
+        ? tx`select date(started_at) as day,
+                cast(count(*) as integer) as sessions,
+                cast(count(*) filter (where status = 'submitted') as integer) as submitted
+         from exam_sessions
+         where started_at > now() - interval '30 days'
+         group by day order by day`
+        : tx`select date_trunc('day', started_at)::date as day,
                 count(*)::int as sessions,
                 count(*) filter (where status = 'submitted')::int as submitted
          from exam_sessions
@@ -357,7 +367,7 @@ api.patch("/api/users/:id", async (c) => {
     if ((body.role && body.role !== "admin") || body.active === false) {
       const target = await tx`select role from users where id = ${id}`;
       if (target.length && (target[0] as { role: string }).role === "admin") {
-        const admins = await tx`select count(*)::int as n from users where role = 'admin' and active`;
+        const admins = await tx`select cast(count(*) as integer) as n from users where role = 'admin' and active`;
         if ((admins[0] as { n: number }).n <= 1) throw new Error("tidak bisa menghapus satu-satunya admin aktif");
       }
     }
@@ -380,7 +390,7 @@ api.delete("/api/users/:id", async (c) => {
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const target = await tx`select role from users where id = ${c.req.param("id")}`;
     if (target.length && (target[0] as { role: string }).role === "admin") {
-      const admins = await tx`select count(*)::int as n from users where role = 'admin' and active`;
+      const admins = await tx`select cast(count(*) as integer) as n from users where role = 'admin' and active`;
       if ((admins[0] as { n: number }).n <= 1) throw new Error("tidak bisa menghapus satu-satunya admin aktif");
     }
     return tx`delete from users where id = ${c.req.param("id")} returning id`;
@@ -1050,7 +1060,7 @@ api.post("/api/shared-banks", async (c) => {
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     // Kunci jawaban ikut terbit — tolak bila ada soal yang masih dipakai ujian berjalan/terjadwal.
-    const live = await tx`select count(distinct q.id)::int as n from questions q
+    const live = await tx`select cast(count(distinct q.id) as integer) as n from questions q
       join exam_questions eq on eq.question_id = q.id
       join exams e on e.id = eq.exam_id and e.status in ('open', 'scheduled')
       where ${body.category_id ?? null}::uuid is null or q.category_id = ${body.category_id ?? null}::uuid`;
@@ -1140,9 +1150,13 @@ api.get("/api/shared-banks", async (c) => {
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
-    tx`select id, slug, title, description, download_count, created_at,
+    isD1(tx)
+      ? tx`select id, slug, title, description, download_count, created_at,
+              json_array_length(payload, '$.questions') as question_count
+         from shared_banks order by created_at desc`
+      : tx`select id, slug, title, description, download_count, created_at,
               jsonb_array_length(payload->'questions') as question_count
-       from shared_banks order by created_at desc`,
+         from shared_banks order by created_at desc`,
   );
   return c.json(rows);
 });
@@ -1321,8 +1335,8 @@ api.get("/api/questions/:id", async (c) => {
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select q.id, q.type, q.content, q.points, q.category_id, q.passage_id, k.answer_key, k.rubric,
-              (select count(*) from exam_questions eq join exams e on e.id = eq.exam_id
-               where eq.question_id = q.id and e.status in ('open','scheduled'))::int as live_exams
+              cast((select count(*) from exam_questions eq join exams e on e.id = eq.exam_id
+               where eq.question_id = q.id and e.status in ('open','scheduled')) as integer) as live_exams
        from questions q left join question_keys k on k.question_id = q.id where q.id = ${c.req.param("id")}`);
   if (r.length === 0) return c.json({ error: "soal tidak ditemukan" }, 404);
   return c.json(r[0]);
@@ -1618,7 +1632,7 @@ api.get("/api/students/:id/analytics", async (c) => {
       order by es.finished_at`;
     // Persen benar per kategori: hitung soal + benar dari semua jawaban siswa.
     const [byCat, violations] = await Promise.all([
-      tx`
+      isD1(tx) ? categoryStatsD1(tx, id) : tx`
       select coalesce(cat.name, '(tanpa kategori)') as category,
              count(*)::int as total,
              sum(case
@@ -1643,7 +1657,7 @@ api.get("/api/students/:id/analytics", async (c) => {
       where es.student_id = ${id} and es.status = 'submitted'
       group by cat.name order by cat.name`,
       tx`
-      select count(*)::int as n, kind
+      select cast(count(*) as integer) as n, kind
       from violations v join exam_sessions es on es.id = v.session_id
       where es.student_id = ${id} group by kind order by kind`,
     ]);
@@ -1710,11 +1724,8 @@ api.get("/api/exams/:id/live", async (c) => {
               es.id as session_id, coalesce(es.status, 'none') as status, es.started_at, es.finished_at, es.last_seen_at,
               es.deadline_at, es.violation_count, case when es.status = 'locked' then es.unlock_code end as unlock_code,
               sc.final_score,
-              (select count(*) from answers a where a.session_id = es.id)::int as answered,
-              coalesce(jsonb_array_length(
-                case when jsonb_typeof(es.question_order) = 'object' then es.question_order->'order'
-                     when jsonb_typeof(es.question_order) = 'array'  then es.question_order
-                     else '[]'::jsonb end), 0)::int as total
+              cast((select count(*) from answers a where a.session_id = es.id) as integer) as answered,
+              es.question_order
        from students st
        join exam_classes ec on ec.class_id = st.class_id and ec.exam_id = ${id}
        left join classes c on c.id = st.class_id
@@ -1726,7 +1737,8 @@ api.get("/api/exams/:id/live", async (c) => {
   const e = ex[0] as { title: string; use_token: boolean; lock_after_violations: number | null } | undefined;
   if (!e) return c.json({ error: "Ujian tidak ditemukan." }, 404);
   const tok = e.use_token ? await currentToken(c.env.SESSION_SECRET, id) : null;
-  return c.json({ title: e.title, limit: e.lock_after_violations || 3, token: tok?.token ?? null, tokenIn: tok?.expiresIn ?? 0, rows });
+  const out = (rows as unknown as Array<Record<string, unknown>>).map(({ question_order, ...r }) => ({ ...r, total: orderLength(question_order) }));
+  return c.json({ title: e.title, limit: e.lock_after_violations || 3, token: tok?.token ?? null, tokenIn: tok?.expiresIn ?? 0, rows: out });
 });
 
 // Export CSV skor peserta satu ujian.
