@@ -5,7 +5,7 @@ Tes otomatis (`npm test`) sudah melewati alur ini di D1 **palsu**; daftar ini me
 
 ## A. Persiapan (sekali)
 
-- [ ] `wrangler d1 create` + skema diterapkan (`db/d1/README.md` bagian 1).
+- [ ] `wrangler d1 create ... --location apac` + skema diterapkan (`db/d1/README.md` bagian 1). Cek lokasi di dasbor D1: harus APAC.
 - [ ] Data disalin: `export` → jalankan semua `.sql` → `verify` menampilkan **OK** (semua hitungan sama).
 - [ ] Binding `DB` aktif di Worker uji dan `DB_BACKEND=d1` diset. Worker produksi **tidak** disentuh.
 - [ ] Buka `/health` di Worker uji → 200.

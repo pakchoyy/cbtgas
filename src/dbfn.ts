@@ -71,25 +71,21 @@ export async function registerSchool(sql: Sql, s: NewSchool): Promise<string> {
     ) as id`;
     return (r[0] as { id: string }).id;
   }
+  // D1: sekolah + admin pertama dalam SATU batch (satu transaksi): tak ada sekolah tanpa admin bila gagal di tengah.
   const raw = sql.unscoped();
-  let id: string;
+  const id = crypto.randomUUID();
   try {
-    const r = await raw`insert into schools (code, name, level, npsn, operator_name, operator_phone, privacy_consent_at)
-      values (lower(${s.code}), ${s.name}, ${s.level}, ${s.npsn}, ${s.operator_name}, ${s.operator_phone}, now())
-      returning id`;
-    id = (r[0] as { id: string }).id;
+    await raw.batch([
+      raw.lazy`insert into schools (id, code, name, level, npsn, operator_name, operator_phone, privacy_consent_at)
+        values (${id}, lower(${s.code}), ${s.name}, ${s.level}, ${s.npsn}, ${s.operator_name}, ${s.operator_phone}, now())`,
+      raw.lazy`insert into users (school_id, email, role, google_sub) values (${id}, lower(${s.admin_email}), 'admin', ${s.google_sub})`,
+    ]);
   } catch (e) {
     const msg = (e as Error).message ?? "";
     if (/UNIQUE constraint failed: schools\.code/i.test(msg)) {
       throw Object.assign(new Error('duplicate key value violates unique constraint "schools_code_key"'),
         { code: "23505", constraint_name: "schools_code_key" });
     }
-    throw e;
-  }
-  try {
-    await raw`insert into users (school_id, email, role, google_sub) values (${id}, lower(${s.admin_email}), 'admin', ${s.google_sub})`;
-  } catch (e) {
-    await raw`delete from schools where id = ${id}`;
     throw e;
   }
   return id;

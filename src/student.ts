@@ -1838,16 +1838,23 @@ student.post("/s/take/:sid/violation", async (c) => {
     if (shouldLock && row.lock_count >= 1) {
       await finalizeSession(tx, sessionId, "submitted", [
         logViolation,
-        (q) => q`update exam_sessions set violation_count = ${nextCount}, lock_count = lock_count + 1 where id = ${sessionId}`,
+        (q) => q`update exam_sessions set violation_count = violation_count + 1, lock_count = lock_count + 1 where id = ${sessionId}`,
       ]);
       return { ok: true, count: nextCount, locked: false, submitted: true, level: row.anticheat_level };
     }
     if (shouldLock) {
       const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
-      await atomic(tx, [logViolation, (q) => q`update exam_sessions set violation_count = ${nextCount}, status = 'locked', unlock_code = ${code}, unlock_tries = 0, lock_count = lock_count + 1
+      // Kunci hanya bila sesi MASIH aktif saat ditulis (nilai lama di SET): dua pelanggaran bersamaan tidak mengunci dua kali
+      // (lock_count kedua berarti dikumpulkan otomatis) dan kode buka tidak berganti di tengah.
+      await atomic(tx, [logViolation, (q) => q`update exam_sessions set violation_count = violation_count + 1,
+               status = case when status = 'active' then 'locked' else status end,
+               unlock_code = case when status = 'active' then ${code} else unlock_code end,
+               unlock_tries = case when status = 'active' then 0 else unlock_tries end,
+               lock_count = lock_count + case when status = 'active' then 1 else 0 end
                where id = ${sessionId}`]);
     } else {
-      await atomic(tx, [logViolation, (q) => q`update exam_sessions set violation_count = ${nextCount}
+      // Dinaikkan di SQL, bukan dari nilai yang dibaca: dua pelanggaran bersamaan tetap terhitung dua.
+      await atomic(tx, [logViolation, (q) => q`update exam_sessions set violation_count = violation_count + 1
                where id = ${sessionId}`]);
     }
     return { ok: true, count: nextCount, locked: shouldLock, level: row.anticheat_level, locks: row.lock_count };

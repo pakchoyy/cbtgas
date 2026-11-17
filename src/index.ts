@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { publicBank, incrementBankDownload } from "./dbfn";
 import { connectDb, withTenant, edgeCache } from "./db";
+import { isD1 } from "./d1";
 import { auth, requireStaff, type AuthBindings } from "./auth";
 import { pages } from "./pages";
 import { api } from "./api";
@@ -217,7 +218,10 @@ async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed
         returning id`;
       // Sesi aktif yang deadline-nya lewat → expired, sekalian catat auto-score
       // supaya guru tidak harus menunggu siswa klik submit.
-      const expired = await tx`select id from exam_sessions where status = 'active' and deadline_at <= now() - interval '10 minutes'`;
+      // D1: dibatasi per jalan karena anggaran query per invokasi (~7 query per sesi); sisanya oleh catchUp() saat aplikasi
+      // dibuka atau cron berikutnya. Neon: semua sekaligus seperti sebelumnya.
+      const expired = await tx`select id from exam_sessions where status = 'active' and deadline_at <= now() - interval '10 minutes'
+        limit ${isD1(tx) ? 5 : 1000000}`;
       for (const row of expired as unknown as Array<{ id: string }>) await finalizeSession(tx, row.id, "expired");
       await tx`delete from rate_counters where window_start < now() - interval '1 day'`;
       // Siswa tamu dari tombol demo (beserta sesi & jawabannya) dihapus setelah 6 jam.

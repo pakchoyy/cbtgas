@@ -6,9 +6,14 @@ Tanpa itu, perilaku aplikasi sama persis seperti sebelumnya.
 ## 1. Siapkan database
 
 ```bash
-npx wrangler d1 create cbt-yuk
+npx wrangler d1 create cbt-yuk --location apac
 npx wrangler d1 execute cbt-yuk --remote --file db/d1/0001_init.sql
 ```
+
+**Lokasi penting:** `--location apac` menaruh database di Asia-Pasifik, dekat pengguna di Indonesia. Lokasi D1 ditentukan
+saat dibuat dan tidak bisa dipindah; tanpa petunjuk ini Cloudflare memilih dekat lokasi pembuat perintah, yang bisa jauh.
+Satu halaman menjalankan beberapa query berurutan, jadi jarak ke database terasa di setiap klik. `placement = smart` di
+`wrangler.toml` lalu menjalankan Worker dekat database.
 
 Salin `database_id` dari keluaran perintah pertama, lalu buka komentar blok `[[d1_databases]]` di `wrangler.toml`.
 

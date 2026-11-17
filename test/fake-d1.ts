@@ -2,7 +2,9 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 
-export function fakeD1Db() {
+// yieldEachQuery: beri jeda (setImmediate) sebelum tiap query/batch agar permintaan bersamaan saling menyela seperti di jaringan
+// nyata; tanpa itu D1 palsu menjawab seketika dan balapan baca-lalu-tulis tak pernah muncul di tes.
+export function fakeD1Db(opts: { yieldEachQuery?: boolean } = {}) {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys=ON");
   db.exec(readFileSync(new URL("../db/d1/0001_init.sql", import.meta.url), "utf8"));
@@ -16,10 +18,11 @@ export function fakeD1Db() {
     prepare: (sql: string) => ({
       sql, params: [] as unknown[],
       bind(...p: unknown[]) { this.params = p; return this; },
-      async all() { stats.queries++; return exec(sql, this.params); },
+      async all() { stats.queries++; if (opts.yieldEachQuery) await new Promise((r) => setImmediate(r)); return exec(sql, this.params); },
     }),
     async batch(stmts: Array<{ sql: string; params: unknown[] }>) {
       stats.batches++; stats.queries += stmts.length;
+      if (opts.yieldEachQuery) await new Promise((r) => setImmediate(r));
       db.exec("BEGIN");
       try { const r = stmts.map((s) => exec(s.sql, s.params)); db.exec("COMMIT"); return r; }
       catch (e) { db.exec("ROLLBACK"); throw e; }

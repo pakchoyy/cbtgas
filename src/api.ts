@@ -1126,6 +1126,28 @@ api.post("/api/public-banks/:slug/save", async (c) => {
     if (r.length === 0) return null;
     const bank = r[0] as { title: string; payload: { questions: Array<{ type: string; content: Record<string, unknown>; answer_key: Record<string, unknown> | null; rubric: string | null; points: unknown }> } };
     const cat = await tx`select id from categories where lower(name) = lower(${bank.title})`;
+    if (isD1(tx)) {
+      // D1: kategori (bila baru) + semua soal + kunci + hitungan unduh dalam SATU transaksi; gagal di tengah tak menyisakan
+      // sebagian soal (yang bila diulang menjadi duplikat). Id dibuat di sini karena tak ada "returning" antar langkah.
+      const catId = cat.length ? (cat[0] as { id: string }).id : crypto.randomUUID();
+      const qRows: Array<Record<string, unknown>> = [], kRows: Array<Record<string, unknown>> = [];
+      let skip = 0;
+      for (const raw of bank.payload.questions ?? []) {
+        const q = buildQuestion({ ...bodyFromStored(raw), category_id: catId });
+        if ("error" in q) { skip++; continue; }
+        const qid = crypto.randomUUID();
+        qRows.push({ id: qid, school_id: s.sid, author_id: s.uid, type: q.type, content: q.content, points: q.points, category_id: q.categoryId });
+        kRows.push({ question_id: qid, school_id: s.sid, answer_key: q.answer_key, rubric: q.rubric });
+      }
+      await atomic(tx, [
+        ...(cat.length ? [] : [(x: typeof tx) => x`insert into categories (id, school_id, name) values (${catId}, ${s.sid}, ${bank.title})`]),
+        ...(qRows.length ? [(x: typeof tx) => x`insert into questions ${x(qRows, "id", "school_id", "author_id", "type", "content", "points", "category_id")}`] : []),
+        ...(kRows.length ? [(x: typeof tx) => x`insert into question_keys ${x(kRows, "question_id", "school_id", "answer_key", "rubric")}`] : []),
+      ]);
+      await incrementBankDownload(tx, slug);
+      await audit(tx, actorFromSession(s), "bank.save", "shared_bank", null, { slug, ok: qRows.length, skip });
+      return { ok: qRows.length, skip, category: bank.title };
+    }
     const catId = cat.length ? (cat[0] as { id: string }).id
       : ((await tx`insert into categories (school_id, name) values (${s.sid}, ${bank.title}) returning id`)[0] as { id: string }).id;
     let ok = 0, skip = 0;

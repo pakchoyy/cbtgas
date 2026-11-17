@@ -12,8 +12,8 @@ const { default: worker } = await import("../src/index.ts");
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
 const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
 
-async function boot() {
-  const f = fakeD1Db();
+async function boot(opts: { yieldEachQuery?: boolean } = {}) {
+  const f = fakeD1Db(opts);
   const open = connectD1(f.d1).unscoped();
   const env: any = {
     DB_BACKEND: "d1", DB: f.d1, HYPERDRIVE: { get connectionString(): string { throw new Error("NEON DIPAKAI padahal DB_BACKEND=d1"); } },
@@ -280,4 +280,72 @@ test("isolasi antar sekolah lewat rute asli: guru/siswa sekolah A tidak bisa mem
   const start = await w.call("/s/exams/EB/start", { method: "POST", cookie: stu, headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" });
   assert.match(start.headers.get("location") ?? "", /err=/); // ditolak: ujian bukan untuk kelas siswa A
   assert.equal((await w.open`select count(*) as n from exam_sessions where exam_id = 'EB' and student_id = 'st'`)[0].n, 0);
+});
+
+async function startSession(w: Awaited<ReturnType<typeof boot>>) {
+  const stu = w.cookieOf(await w.call("/s/login", json({ username: "siswa1", pin: "123456" })));
+  const st = await w.call("/s/exams/E/start", { method: "POST", cookie: stu, headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" });
+  return { stu, sid: st.headers.get("location")!.split("/").pop()! };
+}
+
+test("pelanggaran bersamaan: dua-duanya terhitung, dan sesi tidak terkunci dua kali", async () => {
+  const w = await boot({ yieldEachQuery: true });
+  await w.open`update exams set anticheat_level = 'log' where id = 'E'`;
+  const { stu, sid } = await startSession(w);
+  const hit = () => w.call(`/s/take/${sid}/violation`, { ...json({ kind: "tab_blur" }), cookie: stu });
+  await Promise.all([hit(), hit(), hit()]);
+  assert.equal((await w.open`select violation_count from exam_sessions where id = ${sid}`)[0].violation_count, 3);
+  assert.equal((await w.open`select count(*) as n from violations`)[0].n, 3);
+
+  await w.open`update exams set anticheat_level = 'warn', lock_after_violations = 4 where id = 'E'`;
+  await Promise.all([hit(), hit()]); // keduanya membaca 3 -> sama-sama ingin mengunci
+  const [s] = await w.open`select status, lock_count, violation_count, unlock_code from exam_sessions where id = ${sid}`;
+  assert.deepEqual([s.status, s.lock_count, s.violation_count], ["locked", 1, 5]); // satu kunci, bukan dua
+  assert.match(String(s.unlock_code), /^\d{6}$/);
+});
+
+test("simpan bank publik ke sekolah sendiri: atomik (gagal di tengah tidak menyisakan sebagian soal)", async () => {
+  const w = await boot();
+  const B = "bbbbbbbb-0000-4000-8000-000000000002";
+  await w.open`insert into schools (id,code,name,level,operator_name,operator_phone) values (${B},'sek-b','B','SMA','o','1')`;
+  const qs = Array.from({ length: 30 }, (_, i) => ({ type: "pg", content: { text: `Soal ${i}`, options: ["a", "b"] }, answer_key: { index: 1 }, rubric: null, points: 1 }));
+  await w.open`insert into shared_banks (school_id,slug,title,payload) values (${B},'bank-b','Bank Matematika',${{ questions: qs }})`;
+  const cookie = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const before = (await w.open`select count(*) as n from questions`)[0].n;
+
+  w.db.exec("create trigger boom before insert on question_keys begin select raise(abort, 'boom'); end");
+  const bad = await w.call("/api/public-banks/bank-b/save", { method: "POST", cookie });
+  assert.ok(bad.status >= 400);
+  assert.equal((await w.open`select count(*) as n from questions`)[0].n, before);
+  assert.equal((await w.open`select count(*) as n from categories where name = 'Bank Matematika'`)[0].n, 0);
+  assert.equal((await w.open`select download_count from shared_banks`)[0].download_count, 0);
+
+  w.db.exec("drop trigger boom");
+  const ok = await jsonOf(await w.call("/api/public-banks/bank-b/save", { method: "POST", cookie }));
+  assert.equal(ok.ok, 30, JSON.stringify(ok));
+  assert.equal((await w.open`select count(*) as n from questions`)[0].n, before + 30);
+  assert.equal((await w.open`select count(*) as n from question_keys k join questions q on q.id = k.question_id where q.school_id = ${SID}`)[0].n, before + 30);
+  assert.equal((await w.open`select download_count from shared_banks`)[0].download_count, 1);
+  // simpan lagi: kategori yang sama dipakai ulang, tidak dibuat dua kali
+  await w.call("/api/public-banks/bank-b/save", { method: "POST", cookie });
+  assert.equal((await w.open`select count(*) as n from categories where name = 'Bank Matematika'`)[0].n, 1);
+});
+
+test("cron D1: sesi kedaluwarsa diproses bertahap (5 per jalan), sisa ujian & bersih-bersih tetap jalan", async () => {
+  const w = await boot();
+  for (let i = 0; i < 12; i++) {
+    await w.open`insert into students (id,school_id,class_id,name,username,pin_hash) values (${"s" + i},${SID},'cl','N',${"u" + i},'h')`;
+    await w.open`insert into exam_sessions (id,school_id,exam_id,student_id,deadline_at,status) values (${"se" + i},${SID},'E',${"s" + i},'2020-01-01T00:00:00.000Z','active')`;
+  }
+  await w.open`insert into exams (id,school_id,title,kind,duration_minutes,status,ends_at) values ('Old',${SID},'lama','k',10,'open','2020-01-01T00:00:00.000Z')`;
+  const done = async () => (await w.open`select count(*) as n from exam_sessions where status = 'expired'`)[0].n;
+  const q0 = w.stats.queries;
+  await worker.scheduled({} as ScheduledEvent, w.env, ctx);
+  assert.equal(await done(), 5);
+  assert.ok(w.stats.queries - q0 <= 60, `cron memakai ${w.stats.queries - q0} query`);
+  assert.equal((await w.open`select status from exams where id = 'Old'`)[0].status, "closed");
+  await worker.scheduled({} as ScheduledEvent, w.env, ctx);
+  await worker.scheduled({} as ScheduledEvent, w.env, ctx);
+  assert.equal(await done(), 12);
+  assert.equal((await w.open`select count(*) as n from scores`)[0].n, 12); // tiap sesi kedaluwarsa bernilai
 });
