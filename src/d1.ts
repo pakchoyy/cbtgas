@@ -18,6 +18,8 @@
 //  3. Tidak ada RLS. withTenant() hanya membawa ctx ke fn; setiap query wajib memfilter school_id sendiri.
 //  4. Kolom numeric kini kembali sebagai number (Postgres: string "60.00"); boolean kembali sebagai 0/1.
 
+import { scopeSql, checkInsert, tablesIn } from "./tenant";
+
 const MAX_PARAMS = 100;
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
 
@@ -50,6 +52,10 @@ export function translateSql(text: string): string {
       const val = sign === "-" ? `-(${n})` : `(${n})`;
       return `strftime('%Y-%m-%dT%H:%M:%fZ', ${/^now/i.test(base) ? "'now'" : base}, printf('%+d ${u}', ${val}))`;
     });
+  // jsonb: x - 'k1' - 'k2' (hapus kunci) -> json_remove; x ? 'k' (kunci ada) -> json_type(...) is not null.
+  t = t.replace(/([a-z_][\w.]*)((?:\s*-\s*'[a-z_][a-z0-9_]*')+)/gi, (_m, col, keys: string) =>
+    `json_remove(${col}, ${[...keys.matchAll(/'([a-z_][a-z0-9_]*)'/gi)].map((k) => `'$.${k[1]}'`).join(", ")})`);
+  t = t.replace(/([a-z_][\w.]*)\s+\?\s+'([a-z_][a-z0-9_]*)'/gi, (_m, col, key) => `(json_type(${col}, '$.${key}') is not null)`);
   // greatest/least -> max/min skalar. Beda: SQLite memberi NULL bila salah satu argumen NULL (Postgres mengabaikan NULL).
   t = t.replace(/\bgreatest\s*\(/gi, "max(").replace(/\bleast\s*\(/gi, "min(");
   // coalesce(kolom, '{}'::jsonb) || ?  ->  json_patch(...). Setara dengan || jsonb untuk patch berisi nilai skalar/array
@@ -68,6 +74,7 @@ export function translateSql(text: string): string {
     [/=\s*any\s*\(/i, "= any(...) (pakai in ${tx(list)})"],
     [/\binterval\b|make_interval/i, "interval yang tidak dikenal"],
     [/\bjsonb_[a-z_]+\s*\(|\bto_jsonb\s*\(|\bjsonb_typeof\b/i, "fungsi jsonb_*/to_jsonb (pakai json_* SQLite)"],
+    [/\?\s*['|&]|[\w)]\s+-\s*'|@>|<@|#>/, "operator jsonb (-, ?, @>, #>) di luar pola yang dikenal"],
     [/\bgen_random_uuid\s*\(/i, "gen_random_uuid() (default kolom D1 sudah membuat uuid)"],
     [/\bdate_trunc\s*\(|\bto_char\s*\(|\bextract\s*\(/i, "date_trunc/to_char/extract (pakai strftime)"],
     [/\bwith\s+ordinality\b|\bunnest\s*\(/i, "unnest/ordinality"],
@@ -114,14 +121,48 @@ export interface D1Sql {
   /** Hanya D1: jalankan beberapa query secara atomik (satu-satunya cara atomik di D1). */
   batch(queries: Promise<Rows>[]): never;
   readonly ctx?: Ctx;
+  /** Versi tanpa pembatasan sekolah (padanan SECURITY DEFINER); hanya untuk dbfn.ts. */
+  unscoped(): D1Sql;
   /** Penanda backend: kode bersama memakai ini untuk memilih jalur D1 vs Neon. */
   readonly isD1: true;
 }
 
-async function run(db: D1Database, f: Fragment): Promise<Rows> {
+// scope: batasi ke school_id sesi (meniru RLS); open: tanpa batas (owner / unscoped()); deny: query akar tanpa konteks.
+type Mode = { kind: "scope"; schoolId: string } | { kind: "open" } | { kind: "deny" };
+
+function guard(f: Fragment, mode: Mode): Fragment {
+  if (mode.kind === "open") return f;
+  if (mode.kind === "deny") {
+    const t = tablesIn(f.text);
+    if (t.length) throw new Error(`d1: query ke tabel tenant (${t.join(",")}) tanpa withTenant(); pakai withTenantD1 atau sql.unscoped() bila memang lintas-tenant`);
+    return f;
+  }
+  if (/^\s*insert\b/i.test(f.text)) checkInsert(f.text, f.params, mode.schoolId);
+  return { text: scopeSql(f.text, mode.schoolId), params: f.params };
+}
+
+// D1 mengembalikan kolom jsonb sebagai teks; Postgres sebagai objek. Kolom ini diurai agar kode bersama tak berubah.
+// "content" juga nama kolom teks biasa di exam_messages, jadi dilewati bila query menyebut tabel itu.
+const JSON_COLS = ["content", "answer_key", "answer", "payload", "scoring_config", "question_order", "details"];
+function parseJsonCols(rows: Row[], text: string): void {
+  const chat = /\bexam_messages\b/i.test(text);
+  for (const r of rows) {
+    for (const c of JSON_COLS) {
+      const v = r[c];
+      if (typeof v !== "string" || (c === "content" && chat)) continue;
+      const ch = v.charCodeAt(0); // { atau [
+      if (ch !== 123 && ch !== 91) continue;
+      try { r[c] = JSON.parse(v); } catch { /* biarkan teks */ }
+    }
+  }
+}
+
+async function run(db: D1Database, f0: Fragment, mode: Mode): Promise<Rows> {
+  const f = guard(f0, mode);
   if (f.params.length > MAX_PARAMS) throw new Error(`d1: ${f.params.length} parameter melebihi batas ${MAX_PARAMS} per query`);
   const r = await db.prepare(f.text).bind(...f.params).all<Row>();
   const rows = (r.results ?? []) as Rows;
+  parseJsonCols(rows, f.text);
   rows.count = rows.length ? rows.length : (r.meta?.changes ?? 0);
   return rows;
 }
@@ -129,13 +170,20 @@ async function run(db: D1Database, f: Fragment): Promise<Rows> {
 const dbs = new WeakMap<object, D1Database>();
 const dbOf = (sql: D1Sql): D1Database => dbs.get(sql)!;
 
-function make(db: D1Database, ctx?: Ctx): D1Sql {
+function modeOf(ctx: Ctx | undefined, open: boolean): Mode {
+  if (open) return { kind: "open" };
+  if (!ctx) return { kind: "deny" };
+  return ctx.role === "owner" ? { kind: "open" } : { kind: "scope", schoolId: ctx.schoolId };
+}
+
+function make(db: D1Database, ctx?: Ctx, open = false): D1Sql {
+  const mode = modeOf(ctx, open);
   const fn = (first: unknown, ...rest: unknown[]): unknown => {
     if (Array.isArray(first) && "raw" in first) {
       const strings = first as unknown as TemplateStringsArray;
       // "insert into t ${tx(rows, ...)}" dipecah per 100 parameter, jadi ditangani terpisah.
-      if (rest.some((v) => v instanceof Values)) return insertRows(db, strings, rest);
-      try { return run(db, build(strings, rest)); } catch (e) { return Promise.reject(e); }
+      if (rest.some((v) => v instanceof Values)) return insertRows(db, strings, rest, mode);
+      try { return run(db, build(strings, rest), mode); } catch (e) { return Promise.reject(e); }
     }
     if (typeof first === "string") return new Ident(first);
     if (Array.isArray(first)) {
@@ -146,16 +194,17 @@ function make(db: D1Database, ctx?: Ctx): D1Sql {
   };
   const self = fn as unknown as { -readonly [K in keyof D1Sql]: D1Sql[K] };
   self.json = (v: unknown) => new Json(v);
-  self.begin = (f) => f(make(db, ctx));
+  self.begin = (f) => f(make(db, ctx, open));
   self.savepoint = (f) => f(self as D1Sql);
   self.batch = (() => { throw new Error("d1: batch() belum dipasang (langkah 3)"); }) as never;
+  self.unscoped = () => make(db, ctx, true);
   self.ctx = ctx;
   self.isD1 = true;
   dbs.set(self, db);
   return self as D1Sql;
 }
 
-async function insertRows(db: D1Database, strings: TemplateStringsArray, values: unknown[]): Promise<Rows> {
+async function insertRows(db: D1Database, strings: TemplateStringsArray, values: unknown[], mode: Mode): Promise<Rows> {
   const idx = values.findIndex((v) => v instanceof Values);
   const vals = values[idx] as Values;
   const before = build(strings.slice(0, idx + 1) as unknown as TemplateStringsArray, values.slice(0, idx));
@@ -170,7 +219,7 @@ async function insertRows(db: D1Database, strings: TemplateStringsArray, values:
     const cols = vals.cols.map((c) => `"${c}"`).join(",");
     const tuples = chunk.map(() => `(${vals.cols.map(() => "?").join(",")})`).join(",");
     const params = [...before.params, ...chunk.flatMap((r) => vals.cols.map((c) => bind(r[c]))), ...after.params];
-    const r = await run(db, { text: `${before.text}(${cols}) values ${tuples}${after.text}`, params });
+    const r = await run(db, { text: `${before.text}(${cols}) values ${tuples}${after.text}`, params }, mode);
     out.push(...r);
     count += r.count;
   }

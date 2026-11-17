@@ -20,7 +20,7 @@ const reg = (code: string, email = "Guru@Sekolah.id", name = "SMA Satu") => ({
 });
 
 test("registerSchool D1: sekolah + admin; kode & email dinormalkan; staf ditemukan", async () => {
-  const sql = connectD1(fakeD1());
+  const sql = connectD1(fakeD1()).unscoped();
   const id = await fn.registerSchool(sql, reg("SMA-Satu"));
   const staff = await fn.findStaffByEmail(sql, "GURU@sekolah.id");
   assert.deepEqual(staff.map((r) => [r.school_id, r.role]), [[id, "admin"]]);
@@ -29,20 +29,20 @@ test("registerSchool D1: sekolah + admin; kode & email dinormalkan; staf ditemuk
 });
 
 test("registerSchool D1: kode kembar -> galat berbentuk Postgres (23505 / *code*)", async () => {
-  const sql = connectD1(fakeD1());
+  const sql = connectD1(fakeD1()).unscoped();
   await fn.registerSchool(sql, reg("sma-satu"));
   await assert.rejects(fn.registerSchool(sql, reg("sma-satu", "lain@x.id")), (e: any) =>
     e.code === "23505" && e.constraint_name.includes("code"));
 });
 
 test("registerSchool D1: gagal bikin admin -> sekolah dibatalkan (tidak yatim)", async () => {
-  const sql = connectD1(fakeD1());
+  const sql = connectD1(fakeD1()).unscoped();
   await assert.rejects(fn.registerSchool(sql, { ...reg("sma-dua"), admin_email: null as unknown as string }));
   assert.equal((await fn.resolveSchool(sql, "sma-dua")).length, 0);
 });
 
 test("sekolah nonaktif disembunyikan dari resolve/staf/siswa", async () => {
-  const sql = connectD1(fakeD1());
+  const sql = connectD1(fakeD1()).unscoped();
   const id = await fn.registerSchool(sql, reg("sma-tiga", "a@b.id"));
   await sql`insert into students (school_id,name,username,pin_hash) values (${id},'Budi','Budi.S','h')`;
   assert.equal((await fn.findStudentsByUsername(sql, " budi.s ")).length, 1);
@@ -55,14 +55,14 @@ test("sekolah nonaktif disembunyikan dari resolve/staf/siswa", async () => {
 });
 
 test("siswa nonaktif tidak ditemukan", async () => {
-  const sql = connectD1(fakeD1());
+  const sql = connectD1(fakeD1()).unscoped();
   const id = await fn.registerSchool(sql, reg("sma-empat", "c@d.id"));
   await sql`insert into students (school_id,name,username,pin_hash,active) values (${id},'X','x1','h',${false})`;
   assert.equal((await fn.findStudentsByUsername(sql, "x1")).length, 0);
 });
 
 test("bank publik: katalog, mine, payload terurai, hitungan unduh", async () => {
-  const sql = connectD1(fakeD1());
+  const sql = connectD1(fakeD1()).unscoped();
   const a = await fn.registerSchool(sql, reg("sekolah-a", "a@a.id", "Sekolah A"));
   const b = await fn.registerSchool(sql, reg("sekolah-b", "b@b.id", "Sekolah B"));
   await sql`insert into shared_banks (school_id,slug,title,payload) values (${a},'bank-a','Bank A',${{ questions: [1, 2, 3] }})`;

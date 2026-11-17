@@ -12,12 +12,12 @@ const parse = (v: unknown) => { if (typeof v !== "string") return v; try { retur
 
 export async function resolveSchool(sql: Sql, code: string): Promise<Row[]> {
   if (!sql.isD1) return sql`select id, name, level, logo_key, color from resolve_school(${code})`;
-  return sql`select id, name, level, logo_key, color from schools where code = lower(${code}) and active = 1`;
+  return sql.unscoped()`select id, name, level, logo_key, color from schools where code = lower(${code}) and active = 1`;
 }
 
 export async function findStaffByEmail(sql: Sql, email: string): Promise<Row[]> {
   if (!sql.isD1) return sql`select user_id, school_id, role from find_staff_by_email(${email})`;
-  return sql`select u.id as user_id, u.school_id, u.role from users u
+  return sql.unscoped()`select u.id as user_id, u.school_id, u.role from users u
     join schools s on s.id = u.school_id and s.active = 1
     where u.email = lower(${email}) and u.active = 1`;
 }
@@ -25,7 +25,7 @@ export async function findStaffByEmail(sql: Sql, email: string): Promise<Row[]> 
 // Login siswa tanpa kode sekolah: semua siswa aktif di sekolah aktif dengan username ini.
 export async function findStudentsByUsername(sql: Sql, username: string): Promise<Row[]> {
   if (!sql.isD1) return sql`select * from find_students_by_username(${username})`;
-  return sql`select st.id, st.school_id, st.name, st.pin_hash, st.locked_until, st.pin_failed_count
+  return sql.unscoped()`select st.id, st.school_id, st.name, st.pin_hash, st.locked_until, st.pin_failed_count
     from students st join schools s on s.id = st.school_id and s.active = 1
     where lower(st.username) = lower(trim(${username})) and st.active = 1`;
 }
@@ -36,19 +36,19 @@ export async function usernameTaken(sql: Sql, username: string): Promise<boolean
 
 export async function publicBank(sql: Sql, slug: string): Promise<Row[]> {
   if (!sql.isD1) return sql`select * from public_bank(${slug})`;
-  const rows = await sql`select slug, title, description, payload, download_count from shared_banks where slug = ${slug}`;
+  const rows = await sql.unscoped()`select slug, title, description, payload, download_count from shared_banks where slug = ${slug}`;
   return rows.map((r: Row) => ({ ...r, payload: parse(r.payload) }));
 }
 
 export async function incrementBankDownload(sql: Sql, slug: string): Promise<void> {
   if (!sql.isD1) { await sql`select increment_bank_download(${slug})`; return; }
-  await sql`update shared_banks set download_count = download_count + 1 where slug = ${slug}`;
+  await sql.unscoped()`update shared_banks set download_count = download_count + 1 where slug = ${slug}`;
 }
 
 export async function listPublicBanks(sql: Sql): Promise<Row[]> {
   if (!sql.isD1) return sql`select * from list_public_banks()`;
   const mine = String(sql.ctx?.schoolId ?? "");
-  const rows = await sql`select b.slug, b.title, b.description, b.download_count, b.created_at,
+  const rows = await sql.unscoped()`select b.slug, b.title, b.description, b.download_count, b.created_at,
       json_array_length(b.payload, '$.questions') as question_count, s.name as school_name,
       b.school_id = ${mine} as mine
     from shared_banks b join schools s on s.id = b.school_id and s.active = 1
@@ -71,9 +71,10 @@ export async function registerSchool(sql: Sql, s: NewSchool): Promise<string> {
     ) as id`;
     return (r[0] as { id: string }).id;
   }
+  const raw = sql.unscoped();
   let id: string;
   try {
-    const r = await sql`insert into schools (code, name, level, npsn, operator_name, operator_phone, privacy_consent_at)
+    const r = await raw`insert into schools (code, name, level, npsn, operator_name, operator_phone, privacy_consent_at)
       values (lower(${s.code}), ${s.name}, ${s.level}, ${s.npsn}, ${s.operator_name}, ${s.operator_phone}, now())
       returning id`;
     id = (r[0] as { id: string }).id;
@@ -86,9 +87,9 @@ export async function registerSchool(sql: Sql, s: NewSchool): Promise<string> {
     throw e;
   }
   try {
-    await sql`insert into users (school_id, email, role, google_sub) values (${id}, lower(${s.admin_email}), 'admin', ${s.google_sub})`;
+    await raw`insert into users (school_id, email, role, google_sub) values (${id}, lower(${s.admin_email}), 'admin', ${s.google_sub})`;
   } catch (e) {
-    await sql`delete from schools where id = ${id}`;
+    await raw`delete from schools where id = ${id}`;
     throw e;
   }
   return id;

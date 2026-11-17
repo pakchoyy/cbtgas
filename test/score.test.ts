@@ -20,7 +20,7 @@ function fakeD1() {
 
 // Fixture sama dengan db/tests/score_session.sql; hasil acuan: got 5.25, total 13, pending 2.
 test("fixture db/tests/score_session.sql di D1 = 5.25 / 13 / 2", async () => {
-  const sql = connectD1(fakeD1());
+  const sql = connectD1(fakeD1()).unscoped();
   const S = "s1", E = "e1", ST = "st1", SES = "f1";
   await sql`insert into schools (id,code,name,level,operator_name,operator_phone) values (${S},'tes-nilai','Tes','SMA','Op','081')`;
   await sql`insert into students (id,school_id,name,username,pin_hash) values (${ST},${S},'Siswa','s1','x')`;
@@ -48,7 +48,7 @@ test("fixture db/tests/score_session.sql di D1 = 5.25 / 13 / 2", async () => {
 });
 
 test("pool soal: question_order objek {order} membatasi soal yang dihitung", async () => {
-  const sql = connectD1(fakeD1());
+  const sql = connectD1(fakeD1()).unscoped();
   await sql`insert into schools (id,code,name,level,operator_name,operator_phone) values ('s','aaa','S','SMA','o','1')`;
   await sql`insert into students (id,school_id,name,username,pin_hash) values ('st','s','n','u','x')`;
   await sql`insert into exams (id,school_id,title,kind,duration_minutes) values ('e','s','t','k',10)`;

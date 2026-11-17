@@ -20,7 +20,7 @@ function fakeD1() {
 
 // 1 sekolah, 1 ujian, 8 siswa (skor 10..80), 3 soal; semua sesi 'submitted'.
 async function seed() {
-  const sql = connectD1(fakeD1());
+  const sql = connectD1(fakeD1()).unscoped();
   await sql`insert into schools (id,code,name,level,operator_name,operator_phone) values ('S','abc','S','SMA','o','1')`;
   await sql`insert into categories (id,school_id,name) values ('c1','S','Aljabar'), ('c2','S','Geometri')`;
   await sql`insert into exams (id,school_id,title,kind,duration_minutes) values ('E','S','t','k',10)`;
@@ -126,12 +126,25 @@ test("translator: make_interval, greatest, json_patch, cast integer, returning d
   // json_patch = || jsonb untuk patch skalar/array
   await sql`update answers set answer = coalesce(answer, '{}'::jsonb) || ${{ manual_score: 3 }} where session_id = 'ses1' and question_id = 'q1'`;
   const [pa] = await sql`select answer from answers where session_id = 'ses1' and question_id = 'q1'`;
-  assert.deepEqual(JSON.parse(pa.answer as string), { index: 0, manual_score: 3 });
+  assert.deepEqual(pa.answer, { index: 0, manual_score: 3 }); // kolom JSON sudah diurai
   await sql`insert into answers (session_id,question_id,school_id,answer) values ('ses1','q3','S',${{ selected: [1] }})
     on conflict (session_id, question_id) do update set answer = coalesce(answers.answer, '{}'::jsonb) || ${{ selected: [4, 5], note: "n" }}, updated_at = now()`;
   const [pb] = await sql`select answer from answers where session_id = 'ses1' and question_id = 'q3'`;
-  assert.deepEqual(JSON.parse(pb.answer as string), { selected: [4, 5], note: "n" });
+  assert.deepEqual(pb.answer, { selected: [4, 5], note: "n" });
   const [p] = await sql`update exam_sessions set last_seen_at = now() where id = 'ses2' returning paused_at,
     cast((select count(*) from exam_messages m where m.session_id = exam_sessions.id and m.from_role = 'staff') as integer) as staff_msgs`;
   assert.equal(p.staff_msgs, 0);
+});
+
+test("jsonb: x - 'k' - 'k2' dan x ? 'k' diterjemahkan; kolom JSON diurai; chat tidak", async () => {
+  const sql = await seed();
+  await sql`update questions set content = ${{ text: "t", image: "i.png", audio: "a.mp3", html: "<b>", keep: 1 }} where id = 'q1'`;
+  const [r] = await sql`select q.id, q.content - 'image' - 'audio' - 'html' as content, q.content ? 'image' as has_image,
+    q.content ? 'nope' as has_nope from questions q where q.id = 'q1'`;
+  assert.deepEqual(r.content, { text: "t", keep: 1 });
+  assert.deepEqual([r.has_image, r.has_nope], [1, 0]);
+  await sql`insert into exam_messages (school_id,session_id,from_role,content) values ('S','ses1','staff','{"bukan":"json"}')`;
+  const [m] = await sql`select content from exam_messages`;
+  assert.equal(m.content, '{"bukan":"json"}'); // teks chat dibiarkan
+  await assert.rejects(sql`select content - 'a b' from questions`, /jsonb/);
 });
