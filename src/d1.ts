@@ -4,7 +4,7 @@
 // Yang ditiru:  sql`...${v}...`, tx`...`, tx(list) untuk "in ${tx(ids)}", tx(rows, ...kolom) untuk
 //               "insert into t ${tx(rows, ...)}", tx(namaTabel), tx.json(v), begin(), savepoint(), hasil
 //               berupa array baris dengan properti .count.
-// Terjemahan:   greatest/least -> max/min; make_interval -> strftime; coalesce(x,'{}'::jsonb) || ? -> json_patch;
+// Terjemahan:   greatest/least -> max/min null-aman; x::int/numeric -> cast(); jsonb_array_length(x->'k'); make_interval -> strftime; coalesce(x,'{}'::jsonb) || ? -> json_patch;
 //               now() -> waktu ISO UTC; now() - interval 'N unit' -> strftime(...,'-N unit'); cast ::uuid/::text/
 //               ::jsonb/::json dibuang; boolean -> 0/1; Date -> ISO string.
 // Ditolak jelas (harus ditulis ulang manual di langkah 3): cast ::int/::numeric/::bigint, "for update",
@@ -43,6 +43,62 @@ function bind(v: unknown): unknown {
   return v;
 }
 
+// Awal operan tepat sebelum posisi `end` (untuk "<operan>::tipe"): (…), fungsi(…), 'literal', atau nama/angka.
+function operandStart(t: string, end: number): number {
+  let i = end;
+  if (t[i - 1] === ")") {
+    let depth = 0;
+    for (i = end - 1; i >= 0; i--) { if (t[i] === ")") depth++; else if (t[i] === "(" && --depth === 0) break; }
+    if (i < 0) return -1;
+    while (i > 0 && /[\w.]/.test(t[i - 1])) i--; // nama fungsi di depan kurung
+    return i;
+  }
+  if (t[i - 1] === "'") { i = t.lastIndexOf("'", i - 2); return i; }
+  while (i > 0 && /[\w.]/.test(t[i - 1])) i--;
+  return i === end ? -1 : i;
+}
+
+// Argumen tingkat atas dari "nama(a, b)" yang dimulai pada `open` (posisi "(").
+function splitArgs(t: string, open: number): { args: string[]; close: number } | null {
+  let depth = 0, cur = "", inStr = false; const args: string[] = [];
+  for (let i = open; i < t.length; i++) {
+    const ch = t[i];
+    if (inStr) { cur += ch; if (ch === "'") inStr = false; continue; }
+    if (ch === "'") { inStr = true; cur += ch; continue; }
+    if (ch === "(") { depth++; if (depth === 1) continue; }
+    if (ch === ")") { depth--; if (depth === 0) { args.push(cur.trim()); return { args, close: i }; } }
+    if (ch === "," && depth === 1) { args.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  return null;
+}
+
+// <operan>::int -> cast(<operan> as integer); ::numeric/real/float -> cast(... as real). Dikerjakan dari kanan ke kiri.
+function rewriteCasts(t: string): string {
+  const re = /::\s*(int|integer|bigint|numeric|real|float)\b/gi;
+  const hits = [...t.matchAll(re)].reverse();
+  for (const m of hits) {
+    const st = operandStart(t, m.index!);
+    if (st < 0) continue;
+    const to = /^(int|integer|bigint)$/i.test(m[1]) ? "integer" : "real";
+    t = `${t.slice(0, st)}cast(${t.slice(st, m.index)} as ${to})${t.slice(m.index! + m[0].length)}`;
+  }
+  return t;
+}
+
+// greatest/least(a, b) -> max/min yang MENGABAIKAN NULL seperti Postgres (max(a,b) SQLite bernilai NULL bila salah satu NULL).
+function rewriteExtremes(t: string): string {
+  for (;;) {
+    const m = /\b(greatest|least)\s*\(/i.exec(t);
+    if (!m) return t;
+    const open = m.index + m[0].length - 1;
+    const sp = splitArgs(t, open);
+    if (!sp || sp.args.length !== 2) throw new Error(`d1: sintaks Postgres belum didukung: ${m[1]}() dengan selain 2 argumen`);
+    const [a, b] = sp.args, fn = m[1].toLowerCase() === "greatest" ? "max" : "min";
+    t = `${t.slice(0, m.index)}${fn}(coalesce(${a}, ${b}), coalesce(${b}, ${a}))${t.slice(sp.close + 1)}`;
+  }
+}
+
 export function translateSql(text: string): string {
   let t = text;
   // X +/- make_interval(mins|hours|days|secs => N)  ->  strftime(..., X, '+N unit')
@@ -56,8 +112,10 @@ export function translateSql(text: string): string {
   t = t.replace(/([a-z_][\w.]*)((?:\s*-\s*'[a-z_][a-z0-9_]*')+)/gi, (_m, col, keys: string) =>
     `json_remove(${col}, ${[...keys.matchAll(/'([a-z_][a-z0-9_]*)'/gi)].map((k) => `'$.${k[1]}'`).join(", ")})`);
   t = t.replace(/([a-z_][\w.]*)\s+\?\s+'([a-z_][a-z0-9_]*)'/gi, (_m, col, key) => `(json_type(${col}, '$.${key}') is not null)`);
-  // greatest/least -> max/min skalar. Beda: SQLite memberi NULL bila salah satu argumen NULL (Postgres mengabaikan NULL).
-  t = t.replace(/\bgreatest\s*\(/gi, "max(").replace(/\bleast\s*\(/gi, "min(");
+  // greatest/least(a,b) null-aman; <operan>::int/numeric -> cast(); jsonb_array_length(x->'k') -> json_array_length.
+  t = rewriteExtremes(t);
+  t = rewriteCasts(t);
+  t = t.replace(/jsonb_array_length\(\s*([a-z_][\w.]*)\s*->\s*'([a-z_][a-z0-9_]*)'\s*\)/gi, "json_array_length($1, '$.$2')");
   // coalesce(kolom, '{}'::jsonb) || ?  ->  json_patch(...). Setara dengan || jsonb untuk patch berisi nilai skalar/array
   // (kasus di aplikasi ini); beda: json_patch menggabung objek bersarang dan membuang kunci bernilai null.
   t = t.replace(/coalesce\(\s*([\w.]+)\s*,\s*'\{\}'::jsonb\s*\)\s*\|\|\s*\?/gi, "json_patch(coalesce($1, '{}'), ?)");
@@ -68,7 +126,7 @@ export function translateSql(text: string): string {
   t = t.replace(/\bnow\(\)/gi, NOW);
   t = t.replace(/::(uuid|text|jsonb|json|timestamptz|date)\b(\[\])?/gi, "");
   const bad = [
-    [/::\s*(int|integer|bigint|numeric|float|real|boolean)\b/i, "cast ::tipe angka/boolean (tulis ulang pakai cast(x as ...))"],
+    [/::\s*(int|integer|bigint|numeric|float|real|boolean)\b/i, "cast ::tipe yang operannya tak dikenal / ::boolean (tulis ulang pakai cast(x as ...))"],
     [/\bfor\s+update\b/i, "for update"],
     [/\bilike\b/i, "ilike (pakai lower(a) like lower(b))"],
     [/=\s*any\s*\(/i, "= any(...) (pakai in ${tx(list)})"],

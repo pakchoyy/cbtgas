@@ -7,8 +7,8 @@ import { orderLength } from "./score";
 import { usernameTaken, listPublicBanks, publicBank, incrementBankDownload } from "./dbfn";
 import { Hono } from "hono";
 import type postgres from "postgres";
-import { connect, withTenant, edgeCache } from "./db";
-import { requireStaff, AuthBindings } from "./auth";
+import { connectDb, withTenant, edgeCache } from "./db";
+import { requireStaff, type AuthBindings } from "./auth";
 import { hashPin } from "./hash";
 import { sendEmail, inviteEmail, pinNotifyEmail } from "./email";
 function esc2(s: string): string { return s.replace(/[&<>"']/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[ch]!)); }
@@ -24,7 +24,7 @@ export const api = new Hono<{ Bindings: AuthBindings & { APP_ENV: string; RESEND
 api.use("/api/*", async (c, next) => {
   // /api/students sudah ada di index.ts (dengan fallback dev). Semua selain itu wajib sesi.
   if (c.req.path === "/api/students" && c.req.method === "GET") return next();
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env);
   if (!sess) return c.json({ error: "unauthorized" }, 401);
   c.set("sess" as never, sess);
   await next();
@@ -46,7 +46,7 @@ api.patch("/api/school", async (c) => {
   if (b.level && !["SD", "SMP", "SMA", "CAMPURAN"].includes(b.level)) return c.json({ error: "Jenjang tidak dikenal." }, 400);
   if (b.name !== undefined && !b.name.trim()) return c.json({ error: "Nama sekolah wajib diisi." }, 400);
   if (b.logo && (!/^data:image\/(png|jpeg|webp);base64,/.test(b.logo) || b.logo.length > 200_000)) return c.json({ error: "Logo harus gambar PNG/JPG maksimal sekitar 140 KB." }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const u = await tx`update schools set
         name = coalesce(${b.name?.trim() ?? null}, name),
@@ -68,7 +68,7 @@ api.patch("/api/school", async (c) => {
 
 api.get("/api/classes", async (c) => {
   const s = getSess(c);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select id, name, grade, year from classes order by year desc, grade nulls last, name`,
   );
@@ -80,7 +80,7 @@ api.patch("/api/classes/:id", async (c) => {
   if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
   const b = await c.req.json().catch(() => null) as null | { name?: string; grade?: number | null; year?: string };
   if (!b || !b.name?.trim() || !b.year?.trim()) return c.json({ error: "Nama kelas dan tahun ajar wajib diisi." }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`update classes set name = ${b.name!.trim()}, grade = ${b.grade ?? null}, year = ${b.year!.trim()}
        where id = ${c.req.param("id")} returning id, name, grade, year`);
@@ -93,7 +93,7 @@ api.post("/api/classes", async (c) => {
   if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
   const body = await c.req.json().catch(() => null) as null | { name: string; grade?: number | null; year: string };
   if (!body?.name || !body?.year) return c.json({ error: "missing fields" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   try {
     const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
       tx`insert into classes (school_id, name, grade, year)
@@ -110,7 +110,7 @@ api.delete("/api/classes/:id", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
   const id = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`delete from classes where id = ${id} returning id`,
   );
@@ -132,7 +132,7 @@ api.post("/api/students", async (c) => {
   try {
     const pin = body.pin || newPin();
     const pin_hash = await hashPin(pin);
-    const sql = connect(c.env.HYPERDRIVE.connectionString);
+    const sql = connectDb(c.env);
     const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
       const username = body.username?.trim() ? body.username.trim().toLowerCase() : await newUsername(tx, body.name, new Set(), body.nisn);
       return tx`insert into students (school_id, class_id, name, username, gender, nisn, pin_hash)
@@ -157,7 +157,7 @@ api.patch("/api/students/:id", async (c) => {
   };
   if (!body) return c.json({ error: "bad body" }, 400);
   if (body.pin !== undefined && !/^\d{4,8}$/.test(body.pin)) return c.json({ error: "pin harus 4–8 digit" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const pin_hash = body.pin ? await hashPin(body.pin) : null;
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`update students set
@@ -188,7 +188,7 @@ api.post("/api/students/import", async (c) => {
   const list = body?.students ?? [];
   if (list.length === 0) return c.json({ error: "Tidak ada siswa di file." }, 400);
   if (list.length > 300) return c.json({ error: "Maksimal 300 siswa sekali impor." }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const classes = new Map<string, string>();
     for (const r of await tx`select id, name from classes` as unknown as Array<{ id: string; name: string }>) classes.set(r.name.trim().toLowerCase(), r.id);
@@ -271,7 +271,7 @@ function parseCsv(text: string): string[][] {
 // Overview sekolah: angka kunci + aktivitas 30 hari terakhir.
 api.get("/api/overview", async (c) => {
   const s = getSess(c);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const data = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const [counts, active, online, byDay] = await Promise.all([
       tx`select
@@ -310,7 +310,7 @@ api.get("/api/overview", async (c) => {
 api.get("/api/users", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select id, email, name, role, active, google_sub is not null as linked
        from users order by email`,
@@ -331,7 +331,7 @@ api.post("/api/users", async (c) => {
   if (!["admin","teacher","proctor"].includes(body.role)) return c.json({ error: "role tidak valid" }, 400);
   const email = body.email.toLowerCase().trim();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return c.json({ error: "format email salah" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   try {
     const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
       const u = await tx`insert into users (school_id, email, name, role)
@@ -363,7 +363,7 @@ api.patch("/api/users/:id", async (c) => {
     return c.json({ error: "role tidak valid" }, 400);
   }
   // Cegah admin terakhir menonaktifkan dirinya sendiri atau kehilangan satu-satunya admin.
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     if ((body.role && body.role !== "admin") || body.active === false) {
       const target = await tx`select role from users where id = ${id}`;
@@ -387,7 +387,7 @@ api.delete("/api/users/:id", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
   if (c.req.param("id") === s.uid) return c.json({ error: "tidak boleh menghapus diri sendiri" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const target = await tx`select role from users where id = ${c.req.param("id")}`;
     if (target.length && (target[0] as { role: string }).role === "admin") {
@@ -405,7 +405,7 @@ api.delete("/api/users/:id", async (c) => {
 
 api.get("/api/categories", async (c) => {
   const s = getSess(c);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select c.id, c.name, c.parent_id,
               (select count(*) from questions q where q.category_id = c.id) as question_count
@@ -419,7 +419,7 @@ api.post("/api/categories", async (c) => {
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const body = await c.req.json().catch(() => null) as null | { name: string; parent_id?: string | null };
   if (!body?.name) return c.json({ error: "nama kategori kosong" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`insert into categories (school_id, name, parent_id)
        values (${s.sid}, ${body.name}, ${body.parent_id ?? null})
@@ -435,7 +435,7 @@ api.patch("/api/categories/:id", async (c) => {
   const body = await c.req.json().catch(() => null) as null | { name?: string };
   const name = body?.name?.trim();
   if (!name) return c.json({ error: "Nama kategori kosong." }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`update categories set name = ${name} where id = ${c.req.param("id")} returning id, name`);
   return r.length ? c.json(r[0]) : c.json({ error: "Kategori tidak ditemukan." }, 404);
@@ -449,7 +449,7 @@ api.post("/api/categories/:id/move", async (c) => {
   const body = await c.req.json().catch(() => null) as null | { to_name?: string };
   const to = body?.to_name?.trim();
   if (!to) return c.json({ error: "Kategori tujuan kosong." }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const n = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const hit = await tx`select id from categories where lower(name) = lower(${to}) limit 1`;
     const toId = hit.length ? (hit[0] as { id: string }).id
@@ -466,7 +466,7 @@ api.post("/api/categories/:id/move", async (c) => {
 api.delete("/api/categories/:id", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`delete from categories where id = ${c.req.param("id")} returning id`,
   );
@@ -478,7 +478,7 @@ api.delete("/api/categories/:id", async (c) => {
 
 api.get("/api/passages", async (c) => {
   const s = getSess(c);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select id, title, body,
               (select count(*) from questions q where q.passage_id = p.id) as question_count
@@ -492,7 +492,7 @@ api.post("/api/passages", async (c) => {
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const body = await c.req.json().catch(() => null) as null | { title?: string; body: string };
   if (!body?.body) return c.json({ error: "body (teks bacaan) wajib" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`insert into passages (school_id, title, body) values (${s.sid}, ${body.title ?? null}, ${body.body})
        returning id, title, body`,
@@ -503,7 +503,7 @@ api.post("/api/passages", async (c) => {
 api.delete("/api/passages/:id", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`delete from passages where id = ${c.req.param("id")} returning id`,
   );
@@ -515,7 +515,7 @@ api.delete("/api/passages/:id", async (c) => {
 
 api.get("/api/questions", async (c) => {
   const s = getSess(c);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const cat = c.req.query("category");
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     cat
@@ -667,7 +667,7 @@ api.post("/api/questions", async (c) => {
   if ("error" in q) return c.json({ error: q.error }, q.status);
   const { type, content, answer_key, rubric, points, categoryId, passageId } = q;
 
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const q = await tx`insert into questions (school_id, author_id, type, content, points, category_id, passage_id)
       values (${s.sid}, ${s.uid}, ${type},
@@ -691,7 +691,7 @@ api.post("/api/exams/:id/lab-start", async (c) => {
   const body = await c.req.json().catch(() => null) as null | { student_ids: string[] };
   if (!body || !Array.isArray(body.student_ids)) return c.json({ error: "bad body" }, 400);
 
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const ex = await tx`select status from exams where id = ${examId}`;
     if (ex.length === 0) throw new Error("ujian tidak ditemukan");
@@ -718,7 +718,7 @@ api.post("/api/sessions/:sid/pause", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const sid = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const u = await tx`update exam_sessions set paused_at = now()
       where id = ${sid} and status = 'active' and paused_at is null
@@ -734,7 +734,7 @@ api.post("/api/sessions/:sid/resume", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const sid = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const u = await tx`update exam_sessions
       set deadline_at = deadline_at + (now() - paused_at),
@@ -755,7 +755,7 @@ api.post("/api/sessions/:sid/extend", async (c) => {
   const sessionId = c.req.param("sid");
   const body = await c.req.json().catch(() => null) as null | { minutes: number };
   if (!body || typeof body.minutes !== "number") return c.json({ error: "minutes wajib (bilangan)" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const u = await tx`update exam_sessions
       set deadline_at = deadline_at + make_interval(mins => ${body.minutes})
@@ -774,7 +774,7 @@ api.post("/api/sessions/:sid/force-submit", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const sessionId = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const ses = await tx`select exam_id, student_id, school_id, status from exam_sessions where id = ${sessionId}`;
     if (ses.length === 0) throw new Error("sesi tidak ditemukan");
@@ -794,7 +794,7 @@ api.post("/api/sessions/:sid/force-submit", async (c) => {
 api.post("/api/sessions/:sid/reset", async (c) => {
   const s = getSess(c);
   const sid = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const n = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const d = await tx`delete from exam_sessions where id = ${sid} returning exam_id, student_id`;
     if (d.length) await audit(tx, actorFromSession(s), "session.reset", "session", sid, d[0] as Record<string, unknown>);
@@ -807,7 +807,7 @@ api.post("/api/sessions/:sid/reset", async (c) => {
 api.post("/api/sessions/:sid/unlock", async (c) => {
   const s = getSess(c);
   const sessionId = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const u = await tx`update exam_sessions set status = 'active', violation_count = 0, unlock_code = null, unlock_tries = 0,
        deadline_at = greatest(deadline_at, now() + interval '15 minutes')
@@ -823,7 +823,7 @@ api.post("/api/sessions/:sid/unlock", async (c) => {
 api.get("/api/pin-resets", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select pr.id, pr.student_id, pr.status, pr.requested_at, pr.approved_at, pr.new_pin,
               st.name as student_name, st.username
@@ -845,7 +845,7 @@ api.post("/api/pin-resets/:id/approve", async (c) => {
   const n = ((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]) >>> 0;
   const newPin = String(n % 1_000_000).padStart(6, "0");
   const pin_hash = await hashPin(newPin);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const pr = await tx`select student_id, status from pin_resets where id = ${prId}`;
     if (pr.length === 0) throw new Error("permintaan tidak ditemukan");
@@ -866,7 +866,7 @@ api.post("/api/pin-resets/:id/approve", async (c) => {
 api.post("/api/pin-resets/:id/clear", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`update pin_resets set new_pin = null where id = ${c.req.param("id")}`,
   );
@@ -876,7 +876,7 @@ api.post("/api/pin-resets/:id/clear", async (c) => {
 api.post("/api/pin-resets/:id/reject", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`update pin_resets set status = 'rejected', approved_by = ${s.uid}, approved_at = now()
        where id = ${c.req.param("id")} and status = 'pending'`,
@@ -895,7 +895,7 @@ api.patch("/api/students/:id/guardian", async (c) => {
   if (!body) return c.json({ error: "bad body" }, 400);
   const email = body.email ? String(body.email).trim().toLowerCase() : null;
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return c.json({ error: "format email salah" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`update students set guardian_email = ${email} where id = ${id} returning id, guardian_email`,
   );
@@ -908,7 +908,7 @@ api.post("/api/students/:id/send-report", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const id = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const data = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const info = await tx`select s.name, s.guardian_email, sch.name as school_name
                            from students s join schools sch on sch.id = s.school_id
@@ -951,7 +951,7 @@ api.post("/api/classes/:id/reset-pins", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "Pengawas tidak boleh mengganti PIN." }, 403);
   const classId = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const stus = await tx`select id, username, name from students where class_id = ${classId} and active order by name`;
     const out: Array<{ username: string; name: string; pin: string }> = [];
@@ -976,7 +976,7 @@ api.post("/api/exams/:id/wipe-sessions", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
   const examId = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const d = await tx`delete from exam_sessions where exam_id = ${examId} returning id`;
     await audit(tx, actorFromSession(s), "exam.wipe_sessions", "exam", examId, { count: d.length });
@@ -992,7 +992,7 @@ api.post("/api/exams/bulk-archive", async (c) => {
   if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
   const body = await c.req.json().catch(() => null) as null | { older_than_days?: number };
   const days = Math.max(1, Math.min(365, body?.older_than_days ?? 30));
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const u = await tx`update exams set status = 'closed'
       where status in ('open','scheduled') and created_at < now() - make_interval(days => ${days})
@@ -1011,7 +1011,7 @@ api.post("/api/students/:id/reset-pin", async (c) => {
   const body = await c.req.json().catch(() => null) as null | { pin: string };
   if (!body?.pin || !/^\d{4,8}$/.test(body.pin)) return c.json({ error: "pin harus 4-8 digit" }, 400);
   const pin_hash = await hashPin(body.pin);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`update students set pin_hash = ${pin_hash},
          pin_failed_count = 0, locked_until = null
@@ -1030,7 +1030,7 @@ api.post("/api/sessions/:sid/manual-score", async (c) => {
     scores: Array<{ question_id: string; score: number }>;
   };
   if (!body?.scores) return c.json({ error: "bad body" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const out = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     // Simpan nilai manual di answers.answer (merge ke objek yang ada) agar
     // audit tetap kelihatan dan agar aggregasi tetap lewat satu tabel.
@@ -1058,7 +1058,7 @@ api.post("/api/shared-banks", async (c) => {
   };
   if (!body?.slug || !body?.title) return c.json({ error: "slug dan title wajib" }, 400);
   if (!/^[a-z0-9-]{3,64}$/.test(body.slug)) return c.json({ error: "slug: huruf kecil/digit/strip 3-64" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     // Kunci jawaban ikut terbit — tolak bila ada soal yang masih dipakai ujian berjalan/terjadwal.
     const live = await tx`select cast(count(distinct q.id) as integer) as n from questions q
@@ -1090,7 +1090,7 @@ api.post("/api/shared-banks", async (c) => {
 // Katalog bank soal publik semua sekolah.
 api.get("/api/public-banks", async (c) => {
   const s = getSess(c);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     listPublicBanks(tx));
   return c.json(rows);
@@ -1120,7 +1120,7 @@ api.post("/api/public-banks/:slug/save", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const slug = c.req.param("slug");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const out = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const r = await publicBank(tx, slug);
     if (r.length === 0) return null;
@@ -1149,7 +1149,7 @@ api.post("/api/public-banks/:slug/save", async (c) => {
 api.get("/api/shared-banks", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     isD1(tx)
       ? tx`select id, slug, title, description, download_count, created_at,
@@ -1165,7 +1165,7 @@ api.get("/api/shared-banks", async (c) => {
 api.delete("/api/shared-banks/:id", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`delete from shared_banks where id = ${c.req.param("id")} returning id`,
   );
@@ -1177,7 +1177,7 @@ api.delete("/api/shared-banks/:id", async (c) => {
 api.get("/api/questions/export.csv", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select q.type, q.content, q.points, k.answer_key, k.rubric, cat.name as category
        from questions q
@@ -1231,7 +1231,7 @@ api.post("/api/questions/import", async (c) => {
   if (idx.type < 0 || idx.text < 0) {
     return c.json({ error: "header wajib: type, text (opsional: options, correct, accepted, rubric, points, category)" }, 400);
   }
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const cats = await tx`select id, name from categories`;
     const catMap = new Map<string, string>();
@@ -1298,7 +1298,7 @@ api.post("/api/questions/bulk", async (c) => {
   const body = await c.req.json().catch(() => null) as null | { questions: Array<Record<string, unknown>> };
   if (!body || !Array.isArray(body.questions) || body.questions.length === 0) return c.json({ error: "tidak ada soal" }, 400);
   if (body.questions.length > 500) return c.json({ error: "maksimal 500 soal sekali unggah" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const cats = new Map<string, string>();
     for (const r of await tx`select id, name from categories` as unknown as Array<{ id: string; name: string }>) cats.set(r.name.toLowerCase(), r.id);
@@ -1360,7 +1360,7 @@ api.post("/api/questions/bulk", async (c) => {
 api.get("/api/questions/:id", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select q.id, q.type, q.content, q.points, q.category_id, q.passage_id, k.answer_key, k.rubric,
               cast((select count(*) from exam_questions eq join exams e on e.id = eq.exam_id
@@ -1378,7 +1378,7 @@ api.patch("/api/questions/:id", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json().catch(() => null) as null | Record<string, unknown>;
   if (!body) return c.json({ error: "bad body" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const old = await tx`select content, passage_id from questions where id = ${id}`;
     if (old.length === 0) return { error: "soal tidak ditemukan", status: 404 as const };
@@ -1412,7 +1412,7 @@ api.post("/api/questions/move", async (c) => {
   const ids = (body?.ids ?? []).filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 2000);
   const to = body?.to_name?.trim();
   if (!ids.length || !to) return c.json({ error: "Pilih soal dan isi kategori tujuan." }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const hit = await tx`select id from categories where lower(name) = lower(${to}) limit 1`;
     const toId = hit.length ? (hit[0] as { id: string }).id
@@ -1431,7 +1431,7 @@ api.post("/api/questions/points", async (c) => {
   const ids = (body?.ids ?? []).filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 2000);
   const pts = Number(body?.points);
   if (!ids.length || !(pts > 0) || pts > 1000) return c.json({ error: "Poin harus angka lebih dari 0." }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const n = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) =>
     (await tx`update questions set points = ${pts} where id in ${tx(ids)} returning id`).length);
   return c.json({ ok: true, updated: n });
@@ -1444,7 +1444,7 @@ api.post("/api/questions/delete-bulk", async (c) => {
   const body = await c.req.json().catch(() => null) as null | { ids?: unknown[] };
   const ids = (body?.ids ?? []).filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 2000);
   if (!ids.length) return c.json({ error: "Tidak ada soal yang dipilih." }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const n = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const r = await tx`delete from questions where id in ${tx(ids)} returning id`;
     await audit(tx, actorFromSession(s), "question.delete_bulk", "question", null, { count: r.length });
@@ -1456,7 +1456,7 @@ api.post("/api/questions/delete-bulk", async (c) => {
 api.delete("/api/questions/:id", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`delete from questions where id = ${c.req.param("id")} returning id`,
   );
@@ -1477,7 +1477,7 @@ api.post("/api/exams/generate", async (c) => {
     counts: Record<string, number>; category_ids?: string[];
   };
   if (!body?.title || !body.duration_minutes || !body.counts) return c.json({ error: "data kurang" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const picked: string[] = []; const detail: Record<string, number> = {};
     for (const [type, countAny] of Object.entries(body.counts)) {
@@ -1513,7 +1513,7 @@ api.post("/api/exams/generate", async (c) => {
 
 api.get("/api/exam-groups", async (c) => {
   const s = getSess(c);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select g.id, g.title, g.description, g.strict_order,
               (select count(*) from exams e where e.group_id = g.id) as exam_count
@@ -1527,7 +1527,7 @@ api.post("/api/exam-groups", async (c) => {
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const body = await c.req.json().catch(() => null) as null | { title: string; description?: string; strict_order?: boolean };
   if (!body?.title) return c.json({ error: "judul wajib" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`insert into exam_groups (school_id, title, description, strict_order)
        values (${s.sid}, ${body.title}, ${body.description ?? null}, ${body.strict_order ?? true})
@@ -1539,7 +1539,7 @@ api.post("/api/exam-groups", async (c) => {
 api.delete("/api/exam-groups/:id", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "forbidden" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`delete from exam_groups where id = ${c.req.param("id")} returning id`,
   );
@@ -1551,7 +1551,7 @@ api.delete("/api/exam-groups/:id", async (c) => {
 
 api.get("/api/exams", async (c) => {
   const s = getSess(c);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select e.id, e.title, e.kind, e.duration_minutes, e.status,
               (select count(*) from exam_questions eq where eq.exam_id = e.id) as question_count,
@@ -1575,7 +1575,7 @@ api.post("/api/exams", async (c) => {
   };
   if (!body?.title || !body.kind?.trim() || !body.duration_minutes) return c.json({ error: "data ujian kurang" }, 400);
   body.kind = body.kind.trim().slice(0, 60);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`insert into exams (school_id, creator_id, title, kind, duration_minutes,
          starts_at, ends_at, shuffle_questions, shuffle_options, anticheat_level, lock_after_violations,
@@ -1596,7 +1596,7 @@ api.delete("/api/exams/:id", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "Pengawas tidak boleh menghapus ujian." }, 403);
   const id = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const n = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const r = await tx`delete from exams where id = ${id} returning title`;
     if (r.length) await audit(tx, actorFromSession(s), "exam.delete", "exam", id, { title: (r[0] as { title: string }).title });
@@ -1617,7 +1617,7 @@ api.patch("/api/exams/:id", async (c) => {
     questions_per_session?: number; use_token?: boolean; show_score?: boolean;
   };
   if (!body) return c.json({ error: "bad body" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const u = await tx`update exams set
        title = coalesce(${body.title ?? null}, title),
@@ -1647,7 +1647,7 @@ api.patch("/api/exams/:id", async (c) => {
 api.get("/api/students/:id/analytics", async (c) => {
   const s = getSess(c);
   const id = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const data = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const info = await tx`select name, username from students where id = ${id}`;
     if (info.length === 0) return null;
@@ -1699,7 +1699,7 @@ api.get("/api/students/:id/analytics", async (c) => {
 api.get("/api/sessions/:sid/messages", async (c) => {
   const s = getSess(c);
   const sessionId = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select id, from_role, from_name, content, created_at from exam_messages
        where session_id = ${sessionId} order by created_at asc limit 100`,
@@ -1712,7 +1712,7 @@ api.post("/api/sessions/:sid/messages", async (c) => {
   const sessionId = c.req.param("sid");
   const body = await c.req.json().catch(() => null) as null | { content: string };
   if (!body?.content || body.content.length > 500) return c.json({ error: "pesan kosong / terlalu panjang" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`insert into exam_messages (school_id, session_id, from_role, from_name, content)
        values (${s.sid}, ${sessionId}, 'staff', ${s.email}, ${body.content})`,
@@ -1724,7 +1724,7 @@ api.post("/api/sessions/:sid/messages", async (c) => {
 api.get("/api/exams/:id/chats", async (c) => {
   const s = getSess(c);
   const examId = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select es.id as session_id, st.name as student_name,
               (select content from exam_messages where session_id = es.id order by created_at desc limit 1) as last_msg,
@@ -1744,7 +1744,7 @@ api.get("/api/exams/:id/chats", async (c) => {
 api.get("/api/exams/:id/live", async (c) => {
   const s = getSess(c);
   const id = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const [ex, rows] = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) => Promise.all([
     tx`select title, use_token, lock_after_violations from exams where id = ${id}`,
     // Semua siswa di kelas peserta, termasuk yang belum mulai.
@@ -1773,7 +1773,7 @@ api.get("/api/exams/:id/live", async (c) => {
 api.get("/api/exams/:id/scores.csv", async (c) => {
   const s = getSess(c);
   const id = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select st.name as student_name, st.username, c.name as class_name,
               es.status, es.started_at, es.finished_at, es.violation_count,
@@ -1819,7 +1819,7 @@ api.post("/api/reports/restore-here", async (c) => {
   if (s.role !== "admin") return c.json({ error: "Hanya admin." }, 403);
   const p = await c.req.json().catch(() => null) as null | Record<string, Array<Record<string, any>>> & { version?: number };
   if (!p || p.version !== 1 || !Array.isArray(p.questions)) return c.json({ error: "File ini bukan cadangan CBT Yuk." }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const tally: Record<string, number> = {};
   await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     // Satu insert per tabel; baris yang sudah ada dilewati. Tabel yang gagal tidak menggagalkan yang lain.
@@ -1854,7 +1854,7 @@ api.post("/api/reports/restore-here", async (c) => {
 api.post("/api/reports/restore", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   // Owner-check: untuk production, hanya system_owners (daftar email) yang boleh restore.
   if (c.env.APP_ENV === "production") {
     const owner = await sql`select 1 from system_owners where email = ${s.email}`;
@@ -1990,7 +1990,7 @@ api.post("/api/reports/restore", async (c) => {
 api.get("/api/reports/backup.json", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "hanya admin" }, 403);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const data = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const [school, users, classes, students, categories, passages, questions, keys, exams, examClasses, examQuestions] = await Promise.all([
       tx`select id, code, name, level, npsn, logo_key, color, operator_name, operator_phone,
@@ -2031,7 +2031,7 @@ async function rekap(c: any, format: "xlsx" | "csv"): Promise<Response> {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const kelas = c.req.query("kelas") || null;
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const [rows, cls] = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) => Promise.all([
     tx`select e.title, e.kind, c.name as class_name, st.name as student_name, st.username,
               es.status, es.violation_count, es.started_at, es.finished_at,
@@ -2065,7 +2065,7 @@ api.get("/api/reports/scores.csv", (c) => rekap(c, "csv"));
 api.get("/api/exams/:id/distractors", async (c) => {
   const s = getSess(c);
   const examId = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     distractorRows(tx, examId),
   );
@@ -2079,7 +2079,7 @@ api.get("/api/exams/:id/distractors", async (c) => {
 api.get("/api/exams/:id/items", async (c) => {
   const s = getSess(c);
   const examId = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     itemRows(tx, examId),
   );
@@ -2090,7 +2090,7 @@ api.get("/api/exams/:id/items", async (c) => {
 api.get("/api/exams/:id/summary", async (c) => {
   const s = getSess(c);
   const id = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select coalesce(c.name, '(tanpa kelas)') as class_name,
               count(*) as peserta,
@@ -2114,7 +2114,7 @@ api.post("/api/exams/:id/questions", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json().catch(() => null) as null | { question_ids: string[] };
   if (!body || !Array.isArray(body.question_ids)) return c.json({ error: "bad body" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     // Hapus lalu isi ulang harus atomik: kalau berhenti di tengah, ujian tak boleh kehilangan semua soalnya.
     const rows = body.question_ids.map((qid, i) => ({ exam_id: id, question_id: qid, school_id: s.sid, position: i + 1 }));
@@ -2132,7 +2132,7 @@ api.post("/api/exams/:id/classes", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json().catch(() => null) as null | { class_ids: string[] };
   if (!body || !Array.isArray(body.class_ids)) return c.json({ error: "bad body" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
     const rows = body.class_ids.map((cid) => ({ exam_id: id, class_id: cid, school_id: s.sid }));
     await atomic(tx, [
@@ -2146,7 +2146,7 @@ api.post("/api/exams/:id/classes", async (c) => {
 api.get("/api/exams/:id/scores", async (c) => {
   const s = getSess(c);
   const id = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select es.id as session_id, st.name as student_name, st.username,
               es.status, es.violation_count, es.started_at, es.finished_at,
@@ -2164,7 +2164,7 @@ api.delete("/api/students/:id", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);
   const id = c.req.param("id");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`delete from students where id = ${id} returning id`,
   );

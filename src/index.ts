@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { publicBank, incrementBankDownload } from "./dbfn";
-import { connect, withTenant, edgeCache } from "./db";
-import { auth, requireStaff, AuthBindings } from "./auth";
+import { connectDb, withTenant, edgeCache } from "./db";
+import { auth, requireStaff, type AuthBindings } from "./auth";
 import { pages } from "./pages";
 import { api } from "./api";
 import { student } from "./student";
@@ -23,7 +23,7 @@ app.get("/logo", async (c) => {
   const key = new Request(`https://cache.cbt-yuk/logo/${s.sid}`);
   const hit = await edgeCache().match(key);
   if (hit) return new Response(hit.body, hit);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) => tx`select logo_key from schools where id = ${s.sid}`);
   const uri = (r[0] as { logo_key: string | null } | undefined)?.logo_key;
   const m = uri?.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/);
@@ -44,7 +44,7 @@ app.get("/brand.css", async (c) => {
   const key = new Request(`https://cache.cbt-yuk/brand/${s.sid}`);
   const hit = await edgeCache().match(key);
   if (hit) return new Response(hit.body, { headers });
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select color from schools where id = ${s.sid}`);
   const css = `:root{--brand:${brandHex((r[0] as { color: string } | undefined)?.color)}}`;
@@ -60,7 +60,7 @@ app.get("/health", (c) => c.json({ ok: true, env: c.env.APP_ENV }));
 app.get("/public/banks/:slug", async (c) => {
   const slug = c.req.param("slug");
   if (!/^[a-z0-9-]{3,64}$/.test(slug)) return c.json({ error: "slug tidak valid" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   // Set konteks owner agar function call diizinkan grant-nya ke cbt_app.
   const rows = await withTenant(sql, { schoolId: "", role: "owner" }, async (tx) => {
     const r = await publicBank(tx, slug);
@@ -182,11 +182,11 @@ app.route("/", pages);
 
 // Siswa milik sekolah yang sedang login (role staf).
 app.get("/api/students", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env);
   if (!sess) return c.json({ error: "unauthorized" }, 401);
   const schoolId = sess.sid, role = sess.role, userId = sess.uid;
 
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId, role, userId }, (tx) =>
     tx`select id, name, username from students order by name limit 100`,
   );
@@ -197,7 +197,7 @@ app.get("/api/students", async (c) => {
 // Transisi saat aplikasi dipakai diproses oleh catchUp() (src/catchup.ts).
 // Transisi otomatis status ujian berdasarkan jadwal.
 async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed: number; expired: number }> {
-  const sql = connect(env.HYPERDRIVE.connectionString);
+  const sql = connectDb(env);
   // Role 'owner' bypass RLS tenant_isolation (lihat policy: app_is_owner() OR ...).
   // schoolId kosong karena 'owner' tidak terikat satu sekolah.
   return await withTenant(sql, { schoolId: "", role: "owner" }, async (tx) => {

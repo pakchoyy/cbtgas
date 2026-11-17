@@ -58,7 +58,7 @@ test("on conflict do update + returning (pola rate limit)", async () => {
 
 test("sintaks Postgres yang belum didukung ditolak jelas", async () => {
   const sql = connectD1(fakeD1()).unscoped();
-  await assert.rejects(sql`select x::int from t`, /belum didukung/);
+  await assert.rejects(sql`select x::boolean from t`, /belum didukung/);
   await assert.rejects(sql`select 1 from t for update`, /for update/);
   await assert.rejects(sql`select jsonb_typeof(x) from t`, /jsonb/);
 });
@@ -71,4 +71,19 @@ test("withTenantD1 membawa ctx tanpa membocorkannya antar pemanggil", async () =
   ]);
   assert.deepEqual([a, b], ["A", "B"]);
   assert.equal(sql.ctx, undefined);
+});
+
+test("cast operan berkurung/fungsi, greatest null-aman, jsonb_array_length(x->'k')", async () => {
+  const sql = connectD1(fakeD1()).unscoped();
+  const [a] = await sql`select (select count(*) from schools)::int as n, count(*)::int as m, round(avg(1)::numeric, 1) as r,
+    ('7')::int + (select 2)::int as s from schools`;
+  assert.deepEqual({ ...a }, { n: 0, m: 0, r: null, s: 9 });
+  // greatest/least mengabaikan NULL (seperti Postgres), bukan menghasilkan NULL
+  const [g] = await sql`select greatest(null, 3) as a, greatest(2, null) as b, greatest(null, null) as c, least(null, 3) as d, least(5, 4) as e, greatest(1, 2) as f`;
+  assert.deepEqual({ ...g }, { a: 3, b: 2, c: null, d: 3, e: 4, f: 2 });
+  await assert.rejects(sql`select greatest(1, 2, 3)`, /selain 2 argumen/);
+  await sql`insert into schools (id,code,name,level,operator_name,operator_phone) values ('s','abc','n','SMA','o','1')`;
+  await sql`insert into shared_banks (school_id,slug,title,payload) values ('s','bank-1','t',${{ questions: [1, 2, 3, 4] }})`;
+  const [b] = await sql`select jsonb_array_length(payload->'questions') as n from shared_banks`;
+  assert.equal(b.n, 4);
 });
