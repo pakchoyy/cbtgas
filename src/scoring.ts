@@ -1,6 +1,8 @@
 // Siklus hidup sesi ujian yang dipakai bersama oleh portal siswa, mode lab,
 // cron, kumpul paksa, dan penilaian manual. Satu tempat = satu aturan.
 
+import { scoreSession } from "./score";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Tx = any;
 
@@ -22,7 +24,9 @@ export async function writeScore(
   tx: Tx, sessionId: string, examId: string, studentId: string, schoolId: string,
   approvedBy: string | null = null,
 ): Promise<{ score: number; needs_manual: boolean }> {
-  const r = await tx`select got, total, manual_pending from score_session(${sessionId})`;
+  // D1 tak punya fungsi SQL: rumus yang sama dihitung di TypeScript (src/score.ts). Neon tetap pakai fungsinya.
+  const r = tx.isD1 ? [await scoreSession(tx, sessionId)]
+    : await tx`select got, total, manual_pending from score_session(${sessionId})`;
   const { got, total, manual_pending } = r[0] as { got: string; total: string; manual_pending: string };
   const t = parseFloat(total);
   const score = t > 0 ? (parseFloat(got) / t) * 100 : 0;

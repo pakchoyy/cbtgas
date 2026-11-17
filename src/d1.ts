@@ -35,6 +35,8 @@ function bind(v: unknown): unknown {
   if (typeof v === "boolean") return v ? 1 : 0;
   if (v instanceof Date) return v.toISOString();
   if (typeof v === "bigint") return Number(v);
+  // postgres.js mengirim objek/array polos sebagai JSON (kolom jsonb); D1 menyimpannya sebagai teks JSON.
+  if (v !== null && typeof v === "object") return JSON.stringify(v);
   return v;
 }
 
@@ -99,6 +101,8 @@ export interface D1Sql {
   /** Hanya D1: jalankan beberapa query secara atomik (satu-satunya cara atomik di D1). */
   batch(queries: Promise<Rows>[]): never;
   readonly ctx?: Ctx;
+  /** Penanda backend: kode bersama memakai ini untuk memilih jalur D1 vs Neon. */
+  readonly isD1: true;
 }
 
 async function run(db: D1Database, f: Fragment): Promise<Rows> {
@@ -133,6 +137,7 @@ function make(db: D1Database, ctx?: Ctx): D1Sql {
   self.savepoint = (f) => f(self as D1Sql);
   self.batch = (() => { throw new Error("d1: batch() belum dipasang (langkah 3)"); }) as never;
   self.ctx = ctx;
+  self.isD1 = true;
   dbs.set(self, db);
   return self as D1Sql;
 }
