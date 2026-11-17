@@ -49,10 +49,41 @@ export function literal(v, col) {
   return q(v);
 }
 
+// D1 menolak statement > 100 KB (SQLITE_TOOBIG), mis. logo data URI. Teks panjang (bukan JSON) dimasukkan bertahap:
+// INSERT dengan potongan pertama, lalu UPDATE ... SET kolom = kolom || potongan berikutnya (berdasarkan id).
+export const CHUNK = 20000; // karakter; maks. 4 byte UTF-8 per karakter -> < 100 KB per statement
+
+function chunks(str) {
+  const out = [];
+  for (let i = 0; i < str.length; ) {
+    let end = Math.min(i + CHUNK, str.length);
+    const c = str.charCodeAt(end - 1);
+    if (end < str.length && c >= 0xd800 && c <= 0xdbff) end--; // jangan memotong pasangan surrogate
+    out.push(str.slice(i, end)); i = end;
+  }
+  return out;
+}
+
 export function insertSql(table, rows) {
   const cols = table.cols;
   const names = cols.map((c) => c.name).join(", ");
-  return rows.map((r) => `INSERT INTO ${table.name} (${names}) VALUES (${cols.map((c) => literal(r[c.name], c)).join(", ")});`);
+  const hasId = cols.some((c) => c.name === "id");
+  const stmts = [];
+  for (const r of rows) {
+    const rest = [];
+    const vals = cols.map((c) => {
+      const v = r[c.name];
+      if (typeof v === "string" && v.length > CHUNK && c.type === "text" && !c.json) {
+        if (!hasId) throw new Error(`nilai terlalu panjang di ${table.name}.${c.name} (tabel tanpa id)`);
+        const [first, ...more] = chunks(v);
+        rest.push(...more.map((part) => `UPDATE ${table.name} SET ${c.name} = ${c.name} || ${q(part)} WHERE id = ${q(r.id)};`));
+        return q(first);
+      }
+      return literal(v, c);
+    });
+    stmts.push(`INSERT INTO ${table.name} (${names}) VALUES (${vals.join(", ")});`, ...rest);
+  }
+  return stmts;
 }
 
 // categories punya parent_id ke dirinya sendiri: induk harus lebih dulu.
@@ -70,10 +101,13 @@ export function parentsFirst(rows) {
 
 // Kueri hitung untuk dijalankan di D1 (wrangler d1 execute --json --command "...") dan di Neon: kunci & hasil harus sama.
 export function countQuery(tables) {
-  const parts = tables.map((t) => `SELECT '${t.name}' AS t, COUNT(*) AS n FROM ${t.name}`);
-  parts.push("SELECT 'scores.sum_final' AS t, ROUND(COALESCE(SUM(final_score), 0), 2) AS n FROM scores");
-  parts.push("SELECT 'answers.with_json' AS t, COUNT(*) AS n FROM answers WHERE answer IS NOT NULL");
-  return parts.join(" UNION ALL ");
+  // D1 membatasi jumlah suku UNION ALL; VALUES banyak baris + CASE tidak terkena batas itu.
+  const items = tables.map((t) => [t.name, `(SELECT COUNT(*) FROM ${t.name})`]);
+  items.push(["scores.sum_final", "(SELECT ROUND(COALESCE(SUM(final_score), 0), 2) FROM scores)"]);
+  items.push(["answers.with_json", "(SELECT COUNT(*) FROM answers WHERE answer IS NOT NULL)"]);
+  const values = items.map(([k]) => `('${k}')`).join(", ");
+  const cases = items.map(([k, q]) => `WHEN '${k}' THEN ${q}`).join(" ");
+  return `WITH k(t) AS (VALUES ${values}) SELECT t, CASE t ${cases} END AS n FROM k`;
 }
 
 export function compareCounts(neon, d1) {

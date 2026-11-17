@@ -103,3 +103,13 @@ test("round trip: baris bergaya Neon masuk ke D1 lewat SQL hasil skrip, tipe ben
   assert.deepEqual(compareCounts(counts, got), []);
   assert.deepEqual(compareCounts({ ...counts, schools: 2 }, got), ["schools: Neon=2 D1=1"]);
 });
+
+test("teks sangat panjang (logo data URI) dipecah agar tiap statement < 100 KB, hasil utuh", () => {
+  const db = new DatabaseSync(":memory:"); db.exec(schemaSql);
+  const logo = "data:image/png;base64," + "A'😀".repeat(30000);
+  const stmts = insertSql(T("schools"), [{ id: "s1", code: "sma-x", name: "X", level: "SMA", logo_key: logo, operator_name: "o",
+    operator_phone: "1", color: "biru", plan: "trial", student_quota: 1, concurrent_quota: 1, active: true, created_at: "2026-01-01T00:00:00Z" }]);
+  assert.ok(stmts.length > 1);
+  for (const s of stmts) { assert.ok(Buffer.byteLength(s) < 100_000); db.exec(s); }
+  assert.equal((db.prepare("select logo_key from schools").get() as any).logo_key, logo);
+});
