@@ -16,10 +16,10 @@ test("insert returning, boolean, Date, now()", async () => {
   const id = await seed(sql);
   const r = await sql`select id, active from schools where id = ${id} and created_at <= now()`;
   assert.equal(r.length, 1);
-  assert.equal(r[0].active, 1);
+  assert.equal(r[0].active, true); // kolom boolean dikembalikan sebagai boolean, seperti Postgres
   await sql`update schools set active = ${false}, privacy_consent_at = ${new Date("2026-01-02T03:04:05.000Z")} where id = ${id}`;
   const [u] = await sql`select active, privacy_consent_at from schools where id = ${id}`;
-  assert.deepEqual([u.active, u.privacy_consent_at], [0, "2026-01-02T03:04:05.000Z"]);
+  assert.deepEqual([u.active, u.privacy_consent_at], [false, "2026-01-02T03:04:05.000Z"]);
 });
 
 test("update .count, interval, cast ::uuid dibuang", async () => {

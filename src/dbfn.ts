@@ -105,3 +105,13 @@ export async function atomic(tx: Sql, steps: Array<(q: Sql) => unknown>): Promis
   for (const s of steps) out.push((await s(tx)) as Row[]);
   return out;
 }
+
+// Waktu dari luar (klien, berkas cadangan) -> ISO-8601 UTC "…Z". Postgres mengurai format apa pun menjadi timestamptz;
+// D1 menyimpan teks apa adanya dan membandingkannya secara leksikal, jadi formatnya harus seragam saat ditulis.
+// null/""/undefined -> null; nilai yang bukan waktu -> galat (bukan disimpan diam-diam).
+export function isoTs(v: unknown): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  if (Number.isNaN(d.getTime())) throw new Error("Format waktu tidak valid.");
+  return d.toISOString();
+}

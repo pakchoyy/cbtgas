@@ -131,7 +131,7 @@ test("jsonb: x - 'k' - 'k2' dan x ? 'k' diterjemahkan; kolom JSON diurai; chat t
   const [r] = await sql`select q.id, q.content - 'image' - 'audio' - 'html' as content, q.content ? 'image' as has_image,
     q.content ? 'nope' as has_nope from questions q where q.id = 'q1'`;
   assert.deepEqual(r.content, { text: "t", keep: 1 });
-  assert.deepEqual([r.has_image, r.has_nope], [1, 0]);
+  assert.deepEqual([r.has_image, r.has_nope], [true, 0]); // has_image dikenal sebagai boolean, alias lain tetap angka
   await sql`insert into exam_messages (school_id,session_id,from_role,content) values ('S','ses1','staff','{"bukan":"json"}')`;
   const [m] = await sql`select content from exam_messages`;
   assert.equal(m.content, '{"bukan":"json"}'); // teks chat dibiarkan

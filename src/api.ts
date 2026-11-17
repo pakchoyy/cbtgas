@@ -1,6 +1,6 @@
 // REST API staf: kelas & siswa. Semua di-guard sesi staf dan dibungkus withTenant.
 
-import { atomic } from "./dbfn";
+import { atomic, isoTs } from "./dbfn";
 import { isD1 } from "./d1";
 import { categoryStatsD1 } from "./statsd1";
 import { orderLength } from "./score";
@@ -1581,7 +1581,7 @@ api.post("/api/exams", async (c) => {
          starts_at, ends_at, shuffle_questions, shuffle_options, anticheat_level, lock_after_violations,
          questions_per_session, scoring_config, group_id, group_position, use_token, show_score)
        values (${s.sid}, ${s.uid}, ${body.title}, ${body.kind}, ${body.duration_minutes},
-         ${body.starts_at ?? null}, ${body.ends_at ?? null},
+         ${isoTs(body.starts_at)}, ${isoTs(body.ends_at)},
          ${body.shuffle_questions ?? false}, ${body.shuffle_options ?? false},
          ${body.anticheat_level ?? "log"}, ${body.lock_after_violations ?? null},
          ${body.questions_per_session ?? 0},
@@ -1623,8 +1623,8 @@ api.patch("/api/exams/:id", async (c) => {
        title = coalesce(${body.title ?? null}, title),
        duration_minutes = coalesce(${body.duration_minutes ?? null}, duration_minutes),
        status = coalesce(${body.status ?? null}, status),
-       starts_at = case when ${body.starts_at !== undefined} then ${body.starts_at ?? null} else starts_at end,
-       ends_at = case when ${body.ends_at !== undefined} then ${body.ends_at ?? null} else ends_at end,
+       starts_at = case when ${body.starts_at !== undefined} then ${isoTs(body.starts_at)} else starts_at end,
+       ends_at = case when ${body.ends_at !== undefined} then ${isoTs(body.ends_at)} else ends_at end,
        shuffle_questions = coalesce(${body.shuffle_questions ?? null}, shuffle_questions),
        shuffle_options = coalesce(${body.shuffle_options ?? null}, shuffle_options),
        anticheat_level = coalesce(${body.anticheat_level ?? null}, anticheat_level),
@@ -1842,7 +1842,7 @@ api.post("/api/reports/restore-here", async (c) => {
     await put("-:question_keys", p.question_keys, ["question_id", "answer_key", "rubric"], (r) => ({ question_id: r.question_id, answer_key: j(r.answer_key), rubric: r.rubric ?? null }));
     await put("ujian:exams", p.exams, ["id", "creator_id", "title", "kind", "duration_minutes", "shuffle_questions", "shuffle_options", "anticheat_level", "lock_after_violations", "starts_at", "ends_at", "status", "questions_per_session"],
       (r) => ({ id: r.id, creator_id: s.uid, title: r.title, kind: r.kind, duration_minutes: r.duration_minutes, shuffle_questions: r.shuffle_questions ?? false, shuffle_options: r.shuffle_options ?? false,
-        anticheat_level: r.anticheat_level ?? "warn", lock_after_violations: r.lock_after_violations ?? 3, starts_at: r.starts_at ?? null, ends_at: r.ends_at ?? null, status: "draft", questions_per_session: r.questions_per_session ?? 0 }));
+        anticheat_level: r.anticheat_level ?? "warn", lock_after_violations: r.lock_after_violations ?? 3, starts_at: isoTs(r.starts_at), ends_at: isoTs(r.ends_at), status: "draft", questions_per_session: r.questions_per_session ?? 0 }));
     await put("-:exam_classes", p.exam_classes, ["exam_id", "class_id"], (r) => ({ exam_id: r.exam_id, class_id: r.class_id }));
     await put("-:exam_questions", p.exam_questions, ["exam_id", "question_id", "position", "weight"], (r) => ({ exam_id: r.exam_id, question_id: r.question_id, position: r.position, weight: r.weight }));
     await audit(tx, actorFromSession(s), "school.restore", "school", s.sid, tally);
@@ -1957,7 +1957,7 @@ api.post("/api/reports/restore", async (c) => {
                values (${nid}, ${newSid}, ${creatorNew}, ${anyVal(ex.title)}, ${anyVal(ex.kind)}, ${anyVal(ex.duration_minutes)},
                        ${anyVal(ex.shuffle_questions) ?? false}, ${anyVal(ex.shuffle_options) ?? false},
                        ${anyVal(ex.anticheat_level) ?? "log"}, ${anyVal(ex.lock_after_violations) ?? null},
-                       ${anyVal(ex.token_hash) ?? null}, ${anyVal(ex.starts_at) ?? null}, ${anyVal(ex.ends_at) ?? null},
+                       ${anyVal(ex.token_hash) ?? null}, ${isoTs(ex.starts_at)}, ${isoTs(ex.ends_at)},
                        'draft', ${anyVal(ex.questions_per_session) ?? 0})`;
     });
     for (const ec of data.exam_classes) {

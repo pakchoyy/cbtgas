@@ -154,9 +154,14 @@ function guard(f: Fragment, mode: Mode): Fragment {
 // D1 mengembalikan kolom jsonb sebagai teks; Postgres sebagai objek. Kolom ini diurai agar kode bersama tak berubah.
 // "content" juga nama kolom teks biasa di exam_messages, jadi dilewati bila query menyebut tabel itu.
 const JSON_COLS = ["content", "answer_key", "answer", "payload", "scoring_config", "question_order", "details"];
+// Kolom boolean (juga hasil turunan has_*): D1 mengembalikan 0/1, Postgres true/false. Penting karena nilainya ikut
+// tertulis ke HTML (mis. data-on="${u.active}" lalu dibandingkan dengan 'true' di skrip klien).
+const BOOL_COLS = ["active", "shuffle_questions", "shuffle_options", "use_token", "show_score", "strict_order",
+  "flagged", "has_logo", "has_essay", "has_image", "mine"];
 function parseJsonCols(rows: Row[], text: string): void {
   const chat = /\bexam_messages\b/i.test(text);
   for (const r of rows) {
+    for (const c of BOOL_COLS) { const v = r[c]; if (v === 0 || v === 1) r[c] = v === 1; }
     for (const c of JSON_COLS) {
       const v = r[c];
       if (typeof v !== "string" || (c === "content" && chat)) continue;

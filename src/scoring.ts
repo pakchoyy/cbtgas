@@ -34,7 +34,8 @@ export async function finalizeSession(
 
 const toScore = (r: { got: unknown; total: unknown; manual_pending: unknown }) => {
   const t = parseFloat(String(r.total));
-  const score = t > 0 ? (parseFloat(String(r.got)) / t) * 100 : 0;
+  // Dibulatkan 2 desimal seperti kolom Neon numeric(7,2); D1 menyimpan angka apa adanya (66.67, bukan 66.66666666666667).
+  const score = t > 0 ? Math.round((parseFloat(String(r.got)) / t) * 10000) / 100 : 0;
   return { score, needs_manual: parseFloat(String(r.manual_pending)) > 0 };
 };
 
