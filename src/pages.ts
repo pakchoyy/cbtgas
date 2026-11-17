@@ -591,40 +591,95 @@ pages.get("/syarat", (c) => c.html(legalPage("Syarat Layanan", `
 `)));
 
 // Petunjuk pemakaian singkat untuk guru dan siswa.
+// Panduan publik: per peran (admin, guru, pengawas, siswa), tanya-jawab, dan catatan "Yang baru".
+const GUIDE: Array<[string, string, string, Array<[string, string]>]> = [
+  ["admin", "Admin", "Menyiapkan sekolah: sekali di awal, sisanya jarang.", [
+    ["Daftarkan sekolah", "Buka cbt-yuk.web.id/masuk → Sekolah baru → Daftar dengan Google. Akun Google Anda otomatis menjadi admin sekolah."],
+    ["Lengkapi profil & tampilan", "Pengaturan → Profil sekolah (nama, jenjang, kontak operator). Pengaturan → Tampilan untuk logo dan warna sekolah; logo tampil di HP siswa dan kartu login."],
+    ["Undang guru dan pengawas", "Pengaturan → Guru & admin → + Undang. Isi email Google mereka dan pilih peran (Guru, Pengawas, atau Admin). Setelah diundang, kirim cara masuknya lewat tombol WhatsApp yang muncul."],
+    ["Masukkan siswa", "Menu Siswa → Template Excel → isi Nama dan Kelas (NISN boleh). Lalu Impor dari Excel: kelas, username, dan PIN dibuat otomatis. Bila NISN diisi, NISN dipakai sebagai username."],
+    ["Cetak kartu login", "Buka kelas → Cetak kartu login. PIN siswa kelas itu diganti baru lalu kartu (nama, username, PIN, logo sekolah) siap dicetak 2 kolom di A4. Bisa juga dikirim per siswa lewat WA."],
+    ["Backup data", "Pengaturan → Backup & pulihkan → Unduh file backup, simpan di Drive atau flashdisk. Pulihkan untuk mengembalikan data yang terhapus."],
+  ]],
+  ["guru", "Guru", "Menyiapkan soal, membuat ujian, dan melihat nilai.", [
+    ["Isi bank soal", "Bank soal → Tulis soal, Upload Word/PDF, atau Contoh soal siap pakai. Ada 7 tipe: pilihan ganda, PG kompleks, benar/salah, B/S tabel, isian, uraian, dan menjodohkan. Soal Bahasa Arab juga didukung."],
+    ["Upload dari Word", "Unduh Template Word di jendela Upload (per tipe soal). Format: nomor 1. 2. 3., pilihan A. B. C., lalu baris Jawaban: B dan Poin: 2. Format tebal, miring, pangkat (m²) dan indeks (H₂O) ikut terbaca. Pilih kategori tujuan sebelum menyimpan."],
+    ["Rapikan kategori", "Buka kategori: ubah nama, Atur poin (mis. total 100), Pindahkan soal, Hapus semua soal. Centang beberapa soal untuk memindah atau menghapus sekaligus. Total poin kategori tampil di atas."],
+    ["Buat ujian", "Tombol Ujian di tengah → + Buat ujian. Empat langkah: judul & durasi, kelas peserta, soal (ketuk kartu kategori atau upload Word langsung), lalu jadwal dan aturan (acak soal, kunci bila curang, token, tampilkan nilai)."],
+    ["Umumkan ke siswa", "Di detail ujian ketuk Umumkan ke WA: pesan berisi jadwal dan link masuk siap dikirim ke grup kelas."],
+    ["Nilai dan rekap", "Nilai otomatis untuk semua tipe kecuali uraian. Detail ujian → Nilai uraian untuk menilai jawaban esai per soal. Unduh nilai (Excel) per ujian, atau Dashboard → Unduh rekap nilai (Excel) berisi lembar Detail Nilai dan Rekap per Mapel."],
+    ["Administrasi", "Detail ujian → Daftar hadir & berita acara (pilih kelas, cetak/PDF), Cetak soal, Analisis soal."],
+  ]],
+  ["pengawas", "Pengawas", "Menjaga ujian berjalan tertib di ruangan.", [
+    ["Buka layar Pantau", "Ujian → pilih ujian → Pantau. Terlihat semua siswa: belum mulai, mengerjakan, terkunci, selesai, beserta progres dan jumlah pelanggaran."],
+    ["Berikan token", "Bila ujian memakai token, kode 6 huruf tampil besar di layar Pantau dan berganti tiap 15 menit. Bacakan atau tulis di papan; siswa butuh token saat pertama mulai."],
+    ["Siswa terkunci", "Keluar layar penuh atau pindah aplikasi sampai batas (bawaan 3x) membuat ujian terkunci. Kode buka 6 angka tampil merah di baris siswa; bacakan ke siswa tersebut. Bila terulang lagi setelah dibuka, jawaban dikumpulkan otomatis."],
+    ["Aksi per siswa", "Chat, +5 menit, jeda/lanjutkan, kumpulkan paksa, dan reset (siswa mengulang dari awal)."],
+    ["Internet putus", "Siswa yang sudah membuka ujian tetap bisa mengerjakan saat sinyal hilang; jawaban tersimpan di HP dan terkirim otomatis saat tersambung (tenggang 10 menit setelah waktu habis). Di Pantau mereka tampak \"aktif X menit lalu\" sampai tersambung lagi."],
+  ]],
+  ["siswa", "Siswa", "Cara masuk dan mengerjakan ujian.", [
+    ["Masuk", "Buka cbt-yuk.web.id/s/login, isi username (atau NISN) dan PIN dari kartu login."],
+    ["Pilih ujian", "Tab Aktif berisi ujian yang bisa dikerjakan. Bila diminta, ketik token dari pengawas lalu Kerjakan."],
+    ["Selama ujian", "Ujian berjalan layar penuh. Jangan keluar layar, pindah aplikasi, atau menekan tombol kembali: setiap kejadian dicatat dan bisa mengunci ujian. Tandai Ragu-ragu bila belum yakin; Daftar soal untuk melompat ke nomor lain."],
+    ["Selesai", "Tekan Kumpulkan. Nilai tampil di layar selesai bila guru mengizinkan. Waktu habis = jawaban terkumpul otomatis."],
+    ["Lupa PIN", "Di halaman masuk tekan Lupa PIN, isi username/NISN, lalu tekan tombol WhatsApp untuk menghubungi operator sekolah."],
+  ]],
+];
+const FAQ: Array<[string, string]> = [
+  ["Apakah CBT Yuk gratis?", "Ya, gratis selama masa uji coba. Tidak perlu instal; jalan di HP, laptop, dan komputer lab."],
+  ["Bagaimana mencegah siswa curang?", "Layar penuh wajib, pindah aplikasi/split screen dicatat sebagai pelanggaran, terkunci setelah batas dan butuh kode pengawas, kumpul otomatis bila terulang, teks soal tidak bisa disalin, terjemahan otomatis browser diblok, token berganti tiap 15 menit, urutan soal dan pilihan diacak per siswa."],
+  ["Bisa PG kompleks dan PG kategori seperti ANBK?", "Bisa. PG kompleks (pilih lebih dari satu) dan B/S tabel dengan label Benar/Salah, Sesuai/Tidak sesuai, Fakta/Opini, Ya/Tidak, dan lainnya."],
+  ["Bisa soal Bahasa Arab?", "Bisa. Tulisan Arab otomatis kanan-ke-kiri dengan huruf yang lebih besar. Upload Word mengenali pilihan أ ب ج د dan kunci الجواب. Gunakan Word, bukan PDF, untuk soal Arab."],
+  ["Soal hasil upload masuk kategori mana?", "Ke kategori yang Anda pilih di kolom \"Simpan ke kategori\" sebelum menyimpan (otomatis terisi kategori yang sedang dibuka). Soal yang terlanjur salah tempat bisa dicentang lalu dipindahkan."],
+  ["Bagaimana bila internet sekolah putus?", "Siswa yang sudah membuka ujian tetap bisa mengerjakan; jawaban tersimpan di HP dan terkirim otomatis saat tersambung."],
+  ["Siswa pakai HP sendiri, aman?", "Aman. Data siswa hanya terlihat oleh sekolahnya. Siswa masuk dengan username dan PIN, tanpa email."],
+  ["Bagaimana guru masuk dari halaman siswa?", "Ketuk logo CBT Yuk 5 kali di halaman masuk siswa, atau buka cbt-yuk.web.id/masuk."],
+];
+const NEWS: Array<[string, string]> = [
+  ["17 Nov 2026", "Mode internet putus: ujian tetap jalan saat sinyal hilang."],
+  ["16 Nov 2026", "Bank soal: centang lalu pindahkan/hapus sekaligus, Atur poin, total poin per kategori, Poin: dari Word."],
+  ["15 Nov 2026", "Upload ke kategori pilihan, ubah nama/hapus kategori."],
+  ["14 Nov 2026", "Format tebal/miring/pangkat/indeks dari Word ikut terimpor; rekap nilai Excel dengan lembar per mapel."],
+  ["9 Nov 2026", "Logo sekolah di HP siswa dan kartu login, soal Bahasa Arab, B/S tabel, label kategori."],
+  ["8 Nov 2026", "Layar Pantau baru, token ujian, beranda siswa bertab, daftar hadir & berita acara, menjodohkan tarik garis, bagikan ke WhatsApp."],
+];
 pages.get("/panduan", (c) => {
-  const step = (n: number, t: string, d: string, href = "", cta = "") => `<li><span class="pn">${n}</span><div><b>${t}</b><p>${d}</p>${href ? `<a class="btn" href="${href}">${cta}</a>` : ""}</div></li>`;
-  return c.html(base("Petunjuk", `
+  const share = `https://wa.me/?text=${encodeURIComponent("Panduan CBT Yuk (ujian sekolah online): https://cbt-yuk.web.id/panduan")}`;
+  const tabs = [...GUIDE.map(([k, t]) => [k, t]), ["faq", "Tanya-jawab"], ["baru", "Yang baru"]];
+  return c.html(base("Panduan", `
     <style>
-      .pg { max-width: 760px; margin: 0 auto; }
-      .pg ol { list-style: none; padding: 0; margin: 0; }
-      .pg li { display:flex; gap: 14px; padding: 16px 0; border-top: 1px solid var(--line); } .pg li:first-child { border-top: none; }
-      .pg .pn { width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto; display:grid; place-items:center; font-weight: 800; background: var(--soft); color: var(--brand); }
-      .pg li p { margin: 2px 0 8px; color: var(--mut); } .pg li .btn { min-height: 38px; padding: 6px 14px; font-size: 13.5px; }
-      .faq details { border-top: 1px solid var(--line); padding: 12px 0; } .faq summary { font-weight: 700; cursor: pointer; } .faq p { color: var(--mut); margin: 8px 0 0; }
+      .pg { max-width: 820px; margin: 0 auto; padding-bottom: 32px; }
+      .pg-top { display:flex; justify-content:space-between; align-items:center; padding: 18px 0; }
+      .pg h1 { margin: 0 0 4px; } .pg .sub { margin: 0 0 16px; }
+      .ptabs { display:flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 14px; position: sticky; top: 0; background: var(--paper); z-index: 5; padding-top: 6px; }
+      .ptabs a { white-space: nowrap; border: 1.5px solid var(--line); border-radius: 999px; padding: 7px 14px; font-weight: 600; font-size: 14px; color: var(--fg); text-decoration: none; background: var(--surface); }
+      .ptabs a[aria-current="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+      .psec { display: none; } .psec.on { display: block; }
+      .psteps { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+      .psteps li { display:flex; gap: 14px; padding: 14px 0; border-top: 1px solid var(--line); } .psteps li:first-child { border-top: none; }
+      .psteps li::before { counter-increment: s; content: counter(s); width: 32px; height: 32px; border-radius: 50%; flex: 0 0 auto; display:grid; place-items:center; font-weight: 800; background: var(--soft); color: var(--brand); }
+      .psteps b { display:block; } .psteps p { margin: 2px 0 0; color: var(--mut); }
+      .faq details { border-top: 1px solid var(--line); padding: 12px 0; } .faq details:first-of-type { border-top: none; } .faq summary { font-weight: 700; cursor: pointer; } .faq p { color: var(--mut); margin: 8px 0 0; }
+      .news li { list-style: none; display:flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); } .news ul { padding: 0; margin: 0; } .news li:first-child { border-top: none; }
+      .news time { flex: 0 0 96px; color: var(--brand); font-weight: 700; font-size: 13.5px; }
     </style>
     <div class="pg">
-      <div style="padding:20px 0"><a class="brand" href="/">${LOGO}</a></div>
-      <h1>Petunjuk CBT Yuk</h1>
-      <p class="sub">Lima langkah dari nol sampai nilai keluar.</p>
-      <section class="card"><h2>Untuk guru & admin</h2><ol>
-        ${step(1, "Buat kelas dan masukkan siswa", "Menu Siswa → Impor dari Excel. Cukup isi Nama dan Kelas. Kelas, username, dan PIN dibuat otomatis; unduh kartu loginnya untuk dibagikan.", "/app/students", "Buka Siswa")}
-        ${step(2, "Isi bank soal", "Tulis soal langsung, upload naskah Word/PDF, tambahkan contoh soal siap pakai, atau buat soal dengan AI.", "/app/questions", "Buka Bank soal")}
-        ${step(3, "Buat ujian", "Tombol Ujian di tengah → pilih kelas, pilih kategori soal, lalu buka sekarang atau jadwalkan.", "/app/exams/new", "Buat ujian")}
-        ${step(4, "Awasi saat ujian", "Buka ujian → Pantau. Lihat siapa yang sedang mengerjakan, tambah waktu, dan bacakan kode buka bila siswa terkunci karena pelanggaran.")}
-        ${step(5, "Lihat nilai", "Nilai pilihan ganda, isian, dan menjodohkan keluar otomatis. Soal uraian dinilai dari halaman ujian.")}
-      </ol></section>
-      <section class="card"><h2>Untuk siswa</h2><ol>
-        ${step(1, "Masuk", "Buka alamat sekolah, pilih Masuk → Saya siswa, isi username dan PIN dari guru.", "/s/login", "Halaman masuk siswa")}
-        ${step(2, "Mulai ujian", "Pilih ujian, periksa data, tekan Mulai. Ujian berjalan dalam layar penuh.")}
-        ${step(3, "Kerjakan & kumpulkan", "Tandai Ragu-ragu bila belum yakin. Tombol Selesai ada di soal terakhir; ujian bisa dikumpulkan setelah semua soal dijawab. Waktu habis = terkumpul otomatis.")}
-      </ol></section>
-      <section class="card faq"><h2>Pertanyaan umum</h2>
-        <details><summary>Siswa terkunci saat ujian?</summary><p>Itu karena keluar layar penuh atau pindah aplikasi berkali-kali. Pengawas melihat kode buka 6 angka di halaman Pantau; siswa memasukkannya dan bisa lanjut. Hitungan pelanggaran mulai dari 0 lagi.</p></details>
-        <details><summary>Siswa lupa PIN?</summary><p>Siswa tekan "Lupa PIN" di halaman masuk. Guru menyetujuinya di Pengaturan → Reset PIN siswa.</p></details>
-        <details><summary>Bisa dipasang seperti aplikasi?</summary><p>Bisa. Buka menu ☰ → Pasang aplikasi.</p></details>
-      </section>
+      <div class="pg-top"><a class="brand" href="/">${LOGO}</a><a class="btn" href="${share}" target="_blank" rel="noopener">Bagikan ke WA</a></div>
+      <h1>Panduan CBT Yuk</h1>
+      <p class="sub">Pilih peran Anda. Setiap langkah singkat dan bisa langsung dipraktikkan.</p>
+      <nav class="ptabs" aria-label="Bagian panduan">${tabs.map(([k, t]) => `<a href="#${k}" data-t="${k}">${t}</a>`).join("")}</nav>
+      ${GUIDE.map(([k, t, d, steps]) => `<section class="card psec" id="${k}"><h2>${t}</h2><p class="muted" style="margin-top:-4px">${d}</p>
+        <ol class="psteps">${steps.map(([h, x]) => `<li><div><b>${esc(h)}</b><p>${esc(x)}</p></div></li>`).join("")}</ol></section>`).join("")}
+      <section class="card psec faq" id="faq"><h2>Tanya-jawab</h2>${FAQ.map(([q, a]) => `<details><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join("")}</section>
+      <section class="card psec news" id="baru"><h2>Yang baru</h2><ul>${NEWS.map(([d, x]) => `<li><time>${d}</time><span>${esc(x)}</span></li>`).join("")}</ul></section>
       <p class="muted" style="text-align:center">Masih bingung? <a href="${FEEDBACK_WA}" target="_blank" rel="noopener">Tanya lewat WhatsApp</a></p>
     </div>
+    <script>
+      const show = () => { const k = (location.hash.slice(1) || 'guru');
+        document.querySelectorAll('.psec').forEach((s) => s.classList.toggle('on', s.id === k));
+        document.querySelectorAll('.ptabs a').forEach((a) => a.setAttribute('aria-current', String(a.dataset.t === k))); };
+      addEventListener('hashchange', () => { show(); scrollTo(0, 0); }); show();
+    </script>
   `, { nav: false }));
 });
 
