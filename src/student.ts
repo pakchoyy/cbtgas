@@ -165,6 +165,7 @@ ${FMT_JS}
   /* Teks soal tidak bisa diblok/disalin (mencegah salin ke penerjemah). */
   #qbox { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   #qbox input, #qbox textarea { -webkit-user-select: text; user-select: text; }
+  .offbar { position: fixed; top: 0; left: 0; right: 0; z-index: 140; background: #B45309; color: #fff; padding: 8px 14px; font-size: 13.5px; font-weight: 600; text-align: center; }
   .qtip { background: var(--soft); color: var(--fg); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin: 4px 0 12px; }
   .qtip .n { float: right; font-weight: 800; color: var(--brand); }
   .bsw { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -1377,7 +1378,7 @@ student.get("/s/take/:sid", async (c) => {
       async function flushQueue() {
         if (flushing) return flushing;
         const m = queueGet(), items = Object.values(m);
-        if (!items.length) { updateBadge(); return; }
+        if (!items.length) { updateBadge(); return true; }
         flushing = (async () => {
           try {
             const r = await fetch('/s/take/' + D.sessionId + '/answers', { method: 'POST', credentials: 'same-origin',
@@ -1386,6 +1387,7 @@ student.get("/s/take/:sid", async (c) => {
             else scheduleFlush();
           } catch (_) { scheduleFlush(); }
           finally { flushing = null; updateBadge(); }
+          return Object.keys(queueGet()).length === 0;
         })();
         return flushing;
       }
@@ -1394,6 +1396,12 @@ student.get("/s/take/:sid", async (c) => {
         navigator.sendBeacon('/s/take/' + D.sessionId + '/answers', new Blob([JSON.stringify({ answers: items })], { type: 'application/json' })); };
       addEventListener('pagehide', beacon);
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') beacon(); });
+      // Penanda offline di atas layar ujian.
+      const offBar = document.createElement('div'); offBar.className = 'offbar'; offBar.hidden = navigator.onLine;
+      offBar.textContent = '📶 Internet terputus. Tetap kerjakan; jawaban tersimpan di HP ini dan terkirim otomatis saat tersambung.';
+      document.body.appendChild(offBar);
+      addEventListener('offline', () => { offBar.hidden = false; });
+      addEventListener('online', () => { offBar.hidden = true; flushQueue(); flushVio(); });
       function updateBadge() {
         const n = Object.keys(queueGet()).length;
         const b = document.getElementById('qbadge'); if (!b) return;
@@ -1466,16 +1474,30 @@ student.get("/s/take/:sid", async (c) => {
         submitting = true; await flushQueue(); try { if (document.fullscreenElement) await document.exitFullscreen(); } catch (_) {}
         location.href = '/s';
       };
+      // Kumpulkan. Bila internet putus: jawaban aman di HP, menunggu sinyal lalu dikumpulkan otomatis
+      // (tetap berlaku walau halaman dimuat ulang, lewat penanda di localStorage).
+      const SKEY = 'cbtgas_submit_' + D.sessionId;
+      let waitT = 0;
       async function submitExam(auto) {
         if (submitting) return; submitting = true;
-        try { await flushQueue(); } catch (_) {}
+        try { localStorage.setItem(SKEY, auto ? 'auto' : 'manual'); } catch (_) {}
         if (auto) showGate('⏱', 'Waktu habis', 'Jawaban Anda sedang dikumpulkan otomatis…', null);
-        const r = await fetch('/s/take/' + D.sessionId + '/submit', { method:'POST', credentials:'same-origin' }).catch(() => null);
-        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-        if (r && r.ok) { location.href = '/s/done/' + D.sessionId; return; }
+        const sent = await flushQueue().catch(() => false);
+        const r = sent ? await fetch('/s/take/' + D.sessionId + '/submit', { method:'POST', credentials:'same-origin' }).catch(() => null) : null;
+        if (r && r.ok) {
+          try { localStorage.removeItem(SKEY); localStorage.removeItem(QKEY); } catch (_) {}
+          if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+          location.href = '/s/done/' + D.sessionId; return;
+        }
+        if (r && r.status === 400) { // sesi sudah ditutup server (mis. lewat tenggang waktu)
+          try { localStorage.removeItem(SKEY); } catch (_) {}
+          location.href = '/s/done/' + D.sessionId; return;
+        }
         submitting = false;
-        showGate('!', 'Gagal mengumpulkan', 'Periksa koneksi internet, lalu coba lagi. Jawaban Anda tetap tersimpan.', ['Coba lagi', () => submitExam(auto)]);
+        showGate('📶', 'Menunggu internet…', 'Jawaban Anda AMAN tersimpan di HP ini. Jangan tutup halaman ini. Begitu internet tersambung, jawaban dikumpulkan otomatis.', ['Coba sekarang', () => submitExam(auto)]);
+        clearTimeout(waitT); waitT = setTimeout(() => submitExam(auto), 10000);
       }
+      addEventListener('online', () => { let p = null; try { p = localStorage.getItem(SKEY); } catch (_) {} if (p && !submitting) submitExam(p === 'auto'); });
       // Timer
       let dl = new Date(D.deadline).getTime();
       const t = document.getElementById('t');
@@ -1489,6 +1511,7 @@ student.get("/s/take/:sid", async (c) => {
         setTimeout(tick, 1000);
       }
       tick(); render();
+      { let p = null; try { p = localStorage.getItem(SKEY); } catch (_) {} if (p) setTimeout(() => submitExam(p === 'auto'), 500); }
 
       function warnBig(t, m) {
         const d = document.createElement('dialog'); d.className = 'yk-ask';
@@ -1497,15 +1520,25 @@ student.get("/s/take/:sid", async (c) => {
         d.querySelector('button').onclick = () => { d.close(); d.remove(); };
         document.body.appendChild(d); d.showModal();
       }
+      // Pelanggaran saat offline diantre, dikirim begitu online.
+      const VKEY = 'cbtgas_vio_' + D.sessionId;
+      function vioQ(kind) { try { const a = JSON.parse(localStorage.getItem(VKEY) || '[]'); a.push(kind); localStorage.setItem(VKEY, JSON.stringify(a.slice(-20))); } catch (_) {} }
+      async function flushVio() {
+        let a = []; try { a = JSON.parse(localStorage.getItem(VKEY) || '[]'); localStorage.removeItem(VKEY); } catch (_) {}
+        for (const k of a) { lastReport = 0; await report(k); }
+      }
       // Anti-cheat: lapor peristiwa mencurigakan ke server.
       let lastReport = 0;
       async function report(kind) {
         if (Date.now() - lastReport < 1500) return; // throttle burst
         lastReport = Date.now();
-        const r = await fetch('/s/take/' + D.sessionId + '/violation', {
+        let r;
+        try {
+          r = await fetch('/s/take/' + D.sessionId + '/violation', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }),
         });
+        } catch (_) { vioQ(kind); toast('Pelanggaran tercatat (offline): ' + (KIND[kind] || kind)); return; }
         const j = await r.json().catch(() => ({}));
         violations = j.count || violations + 1;
         if (j.locked || j.submitted) { submitting = true; location.reload(); return; }
@@ -1680,8 +1713,9 @@ async function saveAnswers(c: Context<{ Bindings: Bindings }>, list: AnswerIn[])
   if (!items.length) return c.json({ error: "jawaban kosong" }, 400);
   const sql = connect(c.env.HYPERDRIVE.connectionString);
   const saved = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
+    // Tenggang 10 menit: jawaban siswa yang sempat offline saat waktu habis masih diterima.
     const ok = await tx`select 1 from exam_sessions where id = ${sessionId} and student_id = ${stu.uid} and status = 'active'
-                        and deadline_at > now() and paused_at is null`;
+                        and deadline_at > now() - interval '10 minutes' and paused_at is null`;
     if (!ok.length) return 0;
     for (const [qid, ans] of items) {
       await tx`insert into answers (session_id, question_id, school_id, answer, updated_at)

@@ -130,7 +130,7 @@ app.get("/favicon.ico", () => svgRes(iconSvg(0)));
 // data (/api/*, /s/take/*) selalu network. Dibatasi runtime cache ringan
 // untuk GET /s/login & / supaya PWA bisa buka saat offline sampai login.
 app.get("/sw.js", (c) => {
-  const sw = `const CACHE = 'cbtyuk-shell-v3';
+  const sw = `const CACHE = 'cbtyuk-shell-v4';
 const SHELL = ['/', '/s/login', '/manifest.webmanifest', '/icon-192.svg'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -147,7 +147,13 @@ self.addEventListener('fetch', (e) => {
       url.pathname.startsWith('/s/history')) return;
   // /s/take/:sid di-cache saat berhasil (network-first) agar bisa dibuka
   // kembali offline sampai siswa klik tombol navigasi.
-  const isTake = url.pathname.startsWith('/s/take/');
+  // Font, KaTeX, dan pustaka dari CDN: ambil dari cache dulu (tidak berubah), supaya halaman ujian tetap rapi saat offline.
+  if (/^(cdnjs\\.cloudflare\\.com|fonts\\.googleapis\\.com|fonts\\.gstatic\\.com)$/.test(url.hostname)) {
+    e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((r) => { if (r.ok || r.type === 'opaque') caches.open(CACHE).then((c) => c.put(req, r.clone())); return r; })));
+    return;
+  }
+  if (url.origin !== location.origin) return;
+  const isTake = url.pathname.startsWith('/s/take/') || url.pathname === '/brand.css' || url.pathname === '/logo';
   const isShell = SHELL.includes(url.pathname);
   e.respondWith((async () => {
     try {
@@ -210,7 +216,7 @@ async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed
         returning id`;
       // Sesi aktif yang deadline-nya lewat → expired, sekalian catat auto-score
       // supaya guru tidak harus menunggu siswa klik submit.
-      const expired = await tx`select id from exam_sessions where status = 'active' and deadline_at <= now()`;
+      const expired = await tx`select id from exam_sessions where status = 'active' and deadline_at <= now() - interval '10 minutes'`;
       for (const row of expired as unknown as Array<{ id: string }>) await finalizeSession(tx, row.id, "expired");
       await tx`delete from rate_counters where window_start < now() - interval '1 day'`;
       // Siswa tamu dari tombol demo (beserta sesi & jawabannya) dihapus setelah 6 jam.
