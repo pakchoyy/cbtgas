@@ -7,7 +7,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connectDb, withTenant } from "./db";
 import { requireStaff, requireOwner, type AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, schoolYear } from "./ui";
+import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, WA_DISPLAY, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -697,7 +697,7 @@ pages.get("/tentang", (c) => c.html(base("Tentang", `
     <h2>Kontak</h2>
     <p class="muted" style="margin-top:0">Ada pertanyaan, kendala, atau ide? Hubungi kami.</p>
     <div class="row">
-      <a class="btn primary" href="${FEEDBACK_WA}" target="_blank" rel="noopener">WhatsApp 0895-3071-3597</a>
+      <a class="btn primary" href="${FEEDBACK_WA}" target="_blank" rel="noopener">WhatsApp ${WA_DISPLAY}</a>
       <a class="btn" href="mailto:admin@bantuguruyuk.web.id">admin@bantuguruyuk.web.id</a>
     </div>
   </section>
