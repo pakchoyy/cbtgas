@@ -7,7 +7,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connectDb, withTenant } from "./db";
 import { requireStaff, requireOwner, type AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, fracHtml, FRAC_CSS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, schoolYear } from "./ui";
+import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, fracHtml, FRAC_CSS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, WA_DISPLAY, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -660,7 +660,7 @@ const FAQ: Array<[string, string]> = [
   ["Soal hasil upload masuk kategori mana?", "Ke kategori yang Anda pilih di kolom \"Simpan ke kategori\" sebelum menyimpan (otomatis terisi kategori yang sedang dibuka). Soal yang terlanjur salah tempat bisa dicentang lalu dipindahkan."],
   ["Bagaimana bila internet sekolah putus?", "Siswa yang sudah membuka ujian tetap bisa mengerjakan; jawaban tersimpan di HP dan terkirim otomatis saat tersambung."],
   ["Siswa pakai HP sendiri, aman?", "Aman. Data siswa hanya terlihat oleh sekolahnya. Siswa masuk dengan username dan PIN, tanpa email."],
-  ["Bagaimana guru masuk dari halaman siswa?", "Ketuk logo CBT Yuk 5 kali di halaman masuk siswa, atau buka cbt-yuk.web.id/masuk."],
+  ["Bagaimana guru masuk dari halaman siswa?", "Ketuk logo CBT Yuk 3 kali di halaman masuk siswa, atau buka cbt-yuk.web.id/masuk."],
 ];
 const NEWS: Array<[string, string]> = [
   ["17 Nov 2026", "Mode internet putus: ujian tetap jalan saat sinyal hilang."],
@@ -722,7 +722,7 @@ pages.get("/tentang", (c) => c.html(base("Tentang", `
     <h2>Kontak</h2>
     <p class="muted" style="margin-top:0">Ada pertanyaan, kendala, atau ide? Hubungi kami.</p>
     <div class="row">
-      <a class="btn primary" href="${FEEDBACK_WA}" target="_blank" rel="noopener">WhatsApp 0895-3071-3597</a>
+      <a class="btn primary" href="${FEEDBACK_WA}" target="_blank" rel="noopener">WhatsApp ${WA_DISPLAY}</a>
       <a class="btn" href="mailto:admin@bantuguruyuk.web.id">admin@bantuguruyuk.web.id</a>
     </div>
   </section>
@@ -4238,6 +4238,7 @@ pages.get("/masuk", async (c) => {
           <span class="ot"><b>Saya siswa</b><span>Pakai username dan PIN dari guru</span></span><span class="go">›</span></a>
         <a class="opt-btn" href="/auth/google/start?mode=login"><span class="oi">${googleIcon}</span>
           <span class="ot"><b>Saya guru / admin</b><span>Masuk dengan akun Google</span></span><span class="go">›</span></a>
+        <p class="muted" style="margin:8px 0 0;font-size:13px;text-align:center"><a href="/auth/google/start?mode=login&amp;ganti=1">Pakai akun Google lain</a></p>
       </section>
       <section class="card daftar">
         <h2>Sekolah baru</h2>

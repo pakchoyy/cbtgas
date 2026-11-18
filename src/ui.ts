@@ -25,8 +25,12 @@ const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d=
 export const ICON_EDIT = svg("M4 20h4L19 9l-4-4L4 16zM14 6l4 4");
 export const ICON_DEL = svg("M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3");
 
+// Nomor WhatsApp kontak CBT Yuk. Ganti di sini saja; semua tautan dan teks kontak mengikuti.
+export const WA_NUMBER = "6285600410357";   // untuk wa.me: 62..., tanpa +, spasi, atau tanda hubung
+export const WA_DISPLAY = "0856-0041-0357"; // untuk ditampilkan ke pengguna
+
 // Kritik & saran langsung ke WhatsApp pengelola.
-export const FEEDBACK_WA = "https://wa.me/6289530713597?text=" + encodeURIComponent("Halo CBT Yuk, saya mau kasih kritik/saran: ");
+export const FEEDBACK_WA = `https://wa.me/${WA_NUMBER}?text=` + encodeURIComponent("Halo CBT Yuk, saya mau kasih kritik/saran: ");
 
 // Jenis ujian lama disimpan sebagai kode; yang baru berupa teks bebas.
 const KIND_LABELS: Record<string, string> = { harian: "Ulangan harian", pts_pas: "PTS / PAS", sumatif: "Sumatif", tryout: "Tryout" };

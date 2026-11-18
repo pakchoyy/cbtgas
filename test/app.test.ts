@@ -373,3 +373,31 @@ test("gambar per pilihan: simpan, edit tanpa hilang, ikut diacak, tidak membeban
   await send(`/api/questions/${r.id}`, { type: "pg", text: "t", options: ["a", "Kotak", "c"], option_images: ["", "", ""], correct: 0 }, "PATCH");
   assert.equal((await w.open`select content from questions where id = ${r.id}`)[0].content.option_images, undefined);
 });
+
+test("login Google: akun terakhir diingat (tanpa pemilih akun), 'ganti=1' dan keluar memunculkan pemilih lagi", async () => {
+  const w = await boot();
+  const go = async (path: string, cookie = "") => new URL((await w.call(path, { cookie })).headers.get("location")!);
+  const first = await go("/auth/google/start?mode=login");
+  assert.equal(first.searchParams.get("prompt"), "select_account");
+  assert.equal(first.searchParams.get("login_hint"), null);
+  const hint = "cbt_hint=" + encodeURIComponent("guru@sekolah.test");
+  const again = await go("/auth/google/start?mode=login", hint);
+  assert.equal(again.searchParams.get("login_hint"), "guru@sekolah.test");
+  assert.equal(again.searchParams.get("prompt"), null);
+  assert.equal((await go("/auth/google/start?mode=login&ganti=1", hint)).searchParams.get("prompt"), "select_account");
+  assert.equal((await go("/auth/google/start?mode=register", hint)).searchParams.get("login_hint"), null);
+  const out = await w.call("/auth/logout", { method: "POST", cookie: hint });
+  assert.match(out.headers.get("set-cookie") ?? "", /cbt_hint=;[^,]*Max-Age=0/);
+});
+
+test("halaman masuk siswa: pintu guru tersembunyi cukup 3 ketukan logo; /masuk punya pilihan akun Google lain", async () => {
+  const w = await boot();
+  const s = await (await w.call("/s/login")).text();
+  assert.match(s, /if \(n >= 3\) location\.href = '\/masuk'/);
+  const m = await (await w.call("/masuk")).text();
+  assert.match(m, /\/auth\/google\/start\?mode=login&amp;ganti=1/);
+  // sesi staf masih aktif -> /masuk langsung ke /app
+  const staff = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const r = await w.call("/masuk", { cookie: staff });
+  assert.equal(r.status, 302); assert.equal(r.headers.get("location"), "/app");
+});

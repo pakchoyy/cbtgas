@@ -39,6 +39,10 @@ type Mode = "login" | "register";
 const SESSION_COOKIE = "cbt_sess";
 const STATE_COOKIE = "oauth_state";
 const PENDING_COOKIE = "pending_registration";
+// Email Google terakhir yang berhasil masuk: login berikutnya langsung ke akun itu (login_hint) tanpa pemilih akun.
+// Dihapus saat keluar. "?ganti=1" memaksa pemilih akun.
+const HINT_COOKIE = "cbt_hint";
+const HINT_TTL = 60 * 60 * 24 * 180; // 180 hari
 const SESSION_TTL = 60 * 60 * 8; // 8 jam
 
 function redirectUri(origin: string): string {
@@ -69,9 +73,11 @@ auth.get("/auth/google/start", (c) => {
     response_type: "code",
     scope: "openid email profile",
     access_type: "online",
-    prompt: "select_account",
     state,
   });
+  const hint = mode === "login" && c.req.query("ganti") !== "1" ? readCookie(c.req.header("Cookie"), HINT_COOKIE) : null;
+  if (hint) params.set("login_hint", decodeURIComponent(hint));
+  else params.set("prompt", "select_account");
   const url = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   const h = new Headers({ Location: url });
   // state cookie: 10 menit, cukup untuk round-trip
@@ -135,6 +141,7 @@ auth.get("/auth/google/callback", async (c) => {
     if ((await sql`select 1 from system_owners where email = ${email}`).length) {
       const own: Session = { uid: "", sid: "", role: "owner", email, exp: Math.floor(Date.now() / 1000) + SESSION_TTL };
       headers.append("Set-Cookie", cookieHeader(SESSION_COOKIE, await sign(own, c.env.SESSION_SECRET), { maxAge: SESSION_TTL }));
+      headers.append("Set-Cookie", cookieHeader(HINT_COOKIE, encodeURIComponent(email), { maxAge: HINT_TTL }));
       headers.set("Location", `${c.env.APP_ORIGIN}/owner`);
       return new Response(null, { status: 302, headers });
     }
@@ -161,6 +168,7 @@ auth.get("/auth/google/callback", async (c) => {
   };
   const cookie = await sign(session, c.env.SESSION_SECRET);
   headers.append("Set-Cookie", cookieHeader(SESSION_COOKIE, cookie, { maxAge: SESSION_TTL }));
+  headers.append("Set-Cookie", cookieHeader(HINT_COOKIE, encodeURIComponent(email), { maxAge: HINT_TTL }));
   headers.set("Location", `${c.env.APP_ORIGIN}/app`);
   return new Response(null, { status: 302, headers });
 });
@@ -223,6 +231,7 @@ auth.post("/auth/register-school", async (c) => {
 auth.post("/auth/logout", (c) => {
   const h = new Headers({ Location: "/" });
   h.append("Set-Cookie", clearCookie(SESSION_COOKIE));
+  h.append("Set-Cookie", clearCookie(HINT_COOKIE)); // komputer bersama: guru berikutnya memilih akunnya sendiri
   return new Response(null, { status: 302, headers: h });
 });
 
