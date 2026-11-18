@@ -3,6 +3,7 @@
 //   draft/scheduled → open   saat starts_at lewat
 //   open/...        → closed saat ends_at lewat
 //   sesi aktif yang deadline-nya lewat 10 menit → expired + dinilai (tenggang untuk siswa yang sempat offline)
+import { isD1 } from "./d1";
 import type postgres from "postgres";
 import { withTenant } from "./db";
 import { finalizeSession } from "./scoring";
@@ -23,7 +24,8 @@ export async function catchUp(sql: postgres.Sql, schoolId: string): Promise<void
       where school_id = ${schoolId} and status in ('open','draft','scheduled')
         and ends_at is not null and ends_at <= now()`;
     const expired = await tx`select id from exam_sessions
-      where school_id = ${schoolId} and status = 'active' and deadline_at <= now() - interval '10 minutes' and paused_at is null`;
+      where school_id = ${schoolId} and status = 'active' and deadline_at <= now() - interval '10 minutes' and paused_at is null
+      limit ${isD1(tx) ? 5 : 1000000}`; // D1: batasi per permintaan (anggaran query); sisanya diproses catchUp berikutnya
     for (const r of expired as unknown as Array<{ id: string }>) await finalizeSession(tx, r.id, "expired");
   }).catch((e) => console.log("catchUp", (e as Error).message));
 }

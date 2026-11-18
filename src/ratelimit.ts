@@ -1,7 +1,7 @@
 // Rate limiting sederhana lewat tabel rate_counters.
 // Window geser per-menit; akses tanpa RLS context (grant langsung ke cbt_app).
 
-import { connect } from "./db";
+import { connectDb, type DbEnv } from "./db";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Sql = any;
@@ -32,10 +32,10 @@ export function clientIp(headers: Headers): string {
 }
 
 export async function checkOrLimit(
-  env: { HYPERDRIVE: Hyperdrive }, headers: Headers, bucket: string, limit: number,
+  env: DbEnv, headers: Headers, bucket: string, limit: number,
 ): Promise<Response | null> {
   const ip = clientIp(headers);
-  const sql = connect(env.HYPERDRIVE.connectionString);
+  const sql = connectDb(env);
   const r = await allow(sql, bucket, ip, limit);
   if (r.ok) return null;
   return new Response(JSON.stringify({ error: "rate limit; coba lagi dalam " + r.reset_in_sec + " detik" }), {

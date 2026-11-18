@@ -1,6 +1,8 @@
 import { Hono } from "hono";
-import { connect, withTenant, edgeCache } from "./db";
-import { auth, requireStaff, AuthBindings } from "./auth";
+import { publicBank, incrementBankDownload } from "./dbfn";
+import { connectDb, withTenant, edgeCache } from "./db";
+import { isD1 } from "./d1";
+import { auth, requireStaff, type AuthBindings } from "./auth";
 import { pages } from "./pages";
 import { api } from "./api";
 import { student } from "./student";
@@ -22,7 +24,7 @@ app.get("/logo", async (c) => {
   const key = new Request(`https://cache.cbt-yuk/logo/${s.sid}`);
   const hit = await edgeCache().match(key);
   if (hit) return new Response(hit.body, hit);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) => tx`select logo_key from schools where id = ${s.sid}`);
   const uri = (r[0] as { logo_key: string | null } | undefined)?.logo_key;
   const m = uri?.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/);
@@ -43,7 +45,7 @@ app.get("/brand.css", async (c) => {
   const key = new Request(`https://cache.cbt-yuk/brand/${s.sid}`);
   const hit = await edgeCache().match(key);
   if (hit) return new Response(hit.body, { headers });
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     tx`select color from schools where id = ${s.sid}`);
   const css = `:root{--brand:${brandHex((r[0] as { color: string } | undefined)?.color)}}`;
@@ -59,11 +61,11 @@ app.get("/health", (c) => c.json({ ok: true, env: c.env.APP_ENV }));
 app.get("/public/banks/:slug", async (c) => {
   const slug = c.req.param("slug");
   if (!/^[a-z0-9-]{3,64}$/.test(slug)) return c.json({ error: "slug tidak valid" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   // Set konteks owner agar function call diizinkan grant-nya ke cbt_app.
   const rows = await withTenant(sql, { schoolId: "", role: "owner" }, async (tx) => {
-    const r = await tx`select * from public_bank(${slug})`;
-    if (r.length) await tx`select increment_bank_download(${slug})`;
+    const r = await publicBank(tx, slug);
+    if (r.length) await incrementBankDownload(tx, slug);
     return r;
   });
   if (rows.length === 0) return c.json({ error: "bank tidak ditemukan" }, 404);
@@ -181,11 +183,11 @@ app.route("/", pages);
 
 // Siswa milik sekolah yang sedang login (role staf).
 app.get("/api/students", async (c) => {
-  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env.HYPERDRIVE);
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env);
   if (!sess) return c.json({ error: "unauthorized" }, 401);
   const schoolId = sess.sid, role = sess.role, userId = sess.uid;
 
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId, role, userId }, (tx) =>
     tx`select id, name, username from students order by name limit 100`,
   );
@@ -196,7 +198,7 @@ app.get("/api/students", async (c) => {
 // Transisi saat aplikasi dipakai diproses oleh catchUp() (src/catchup.ts).
 // Transisi otomatis status ujian berdasarkan jadwal.
 async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed: number; expired: number }> {
-  const sql = connect(env.HYPERDRIVE.connectionString);
+  const sql = connectDb(env);
   // Role 'owner' bypass RLS tenant_isolation (lihat policy: app_is_owner() OR ...).
   // schoolId kosong karena 'owner' tidak terikat satu sekolah.
   return await withTenant(sql, { schoolId: "", role: "owner" }, async (tx) => {
@@ -216,7 +218,10 @@ async function runScheduledJobs(env: Bindings): Promise<{ opened: number; closed
         returning id`;
       // Sesi aktif yang deadline-nya lewat → expired, sekalian catat auto-score
       // supaya guru tidak harus menunggu siswa klik submit.
-      const expired = await tx`select id from exam_sessions where status = 'active' and deadline_at <= now() - interval '10 minutes'`;
+      // D1: dibatasi per jalan karena anggaran query per invokasi (~7 query per sesi); sisanya oleh catchUp() saat aplikasi
+      // dibuka atau cron berikutnya. Neon: semua sekaligus seperti sebelumnya.
+      const expired = await tx`select id from exam_sessions where status = 'active' and deadline_at <= now() - interval '10 minutes'
+        limit ${isD1(tx) ? 5 : 1000000}`;
       for (const row of expired as unknown as Array<{ id: string }>) await finalizeSession(tx, row.id, "expired");
       await tx`delete from rate_counters where window_start < now() - interval '1 day'`;
       // Siswa tamu dari tombol demo (beserta sesi & jawabannya) dihapus setelah 6 jam.

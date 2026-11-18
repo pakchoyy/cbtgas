@@ -1,0 +1,26 @@
+# Worker UJI untuk D1. Terpisah dari produksi: nama lain, TANPA routes/custom domain, TANPA cron, TANPA Hyperdrive.
+# Deploy: npx wrangler deploy -c wrangler.d1test.toml
+# JANGAN menambahkan routes ke cbt-yuk.web.id di sini.
+name = "cbt-api-d1test"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[placement]
+mode = "smart"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cbt-yuk"
+database_id = "59225b67-351f-4083-b591-f767c7344063"
+
+[vars]
+APP_ENV = "staging"
+DB_BACKEND = "d1"
+DEMO_LOGIN = "1"
+# Isi dengan URL workers.dev Worker ini setelah deploy pertama, lalu deploy ulang.
+APP_ORIGIN = "https://cbt-api-d1test.pulsachoy.workers.dev"
+
+# Secret (wrangler secret put NAMA -c wrangler.d1test.toml): SESSION_SECRET (wajib, nilai BARU, jangan salin dari produksi),
+# GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (opsional; login Google butuh redirect URI workers.dev terdaftar di Google).

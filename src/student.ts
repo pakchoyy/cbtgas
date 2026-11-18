@@ -1,11 +1,16 @@
 // Portal siswa: login dengan username + PIN; kerjakan ujian.
 // Cookie sesi siswa terpisah (cbt_sstu) agar tidak campur dengan sesi staf.
 
+import { atomic } from "./dbfn";
+import { isD1 } from "./d1";
+import { weakCategoriesD1 } from "./statsd1";
+import { orderLength } from "./score";
+import { findStudentsByUsername, resolveSchool } from "./dbfn";
 import { Hono, type Context } from "hono";
-import { connect, withTenant } from "./db";
+import { connectDb, withTenant } from "./db";
 import { verifyPin, hashPin } from "./hash";
 import {
-  cookieHeader, clearCookie, readCookie, sign, verify, Session,
+  cookieHeader, clearCookie, readCookie, sign, verify, type Session,
 } from "./session";
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
@@ -16,6 +21,8 @@ import { catchUp } from "./catchup";
 
 type Bindings = {
   HYPERDRIVE: Hyperdrive;
+  DB_BACKEND?: string;
+  DB?: D1Database;
   SESSION_SECRET: string;
   APP_ORIGIN: string;
   APP_ENV: string;
@@ -244,7 +251,7 @@ student.get("/s", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.redirect("/s/login");
 
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   await catchUp(sql, stu.sid);
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const me = await tx`select s.name, c.name as class_name, s.class_id, sc.name as school, sc.logo_key is not null as has_logo
@@ -252,7 +259,7 @@ student.get("/s", async (c) => {
     // Semua ujian untuk kelas siswa (kecuali draf), beserta sesi dan nilainya.
     const exams = await tx`
       select e.id, e.title, e.duration_minutes, e.kind, e.status, e.starts_at, e.ends_at, e.use_token, e.show_score,
-             (select count(*) from exam_questions q where q.exam_id = e.id)::int as qn,
+             cast((select count(*) from exam_questions q where q.exam_id = e.id) as integer) as qn,
              es.id as session_id, es.status as session_status, sc.final_score
       from exams e
       join exam_classes ec on ec.exam_id = e.id
@@ -356,18 +363,18 @@ student.get("/s/done/:sid", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.redirect("/s/login");
   const sid = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) => tx`
     select e.title, e.show_score, es.started_at, es.finished_at, sc.final_score, st.name, c.name as class_name,
            (select logo_key is not null from schools where id = es.school_id) as has_logo, (select name from schools where id = es.school_id) as school,
-           (select count(*) from answers a where a.session_id = es.id)::int as answered,
-           coalesce(jsonb_array_length(case when jsonb_typeof(es.question_order) = 'object' then es.question_order->'order'
-                                            when jsonb_typeof(es.question_order) = 'array' then es.question_order else '[]'::jsonb end), 0)::int as total,
+           cast((select count(*) from answers a where a.session_id = es.id) as integer) as answered,
+           es.question_order,
            exists(select 1 from exam_questions eq join questions q on q.id = eq.question_id where eq.exam_id = e.id and q.type = 'uraian') as has_essay
     from exam_sessions es join exams e on e.id = es.exam_id join students st on st.id = es.student_id
     left join classes c on c.id = st.class_id left join scores sc on sc.session_id = es.id
     where es.id = ${sid} and es.student_id = ${stu.uid}`);
-  const d = r[0] as undefined | { title: string; show_score: boolean; started_at: string; finished_at: string | null; final_score: string | null;
+  const d0 = r[0] as undefined | (Record<string, unknown> & { question_order?: unknown });
+  const d = (d0 ? { ...d0, total: orderLength(d0.question_order) } : undefined) as undefined | { title: string; show_score: boolean; started_at: string; finished_at: string | null; final_score: string | null;
     name: string; class_name: string | null; answered: number; total: number; has_essay: boolean; has_logo: boolean; school: string };
   if (!d) return c.redirect("/s");
   const secs = d.finished_at ? Math.max(0, Math.round((new Date(d.finished_at).getTime() - new Date(d.started_at).getTime()) / 1000)) : 0;
@@ -404,7 +411,7 @@ student.get("/s/done/:sid", async (c) => {
 student.get("/s/history", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.redirect("/s/login");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
     tx`select es.id as session_id, e.title, e.kind, es.status,
               es.started_at, es.finished_at, sc.final_score
@@ -446,9 +453,9 @@ student.get("/s/history", async (c) => {
 student.get("/s/rekomendasi", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.redirect("/s/login");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
-    const weak = await tx`
+    const weak = isD1(tx) ? await weakCategoriesD1(tx, stu.uid) : await tx`
       select cat.id as cat_id, coalesce(cat.name, '(tanpa kategori)') as category,
              count(*)::int as total,
              sum(case
@@ -538,7 +545,7 @@ student.get("/s/history/:sid", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.redirect("/s/login");
   const sessionId = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const sess = await tx`
       select es.id, es.status, e.title, sc.final_score
@@ -653,9 +660,9 @@ student.post("/s/login", async (c) => {
   if (!body?.username || !body?.pin) return c.json({ error: "Isi username dan PIN." }, 400);
 
   // Tanpa kode sekolah: cari username di semua sekolah aktif, cocokkan PIN.
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   type Cand = { id: string; school_id: string; name: string; pin_hash: string; locked_until: string | null; pin_failed_count: number };
-  const cands = await sql`select * from find_students_by_username(${body.username})` as unknown as Cand[];
+  const cands = await findStudentsByUsername(sql, body.username) as unknown as Cand[];
   if (cands.length === 0) return c.json({ error: "Username atau PIN salah." }, 401);
   let u: Cand | null = null;
   for (const x of cands) {
@@ -700,8 +707,8 @@ student.post("/s/forgot", async (c) => {
   if (rl) return rl;
   const body = await c.req.json().catch(() => null) as null | { username: string };
   if (!body?.username) return c.json({ error: "Isi username." }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const found = await sql`select school_id from find_students_by_username(${body.username})`;
+  const sql = connectDb(c.env);
+  const found = await findStudentsByUsername(sql, body.username);
   const contacts: Array<{ school: string; name: string; wa: string }> = [];
   // Username yang sama bisa ada di beberapa sekolah: ajukan ke semuanya.
   for (const { school_id: sid } of found as unknown as Array<{ school_id: string }>) {
@@ -778,7 +785,7 @@ student.post("/s/me/pin", async (c) => {
   if (!body?.old_pin || !body?.new_pin) return c.json({ error: "data kurang" }, 400);
   if (!/^\d{4,8}$/.test(body.new_pin)) return c.json({ error: "pin baru harus 4–8 digit" }, 400);
   if (body.old_pin === body.new_pin) return c.json({ error: "pin baru sama dengan lama" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const r = await tx`select pin_hash from students where id = ${stu.uid}`;
     if (r.length === 0) throw new Error("siswa tidak ditemukan");
@@ -847,8 +854,8 @@ student.post("/demo/siswa", async (c) => {
   if (c.env.DEMO_LOGIN !== "1") return c.notFound();
   const rl = await checkOrLimit(c.env, c.req.raw.headers, "demo_siswa", 20);
   if (rl) return rl;
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
-  const sch = await sql`select id from resolve_school('demo-sma')`;
+  const sql = connectDb(c.env);
+  const sch = await resolveSchool(sql, 'demo-sma');
   if (sch.length === 0) return c.text("Sekolah demo belum disiapkan.", 503);
   const sid = (sch[0] as { id: string }).id;
   const rand = crypto.getRandomValues(new Uint8Array(4));
@@ -875,14 +882,14 @@ student.post("/demo/siswa", async (c) => {
 student.get("/demo/konfirmasi", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.redirect("/demo");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const d = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const [me, ex] = await Promise.all([
       tx`select s.name, s.username, c.name as class_name, sc.name as school
                         from students s left join classes c on c.id = s.class_id join schools sc on sc.id = s.school_id
                         where s.id = ${stu.uid}`,
       tx`select e.id, e.title, e.duration_minutes,
-                          (select count(*) from exam_questions where exam_id = e.id)::int as n
+                          cast((select count(*) from exam_questions where exam_id = e.id) as integer) as n
                         from exams e where e.title = ${DEMO_EXAM} and e.status = 'open' limit 1`,
     ]);
     return { me: me[0], ex: ex[0] };
@@ -943,7 +950,7 @@ student.post("/s/exams/:id/start", async (c) => {
   const examId = c.req.param("id");
   const form = await c.req.parseBody().catch(() => ({} as Record<string, unknown>));
   const token = String(form.token ?? "");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   await catchUp(sql, stu.sid);
   const sessionId = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     // Pastikan ujian open, dalam jendela waktu, dan menargetkan kelas siswa.
@@ -975,7 +982,7 @@ student.get("/s/take/:sid", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.redirect("/s/login");
   const sessionId = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   await catchUp(sql, stu.sid);
   const data = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const s = await tx`
@@ -1674,7 +1681,7 @@ student.post("/s/take/:sid/flag", async (c) => {
   const sessionId = c.req.param("sid");
   const body = await c.req.json().catch(() => null) as null | { question_id: string; flagged: boolean };
   if (!body?.question_id || typeof body.flagged !== "boolean") return c.json({ error: "bad body" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
     tx`insert into answers (session_id, question_id, school_id, flagged, updated_at)
        select ${sessionId}, ${body.question_id}, ${stu.sid}, ${body.flagged}, now()
@@ -1711,12 +1718,22 @@ async function saveAnswers(c: Context<{ Bindings: Bindings }>, list: AnswerIn[])
   const sessionId = c.req.param("sid") ?? "";
   const items = list.slice(0, 200).map((b) => [b?.question_id, cleanAnswer(b)] as const).filter((x): x is [string, Record<string, unknown>] => !!x[1]);
   if (!items.length) return c.json({ error: "jawaban kosong" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const saved = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     // Tenggang 10 menit: jawaban siswa yang sempat offline saat waktu habis masih diterima.
     const ok = await tx`select 1 from exam_sessions where id = ${sessionId} and student_id = ${stu.uid} and status = 'active'
                         and deadline_at > now() - interval '10 minutes' and paused_at is null`;
     if (!ok.length) return 0;
+    if (isD1(tx)) {
+      // D1 membatasi jumlah query per permintaan: satu insert banyak baris (dipecah per 100 parameter), bukan satu per jawaban.
+      // json_patch = penggabungan kunci seperti "|| jsonb" di jalur Neon di bawah.
+      const at = new Date().toISOString();
+      const rows = items.map(([qid, ans]) => ({ session_id: sessionId, question_id: qid, school_id: stu.sid, answer: ans, updated_at: at }));
+      await atomic(tx, [(q) => q`insert into answers ${q(rows, "session_id", "question_id", "school_id", "answer", "updated_at")}
+        on conflict (session_id, question_id)
+        do update set answer = json_patch(coalesce(answers.answer, '{}'), excluded.answer), updated_at = excluded.updated_at`]);
+      return items.length;
+    }
     for (const [qid, ans] of items) {
       await tx`insert into answers (session_id, question_id, school_id, answer, updated_at)
          values (${sessionId}, ${qid}, ${stu.sid}, ${ans as unknown as string}, now())
@@ -1745,7 +1762,7 @@ student.post("/s/take/:sid/message", async (c) => {
   const sessionId = c.req.param("sid");
   const body = await c.req.json().catch(() => null) as null | { content: string };
   if (!body?.content || body.content.length > 500) return c.json({ error: "pesan kosong / terlalu panjang" }, 400);
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const owns = await tx`select 1 from exam_sessions where id = ${sessionId} and student_id = ${stu.uid}`;
     if (owns.length === 0) throw new Error("sesi bukan milik Anda");
@@ -1761,7 +1778,7 @@ student.get("/s/take/:sid/messages", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.json({ error: "unauthorized" }, 401);
   const sessionId = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const rows = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
     tx`select id, from_role, from_name, content, created_at from exam_messages
        where session_id = ${sessionId} order by created_at asc limit 100`,
@@ -1775,12 +1792,12 @@ student.post("/s/take/:sid/ping", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.json({ error: "unauthorized" }, 401);
   const sessionId = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const r = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
     tx`update exam_sessions set last_seen_at = now()
        where id = ${sessionId} and student_id = ${stu.uid}
        returning paused_at, deadline_at,
-         (select count(*) from exam_messages m where m.session_id = exam_sessions.id and m.from_role = 'staff')::int as staff_msgs`,
+         cast((select count(*) from exam_messages m where m.session_id = exam_sessions.id and m.from_role = 'staff') as integer) as staff_msgs`,
   );
   if (r.length === 0) return c.json({ ok: true });
   const row = r[0] as { paused_at: string | null; deadline_at: string; staff_msgs: number };
@@ -1800,7 +1817,7 @@ student.post("/s/take/:sid/violation", async (c) => {
   const allowed = new Set(["tab_blur", "visibility_hidden", "contextmenu", "copy", "paste", "fullscreen_exit"]);
   const kind = allowed.has(body.kind) ? body.kind : "other";
 
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const out = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const sess = await tx`
       select es.id, es.status, es.violation_count, es.lock_count, e.anticheat_level, e.lock_after_violations
@@ -1810,7 +1827,8 @@ student.post("/s/take/:sid/violation", async (c) => {
     const row = sess[0] as { id: string; status: string; violation_count: number; lock_count: number;
       anticheat_level: "log"|"warn"|"lock"; lock_after_violations: number | null };
 
-    await tx`insert into violations (school_id, session_id, kind)
+    // Catatan pelanggaran + perubahan sesi harus satu kesatuan (D1: satu batch).
+    const logViolation = (q: typeof tx) => q`insert into violations (school_id, session_id, kind)
              values (${stu.sid}, ${sessionId}, ${kind})`;
     const nextCount = row.violation_count + 1;
     const limit = row.lock_after_violations || 3; // kosong di ujian lama → bawaan 3
@@ -1818,17 +1836,26 @@ student.post("/s/take/:sid/violation", async (c) => {
     const shouldLock = row.anticheat_level !== "log" && limit > 0 && nextCount >= limit && row.status === "active";
     // Sudah pernah dikunci lalu dibuka pengawas → batas tercapai lagi = dikumpulkan otomatis.
     if (shouldLock && row.lock_count >= 1) {
-      await tx`update exam_sessions set violation_count = ${nextCount}, lock_count = lock_count + 1 where id = ${sessionId}`;
-      await finalizeSession(tx, sessionId, "submitted");
+      await finalizeSession(tx, sessionId, "submitted", [
+        logViolation,
+        (q) => q`update exam_sessions set violation_count = violation_count + 1, lock_count = lock_count + 1 where id = ${sessionId}`,
+      ]);
       return { ok: true, count: nextCount, locked: false, submitted: true, level: row.anticheat_level };
     }
     if (shouldLock) {
       const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
-      await tx`update exam_sessions set violation_count = ${nextCount}, status = 'locked', unlock_code = ${code}, unlock_tries = 0, lock_count = lock_count + 1
-               where id = ${sessionId}`;
+      // Kunci hanya bila sesi MASIH aktif saat ditulis (nilai lama di SET): dua pelanggaran bersamaan tidak mengunci dua kali
+      // (lock_count kedua berarti dikumpulkan otomatis) dan kode buka tidak berganti di tengah.
+      await atomic(tx, [logViolation, (q) => q`update exam_sessions set violation_count = violation_count + 1,
+               status = case when status = 'active' then 'locked' else status end,
+               unlock_code = case when status = 'active' then ${code} else unlock_code end,
+               unlock_tries = case when status = 'active' then 0 else unlock_tries end,
+               lock_count = lock_count + case when status = 'active' then 1 else 0 end
+               where id = ${sessionId}`]);
     } else {
-      await tx`update exam_sessions set violation_count = ${nextCount}
-               where id = ${sessionId}`;
+      // Dinaikkan di SQL, bukan dari nilai yang dibaca: dua pelanggaran bersamaan tetap terhitung dua.
+      await atomic(tx, [logViolation, (q) => q`update exam_sessions set violation_count = violation_count + 1
+               where id = ${sessionId}`]);
     }
     return { ok: true, count: nextCount, locked: shouldLock, level: row.anticheat_level, locks: row.lock_count };
   });
@@ -1842,7 +1869,7 @@ student.post("/s/take/:sid/unlock", async (c) => {
   const sessionId = c.req.param("sid");
   const body = await c.req.json().catch(() => null) as null | { code: string };
   const code = String(body?.code ?? "").replace(/\D/g, "");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const out = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const r = await tx`select status, unlock_code, unlock_tries from exam_sessions where id = ${sessionId} and student_id = ${stu.uid}`;
     const row = r[0] as { status: string; unlock_code: string | null; unlock_tries: number } | undefined;
@@ -1864,7 +1891,7 @@ student.post("/s/take/:sid/submit", async (c) => {
   const stu = await requireStudent(c.req.header("Cookie"), c.env.SESSION_SECRET);
   if (!stu) return c.json({ error: "unauthorized" }, 401);
   const sessionId = c.req.param("sid");
-  const sql = connect(c.env.HYPERDRIVE.connectionString);
+  const sql = connectDb(c.env);
   const result = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
     const s = await tx`select id, exam_id, status from exam_sessions
                         where id = ${sessionId} and student_id = ${stu.uid}`;
