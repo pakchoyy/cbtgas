@@ -635,7 +635,7 @@ const FAQ: Array<[string, string]> = [
   ["Soal hasil upload masuk kategori mana?", "Ke kategori yang Anda pilih di kolom \"Simpan ke kategori\" sebelum menyimpan (otomatis terisi kategori yang sedang dibuka). Soal yang terlanjur salah tempat bisa dicentang lalu dipindahkan."],
   ["Bagaimana bila internet sekolah putus?", "Siswa yang sudah membuka ujian tetap bisa mengerjakan; jawaban tersimpan di HP dan terkirim otomatis saat tersambung."],
   ["Siswa pakai HP sendiri, aman?", "Aman. Data siswa hanya terlihat oleh sekolahnya. Siswa masuk dengan username dan PIN, tanpa email."],
-  ["Bagaimana guru masuk dari halaman siswa?", "Ketuk logo CBT Yuk 5 kali di halaman masuk siswa, atau buka cbt-yuk.web.id/masuk."],
+  ["Bagaimana guru masuk dari halaman siswa?", "Ketuk logo CBT Yuk 3 kali di halaman masuk siswa, atau buka cbt-yuk.web.id/masuk."],
 ];
 const NEWS: Array<[string, string]> = [
   ["17 Nov 2026", "Mode internet putus: ujian tetap jalan saat sinyal hilang."],
@@ -4172,6 +4172,7 @@ pages.get("/masuk", async (c) => {
           <span class="ot"><b>Saya siswa</b><span>Pakai username dan PIN dari guru</span></span><span class="go">›</span></a>
         <a class="opt-btn" href="/auth/google/start?mode=login"><span class="oi">${googleIcon}</span>
           <span class="ot"><b>Saya guru / admin</b><span>Masuk dengan akun Google</span></span><span class="go">›</span></a>
+        <p class="muted" style="margin:8px 0 0;font-size:13px;text-align:center"><a href="/auth/google/start?mode=login&amp;ganti=1">Pakai akun Google lain</a></p>
       </section>
       <section class="card daftar">
         <h2>Sekolah baru</h2>
