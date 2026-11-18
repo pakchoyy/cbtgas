@@ -519,11 +519,11 @@ api.get("/api/questions", async (c) => {
   const cat = c.req.query("category");
   const rows = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
     cat
-      ? tx`select q.id, q.type, q.content - 'image' - 'audio' as content, q.points, q.category_id, k.answer_key, k.rubric
+      ? tx`select q.id, q.type, q.content - 'image' - 'audio' - 'option_images' as content, q.points, q.category_id, k.answer_key, k.rubric
            from questions q left join question_keys k on k.question_id = q.id
            where q.category_id = ${cat}
            order by q.created_at desc limit 500`
-      : tx`select q.id, q.type, q.content - 'image' - 'audio' as content, q.points, q.category_id, k.answer_key, k.rubric
+      : tx`select q.id, q.type, q.content - 'image' - 'audio' - 'option_images' as content, q.points, q.category_id, k.answer_key, k.rubric
            from questions q left join question_keys k on k.question_id = q.id
            order by q.created_at desc limit 500`,
   );
@@ -538,6 +538,22 @@ api.get("/api/questions", async (c) => {
 // Validasi + susun isi soal dari body editor (dipakai tambah & ubah soal).
 type BuiltQuestion = { type: string; content: Record<string, unknown>; answer_key: unknown; rubric: string | null;
   points: number; categoryId: string | null; passageId: string | null; image: string | null; audio: string | null };
+// Gambar per pilihan (PG / PG kompleks): option_images[i] = data URI atau kosong, sejajar dengan options.
+function optionImages(body: Record<string, unknown>, n: number): (string | null)[] | null | { error: string; status: 400 | 413 } {
+  if (!Array.isArray(body.option_images)) return null;
+  const imgs = (body.option_images as unknown[]).slice(0, n).map((x) => (typeof x === "string" && x ? x : null));
+  while (imgs.length < n) imgs.push(null);
+  let total = 0;
+  for (const x of imgs) {
+    if (!x) continue;
+    if (!x.startsWith("data:image/")) return { error: "gambar pilihan harus berupa gambar", status: 400 };
+    if (x.length > 300_000) return { error: "gambar pilihan terlalu besar (maks. sekitar 220 KB per gambar)", status: 413 };
+    total += x.length;
+  }
+  if (total > 1_200_000) return { error: "total gambar pilihan terlalu besar", status: 413 };
+  return imgs.some(Boolean) ? imgs : null;
+}
+
 function buildQuestion(body: Record<string, unknown>): BuiltQuestion | { error: string; status: 400 | 413 } {
   const type = String(body.type || "pg");
   const text = String(body.text || "").trim();
@@ -560,12 +576,16 @@ function buildQuestion(body: Record<string, unknown>): BuiltQuestion | { error: 
 
   let content: Record<string, unknown>; let answer_key: unknown; let rubric: string | null = null;
   if (type === "pg") {
-    const options = Array.isArray(body.options) ? (body.options as string[]) : [];
+    const options = Array.isArray(body.options) ? (body.options as unknown[]).map((x) => String(x ?? "")) : [];
     const correct = Number(body.correct);
     if (options.length < 2 || !Number.isInteger(correct) || correct < 0 || correct >= options.length) {
       return { error: "data pilihan ganda tidak valid", status: 400 };
     }
+    const oi = optionImages(body, options.length);
+    if (oi && "error" in oi) return oi;
+    if (options.some((o, i) => !o.trim() && !oi?.[i])) return { error: "setiap pilihan harus berisi teks atau gambar", status: 400 };
     content = { text, options }; answer_key = { index: correct };
+    if (oi) content.option_images = oi;
   } else if (type === "benar_salah") {
     if (typeof body.correct !== "boolean") return { error: "'correct' harus boolean", status: 400 };
     content = { text, options: ["Benar", "Salah"] };
@@ -580,13 +600,17 @@ function buildQuestion(body: Record<string, unknown>): BuiltQuestion | { error: 
     rubric = body.rubric ? String(body.rubric) : null;
   } else if (type === "pgk_centang") {
     // Multiple-select. options = string[], correct_indexes = int[].
-    const options = Array.isArray(body.options) ? (body.options as string[]) : [];
+    const options = Array.isArray(body.options) ? (body.options as unknown[]).map((x) => String(x ?? "")) : [];
     const correctIdx = Array.isArray(body.correct_indexes)
       ? (body.correct_indexes as number[]).filter((n) => Number.isInteger(n) && n >= 0 && n < options.length) : [];
     if (options.length < 2 || correctIdx.length === 0) {
       return { error: "pgk_centang: butuh ≥2 opsi dan minimal 1 jawaban benar", status: 400 };
     }
+    const oi = optionImages(body, options.length);
+    if (oi && "error" in oi) return oi;
+    if (options.some((o, i) => !o.trim() && !oi?.[i])) return { error: "setiap pilihan harus berisi teks atau gambar", status: 400 };
     content = { text, options };
+    if (oi) content.option_images = oi;
     answer_key = { correct: Array.from(new Set(correctIdx)).sort((a, b) => a - b) };
   } else if (type === "dinamis_hitung") {
     // Soal angka yang berbeda tiap siswa. Server generate nilai a & b di dalam
@@ -1101,6 +1125,7 @@ function bodyFromStored(q: { type: string; content: Record<string, unknown>; ans
   const k = q.answer_key ?? {}, ct = q.content;
   const b: Record<string, unknown> = { type: q.type, text: ct.text, points: Number(q.points) || 1 };
   if (typeof ct.image === "string") b.image = ct.image;
+  if (Array.isArray(ct.option_images)) b.option_images = ct.option_images;
   if (q.type === "pg") { b.options = ct.options; b.correct = k.index; }
   else if (q.type === "benar_salah") b.correct = k.index === 0;
   else if (q.type === "pgk_centang") { b.options = ct.options; b.correct_indexes = k.correct; }
@@ -1408,6 +1433,7 @@ api.patch("/api/questions/:id", async (c) => {
     const merged = { ...body };
     if (merged.image === undefined && prev.content.image) merged.image = prev.content.image;
     if (merged.audio === undefined && prev.content.audio) merged.audio = prev.content.audio;
+    if (merged.option_images === undefined && prev.content.option_images) merged.option_images = prev.content.option_images;
     if (merged.image === "") delete merged.image;
     if (merged.audio === "") delete merged.audio;
     if (merged.passage_id === undefined) merged.passage_id = prev.passage_id;

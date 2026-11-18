@@ -14,7 +14,7 @@ import {
 } from "./session";
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
-import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA, UI_JS, FMT_JS } from "./ui";
+import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA, UI_JS, FMT_JS, fracHtml } from "./ui";
 import { createSession, finalizeSession } from "./scoring";
 import { tokenValid } from "./token";
 import { catchUp } from "./catchup";
@@ -79,6 +79,7 @@ ${FMT_JS}
   /* Opsi jawaban: bulatan LJK. Huruf dibuat dari counter, input asli tetap
      ada (aksesibel, keyboard), hanya disembunyikan secara visual. */
   .q { counter-reset: opt; }
+  .oimg { display:block; max-width:100%; max-height:200px; border-radius:6px; border:1px solid var(--bd); margin-top:6px; background:#fff; }
   .opt { position: relative; display:flex; gap: 14px; align-items:center; padding: 12px 14px; margin: 8px 0;
          border: 1.5px solid var(--line); border-radius: 14px; cursor:pointer; font-weight: 500; font-size: 16px; min-height: 56px;
          transition: border-color .15s, background .15s; }
@@ -573,12 +574,12 @@ student.get("/s/history/:sid", async (c) => {
   }
   type Item = {
     id: string; type: string; points: string;
-    content: { text: string; options?: string[]; image?: string };
+    content: { text: string; options?: string[]; image?: string; option_images?: (string | null)[] };
     answer_key: { index?: number; accepted?: string[]; manual?: boolean } | null;
     answer: { index?: number; text?: string; manual_score?: number } | null;
   };
   const items = (data.items as unknown as Item[]).map((q, i) => {
-    let body = `<p><b>Soal ${i + 1}</b> <span class="muted">(${q.points} pts, ${q.type})</span></p><p>${esc(q.content.text)}</p>`;
+    let body = `<p><b>Soal ${i + 1}</b> <span class="muted">(${q.points} pts, ${q.type})</span></p><p>${fracHtml(esc(q.content.text))}</p>`;
     if (q.content.image) body += `<img src="${esc(q.content.image)}" style="max-width:100%; max-height:260px; border-radius:8px; border:1px solid var(--bd); margin:8px 0">`;
     if (q.type === "pg" || q.type === "benar_salah") {
       const correct = q.answer_key?.index;
@@ -588,7 +589,8 @@ student.get("/s/history/:sid", async (c) => {
         const style = isCorrect ? "background:#16a34a1a;border-color:#16a34a"
           : isPicked ? "background:#ef44441a;border-color:#ef4444" : "";
         const mark = isCorrect ? " ✓" : isPicked ? " ✗" : "";
-        return `<div class="opt" style="${style}">${esc(o)}${mark}</div>`;
+        const oi = q.content.option_images?.[k];
+        return `<div class="opt" style="${style}">${fracHtml(esc(o))}${oi && oi.startsWith("data:image/") ? `<img class="oimg" alt="" src="${esc(oi)}">` : ""}${mark}</div>`;
       }).join("");
     } else if (q.type === "isian") {
       const my = q.answer?.text ?? "(kosong)";
@@ -1028,7 +1030,8 @@ student.get("/s/take/:sid", async (c) => {
       const perm = perms[qid];
       let content = q.content;
       if (perm && q.content.options) {
-        content = { ...q.content, options: perm.map((k) => q.content.options![k]) };
+        const oi = (q.content as { option_images?: (string | null)[] }).option_images;
+        content = { ...q.content, options: perm.map((k) => q.content.options![k]), ...(oi ? { option_images: perm.map((k) => oi[k] ?? null) } : {}) };
       }
       return { id: qid, pos: i + 1, type: q.type, content, perm: perm ?? null, passage: q.passage ?? null };
     });
@@ -1149,6 +1152,8 @@ student.get("/s/take/:sid", async (c) => {
       // Markdown ringan: **bold**, *italic*, \`code\`, newline <br>.
       // Math $...$ dan $$...$$ dilewati, lalu dirender ulang oleh KaTeX.
       const mdRender = (s) => window.fmtText(s);
+      // Gambar pada pilihan jawaban (opsional), sejajar dengan options.
+      const optImg = (q, k) => { const u = q.content.option_images && q.content.option_images[k]; return u && /^data:image[/]/.test(u) ? '<img class="oimg" alt="Gambar pilihan ' + 'ABCDEF'[k] + '" src="' + u + '">' : ''; };
       function renderMath(el) {
         if (window.renderMathInElement) renderMathInElement(el, {
           delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
@@ -1221,7 +1226,7 @@ student.get("/s/take/:sid", async (c) => {
             const checked = A[q.id] && A[q.id].index === k ? 'checked' : '';
             const row = document.createElement('label'); row.className = 'opt';
             const label = o;
-            row.innerHTML = '<input type="radio" name="'+q.id+'" value="'+k+'" '+checked+'><span>' + mdRender(label) + '</span>';
+            row.innerHTML = '<input type="radio" name="'+q.id+'" value="'+k+'" '+checked+'><span>' + mdRender(label) + optImg(q, k) + '</span>';
             row.querySelector('input').addEventListener('change', () => save(q.id, { index: k }));
             el.appendChild(row);
           });
@@ -1286,7 +1291,7 @@ student.get("/s/take/:sid", async (c) => {
           q.content.options.forEach((o, k) => {
             const row = document.createElement('label'); row.className = 'opt';
             const checked = sel.includes(k) ? 'checked' : '';
-            row.innerHTML = '<input type="checkbox" value="'+k+'" '+checked+'><span>' + mdRender(o) + '</span>';
+            row.innerHTML = '<input type="checkbox" value="'+k+'" '+checked+'><span>' + mdRender(o) + optImg(q, k) + '</span>';
             row.querySelector('input').addEventListener('change', (ev) => {
               const cur = (A[q.id] && A[q.id].selected) ? A[q.id].selected.slice() : [];
               if (ev.target.checked) { if (!cur.includes(k)) cur.push(k); }

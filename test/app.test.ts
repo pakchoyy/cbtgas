@@ -349,3 +349,27 @@ test("cron D1: sesi kedaluwarsa diproses bertahap (5 per jalan), sisa ujian & be
   assert.equal(await done(), 12);
   assert.equal((await w.open`select count(*) as n from scores`)[0].n, 12); // tiap sesi kedaluwarsa bernilai
 });
+
+test("gambar per pilihan: simpan, edit tanpa hilang, ikut diacak, tidak membebani daftar soal", async () => {
+  const w = await boot();
+  const cookie = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const send = (p: string, body: unknown, method = "POST") => w.call(p, { ...json(body), method, cookie });
+  const A = "data:image/png;base64,QUFB", C = "data:image/png;base64,Q0ND";
+  // pilihan tanpa teks boleh bila bergambar; tanpa teks DAN tanpa gambar ditolak
+  assert.equal((await send("/api/questions", { type: "pg", text: "Gambar segitiga?", options: ["", "Kotak", ""], option_images: [A, "", ""], correct: 0 })).status, 400);
+  const r = await jsonOf(await send("/api/questions", { type: "pg", text: "Gambar segitiga?", options: ["", "Kotak", "Lingkaran"], option_images: [A, "", C], correct: 0 }));
+  assert.ok(r.id, JSON.stringify(r));
+  const [row] = await w.open`select content from questions where id = ${r.id}`;
+  assert.deepEqual(row.content.option_images, [A, null, C]);
+  // gambar bukan data:image ditolak
+  assert.equal((await send("/api/questions", { type: "pg", text: "x", options: ["a", "b"], option_images: ["javascript:alert(1)", ""], correct: 0 })).status, 400);
+  // PATCH tanpa option_images mempertahankan gambar; dengan array kosong menghapus
+  await send(`/api/questions/${r.id}`, { type: "pg", text: "Gambar segitiga (ubah)?", options: ["", "Kotak", "Lingkaran"], correct: 0 }, "PATCH");
+  assert.deepEqual((await w.open`select content from questions where id = ${r.id}`)[0].content.option_images, [A, null, C]);
+  // daftar soal tidak membawa data gambar, tapi ditandai bergambar
+  const list = await (await w.call("/api/questions", { cookie })).text();
+  assert.ok(!list.includes("QUFB"));
+  assert.match(await (await w.call("/app/questions", { cookie })).text(), /has_image":true/);
+  await send(`/api/questions/${r.id}`, { type: "pg", text: "t", options: ["a", "Kotak", "c"], option_images: ["", "", ""], correct: 0 }, "PATCH");
+  assert.equal((await w.open`select content from questions where id = ${r.id}`)[0].content.option_images, undefined);
+});

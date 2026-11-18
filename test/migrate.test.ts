@@ -131,3 +131,16 @@ test("JSON sangat panjang (gambar/audio soal, isi bank publik) dirakit bertahap:
   assert.deepEqual(JSON.parse((db.prepare("select payload from shared_banks").get() as any).payload), { questions: [content, content] });
   assert.equal((db.prepare("select count(*) as n from sqlite_master where name = '_mig_buf'").get() as any).n, 0); // penampung dibersihkan
 });
+
+test("pecahan tampil bersusun; tanggal & rumus $...$ tidak diubah", async () => {
+  const { fracHtml } = await import("../src/ui.ts");
+  const f = (s: string) => fracHtml(s).replace(/ role="math" aria-label="[^"]*"/g, "");
+  assert.equal(f("Hasil dari 3 3/4 - 1 1/2 adalah"), "Hasil dari 3 <span class=\"frac\"><span>3</span><span>4</span></span> - 1 <span class=\"frac\"><span>1</span><span>2</span></span> adalah");
+  assert.equal(f("1/2"), "<span class=\"frac\"><span>1</span><span>2</span></span>");
+  assert.equal(f("Tanggal 19/11/2026"), "Tanggal 19/11/2026");
+  assert.equal(f("$\\frac{1}{2} + 3/4$"), "$\\frac{1}{2} + 3/4$");
+  assert.equal(f("0.5/2 dan 12:30/1"), "0.5/2 dan 12:30/1");
+  // dipakai juga di browser lewat toString(): harus berdiri sendiri
+  const fn = new Function("return " + fracHtml.toString())();
+  assert.equal(fn("2 1/4"), fracHtml("2 1/4"));
+});

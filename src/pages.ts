@@ -7,7 +7,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connectDb, withTenant } from "./db";
 import { requireStaff, requireOwner, type AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, schoolYear } from "./ui";
+import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, fracHtml, FRAC_CSS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -287,6 +287,22 @@ const DOC_PARSER_JS = `
         const xml = async (name) => { const f = zip.file(name); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
         const all = (el, tag) => [...el.getElementsByTagNameNS(W, tag)];
         const at = (el, a) => el ? el.getAttributeNS(W, a) || el.getAttribute('w:' + a) : null;
+        // Rumus Word (OMML) -> teks: pecahan "a/b" (campuran "3 3/4"), pangkat ^x^, indeks ~x~, akar √(x).
+        const MN = 'http://schemas.openxmlformats.org/officeDocument/2006/math';
+        const omml = (n) => {
+          const ln = n.localName, kids = [...n.children];
+          if (ln === 't') return n.textContent;
+          if (/Pr$/.test(ln)) return '';
+          const sub = (name) => { const c = kids.find((k) => k.localName === name); return c ? omml(c).trim() : ''; };
+          if (n.namespaceURI === MN) {
+            if (ln === 'f') { const a = sub('num'), b = sub('den'); return '\\u0001' + (/^\\d+$/.test(a) && /^\\d+$/.test(b) ? a + '/' + b : '(' + a + ')/(' + b + ')'); }
+            if (ln === 'sSup') return sub('e') + '^' + sub('sup') + '^';
+            if (ln === 'sSub') return sub('e') + '~' + sub('sub') + '~';
+            if (ln === 'rad') return '√(' + sub('e') + ')';
+            if (ln === 'd') return '(' + kids.filter((k) => k.localName === 'e').map((k) => omml(k).trim()).join(', ') + ')';
+          }
+          return kids.map(omml).join('');
+        };
         const docX = await xml('word/document.xml'); if (!docX) throw new Error('Bukan file Word (.docx) yang valid.');
         const numX = await xml('word/numbering.xml'), stX = await xml('word/styles.xml');
         const fmt = {};
@@ -301,7 +317,7 @@ const DOC_PARSER_JS = `
         for (const p of all(docX, 'p')) {
           // Format huruf ikut terbawa: **tebal**, *miring*, __garis bawah__, ~~coret~~, ^pangkat^, ~indeks~.
           const on = (rp, tag) => { const e = rp && all(rp, tag)[0]; if (!e) return false; const v = at(e, 'val'); return v !== '0' && v !== 'false' && v !== 'none'; };
-          const text = all(p, 'r').map((r) => {
+          const runText = (r) => {
             const t = all(r, 't').map((x) => x.textContent).join(''); if (!t.trim()) return t;
             const rp = all(r, 'rPr')[0], va = rp && all(rp, 'vertAlign')[0] ? at(all(rp, 'vertAlign')[0], 'val') : '';
             const lead = t.match(/^\\s*/)[0], tail = t.match(/\\s*$/)[0]; let x = t.trim();
@@ -311,7 +327,16 @@ const DOC_PARSER_JS = `
             if (on(rp, 'i')) x = '*' + x + '*';
             if (on(rp, 'b')) x = '**' + x + '**';
             return lead + x + tail;
-          }).join('').replace(/(\\*\\*|__|~~)\\1/g, '').replace(/\\*\\*\\s*\\*\\*/g, ' ');
+          };
+          // Teks biasa (w:r) dan rumus Word (m:oMath) dibaca berurutan.
+          const parts = [];
+          const walk = (n) => { for (const c of n.children) {
+            if (c.namespaceURI === W && c.localName === 'r') parts.push(runText(c));
+            else if (c.namespaceURI === MN && c.localName === 'oMath') parts.push(omml(c));
+            else walk(c);
+          } };
+          walk(p);
+          const text = parts.join('').replace(/(\\d)\\u0001/g, '$1 ').replace(/\\u0001/g, '').replace(/(\\*\\*|__|~~)\\1/g, '').replace(/\\*\\*\\s*\\*\\*/g, ' ');
           let numId = null, ilvl = '0';
           const np = all(p, 'numPr')[0];
           if (np) { numId = at(all(np, 'numId')[0], 'val'); ilvl = at(all(np, 'ilvl')[0], 'val') || '0'; }
@@ -2235,8 +2260,8 @@ pages.get("/app/exams/:id/admin", async (c) => {
 });
 
 // Versi server dari window.fmtText (dipakai di cetak soal).
-const fmt = (t: string) => esc(t).replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>").replace(/__([^_]+?)__/g, "<u>$1</u>").replace(/~~([^~]+?)~~/g, "<s>$1</s>")
-  .replace(/\*([^*\s][^*]*?)\*/g, "<i>$1</i>").replace(/\^([^^\s]{1,20})\^/g, "<sup>$1</sup>").replace(/~([^~\s]{1,20})~/g, "<sub>$1</sub>");
+const fmt = (t: string) => fracHtml(esc(t).replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>").replace(/__([^_]+?)__/g, "<u>$1</u>").replace(/~~([^~]+?)~~/g, "<s>$1</s>")
+  .replace(/\*([^*\s][^*]*?)\*/g, "<i>$1</i>").replace(/\^([^^\s]{1,20})\^/g, "<sup>$1</sup>").replace(/~([^~\s]{1,20})~/g, "<sub>$1</sub>"));
 
 pages.get("/app/exams/:id/print", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env);
@@ -2261,7 +2286,7 @@ pages.get("/app/exams/:id/print", async (c) => {
   if (!data) return c.notFound();
   const ex = data.ex as { title: string; kind: string; duration_minutes: number };
   type Q = { position: number; type: string; points: string;
-    content: { text: string; options?: string[]; left?: string[]; right?: string[]; image?: string };
+    content: { text: string; options?: string[]; left?: string[]; right?: string[]; image?: string; option_images?: (string | null)[] };
     answer_key: Record<string, unknown> | null; rubric: string | null;
     passage_title: string | null; passage_body: string | null };
   const list = (data.qs as unknown as Q[]).map((q) => {
@@ -2275,7 +2300,8 @@ pages.get("/app/exams/:id/print", async (c) => {
             (q.type === "pgk_centang" && Array.isArray(q.answer_key.correct) && (q.answer_key.correct as number[]).includes(i)) ||
             (q.type !== "pgk_centang" && q.answer_key.index === i)
           );
-          return `<li ${marker ? "style=\"background:#dcfce7; font-weight:600\"" : ""}>${fmt(o)}${marker ? " ✓" : ""}</li>`;
+          const oi = q.content.option_images?.[i];
+          return `<li ${marker ? "style=\"background:#dcfce7; font-weight:600\"" : ""}>${fmt(o)}${oi && oi.startsWith("data:image/") ? `<br><img src="${esc(oi)}" alt="" style="max-width:200px; max-height:140px; margin:2px 0">` : ""}${marker ? " ✓" : ""}</li>`;
         }).join("") + `</ol>`;
     } else if (q.type === "pgk_kategori") {
       const st = ((q.content as { statements?: string[] }).statements ?? []), vs = (q.answer_key?.values as number[] | undefined) ?? [];
@@ -2299,7 +2325,7 @@ pages.get("/app/exams/:id/print", async (c) => {
   }).join("");
   return c.html(`<!doctype html><html lang="id"><head>
 <meta charset="utf-8"><title>${esc(ex.title)}</title>
-<style>
+<style>${FRAC_CSS}
   @page { size: A4; margin: 15mm; }
   body { font: 13px/1.5 Georgia, serif; color: #111; margin: 0; background: #fafafa; }
   main { max-width: 720px; margin: 20px auto; background: #fff; padding: 24px; }
@@ -3527,7 +3553,8 @@ pages.get("/app/questions", async (c) => {
   if (!sess) return c.redirect("/");
   const sql = connectDb(c.env);
   const [qs, cats] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => Promise.all([
-    tx`select q.id, q.type, q.content - 'image' - 'audio' - 'html' as content, q.content ? 'image' as has_image,
+    tx`select q.id, q.type, q.content - 'image' - 'audio' - 'html' - 'option_images' as content,
+                    (q.content ? 'image' or q.content ? 'option_images') as has_image,
                     q.points, q.category_id, k.answer_key
              from questions q left join question_keys k on k.question_id = q.id
              order by q.created_at desc limit 1000`,
@@ -3702,7 +3729,11 @@ Jawaban: B
       .seg button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
       .imgrow { display:flex; gap: 10px; align-items:center; margin-top: 8px; flex-wrap: wrap; }
       .imgrow img { max-height: 80px; border-radius: 10px; border: 1px solid var(--line); }
-      .orow { display:grid; grid-template-columns: 40px 1fr 40px; gap: 8px; align-items:center; margin: 8px 0; }
+      .orow { display:grid; grid-template-columns: 40px 1fr 40px 40px; gap: 8px; align-items:center; margin: 8px 0; }
+      .orow .oib { width: 40px; height: 40px; display:grid; place-items:center; border-radius: 10px; border: 1px solid var(--line); cursor:pointer; margin:0; background: var(--surface); color: var(--mut); }
+      .orow .oiw { grid-column: 2 / -1; display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+      .orow .oiw[hidden] { display:none; }
+      .orow .oip { max-width: 180px; max-height: 120px; border-radius: 8px; border: 1px solid var(--line); background:#fff; }
       .orow .mark { width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--line); display:grid; place-items:center; font-weight: 800; cursor:pointer; background: var(--surface); padding: 0; min-height: 0; }
       .orow .mark[aria-pressed="true"] { background: var(--ok); border-color: var(--ok); color: #fff; }
       .orow.pgk .mark { border-radius: 10px; }
@@ -3925,16 +3956,39 @@ Jawaban: B
       function seg(type) {
         $('seg').innerHTML = TYPES.map(([k, v]) => '<button type="button" data-t="' + k + '" aria-pressed="' + (k === type) + '">' + v + '</button>').join('');
       }
-      function optRows(opts, marks, multi) {
-        return '<label>Pilihan jawaban <span class="muted">(ketuk huruf untuk menandai yang benar)</span></label><div id="opts">' +
-          opts.map((o, j) => '<div class="orow' + (multi ? ' pgk' : '') + '"><button type="button" class="mark" aria-pressed="' + marks.includes(j) + '" aria-label="Tandai benar">' + L[j] + '</button><input value="' + esc(o) + '" placeholder="Pilihan ' + L[j] + '"><button type="button" class="rm" aria-label="Hapus pilihan">✕</button></div>').join('') +
+      function optRows(opts, marks, multi, imgs) {
+        imgs = imgs || [];
+        return '<label>Pilihan jawaban <span class="muted">(ketuk huruf untuk menandai yang benar; tombol gambar di kanan untuk pilihan bergambar)</span></label><div id="opts">' +
+          opts.map((o, j) => '<div class="orow' + (multi ? ' pgk' : '') + '"><button type="button" class="mark" aria-pressed="' + marks.includes(j) + '" aria-label="Tandai benar">' + L[j] + '</button><input value="' + esc(o) + '" placeholder="Pilihan ' + L[j] + (imgs[j] ? ' (boleh kosong)' : '') + '">' +
+            '<label class="oib" title="Gambar untuk pilihan ' + L[j] + '" aria-label="Gambar untuk pilihan ' + L[j] + '"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg><input type="file" accept="image/*" hidden></label><button type="button" class="rm" aria-label="Hapus pilihan">✕</button>' +
+            '<div class="oiw"' + (imgs[j] ? '' : ' hidden') + '><img class="oip" alt="Gambar pilihan ' + L[j] + '" src="' + (imgs[j] ? esc(imgs[j]) : '') + '"><button type="button" class="oid">Hapus gambar</button></div></div>').join('') +
           '</div>' + (opts.length < 6 ? '<button type="button" id="addOpt" style="margin-top:4px">+ Tambah pilihan</button>' : '');
+      }
+      // Gambar pilihan diperkecil di browser (maks. 640 px) supaya ringan untuk HP siswa.
+      function shrinkImg(file) {
+        return new Promise((ok, no) => {
+          const rd = new FileReader();
+          rd.onerror = () => no(new Error('Gagal membaca gambar.'));
+          rd.onload = () => {
+            const im = new Image();
+            im.onerror = () => no(new Error('File bukan gambar.'));
+            im.onload = () => {
+              const sc = Math.min(1, 640 / Math.max(im.width, im.height));
+              const cv = document.createElement('canvas'); cv.width = Math.round(im.width * sc); cv.height = Math.round(im.height * sc);
+              const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(im, 0, 0, cv.width, cv.height);
+              let d = cv.toDataURL('image/png'); if (d.length > 200000) d = cv.toDataURL('image/jpeg', 0.85); if (d.length > 280000) d = cv.toDataURL('image/jpeg', 0.6);
+              ok(d);
+            };
+            im.src = rd.result;
+          };
+          rd.readAsDataURL(file);
+        });
       }
       const srow = (t, v) => '<div class="srow"><input value="' + esc(t) + '" placeholder="Pernyataan"><div class="seg bs2"><button type="button" data-b="0" aria-pressed="' + (v === 0) + '">B</button><button type="button" data-b="1" aria-pressed="' + (v === 1) + '">S</button></div><button type="button" class="rm" aria-label="Hapus">✕</button></div>';
       function body(type, k, ct) {
         const b = $('eBody'); k = k || {}; ct = ct || {};
-        if (type === 'pg') b.innerHTML = optRows(ct.options || ['', '', '', ''], typeof k.index === 'number' ? [k.index] : [], false);
-        else if (type === 'pgk_centang') b.innerHTML = optRows(ct.options || ['', '', '', ''], k.correct || [], true);
+        if (type === 'pg') b.innerHTML = optRows(ct.options || ['', '', '', ''], typeof k.index === 'number' ? [k.index] : [], false, ct.option_images);
+        else if (type === 'pgk_centang') b.innerHTML = optRows(ct.options || ['', '', '', ''], k.correct || [], true, ct.option_images);
         else if (type === 'benar_salah') b.innerHTML = '<label>Jawaban benar</label><div class="seg" id="bs"><button type="button" data-v="1" aria-pressed="' + (k.index !== 1) + '">Benar</button><button type="button" data-v="0" aria-pressed="' + (k.index === 1) + '">Salah</button></div>';
         else if (type === 'isian') b.innerHTML = '<label for="eAcc">Jawaban yang diterima</label><input id="eAcc" value="' + esc((k.accepted || []).join(' | ')) + '" placeholder="mis. Surabaya | Kota Surabaya"><p class="hint">Pisahkan dengan | bila ada beberapa jawaban benar. Huruf besar/kecil tidak berpengaruh.</p>';
         else if (type === 'uraian') b.innerHTML = '<label for="eRub">Pedoman penilaian <span class="muted">(opsional)</span></label><textarea id="eRub" rows="3" placeholder="Poin penting yang harus ada di jawaban">' + esc(cur && cur.rubric || '') + '</textarea>';
@@ -3958,6 +4012,7 @@ Jawaban: B
           const rows = [...document.querySelectorAll('#opts .orow')];
           ct.options = rows.map((r) => r.querySelector('input').value.trim());
           ct.marks = rows.map((r, j) => r.querySelector('.mark').getAttribute('aria-pressed') === 'true' ? j : -1).filter((j) => j >= 0);
+          ct.option_images = rows.map((r) => r.querySelector('.oiw').hidden ? '' : r.querySelector('.oip').getAttribute('src') || '');
         }
         if (type === 'menjodohkan') {
           const rows = [...document.querySelectorAll('#prs .mrow')].map((r) => [...r.querySelectorAll('input')].map((x) => x.value.trim()));
@@ -3972,9 +4027,11 @@ Jawaban: B
           else t.setAttribute('aria-pressed', String(t.getAttribute('aria-pressed') !== 'true'));
         } else if (t.id === 'addOpt' || (t.classList.contains('rm') && t.closest('.orow'))) {
           const c = collect(type);
-          if (t.id === 'addOpt') c.options.push('');
-          else { const j = [...document.querySelectorAll('#opts .orow')].indexOf(t.closest('.orow')); if (c.options.length <= 2) return; c.options.splice(j, 1); c.marks = c.marks.filter((m) => m !== j).map((m) => m > j ? m - 1 : m); }
-          $('eBody').innerHTML = optRows(c.options, c.marks, type === 'pgk_centang');
+          if (t.id === 'addOpt') { c.options.push(''); c.option_images.push(''); }
+          else { const j = [...document.querySelectorAll('#opts .orow')].indexOf(t.closest('.orow')); if (c.options.length <= 2) return; c.options.splice(j, 1); c.option_images.splice(j, 1); c.marks = c.marks.filter((m) => m !== j).map((m) => m > j ? m - 1 : m); }
+          $('eBody').innerHTML = optRows(c.options, c.marks, type === 'pgk_centang', c.option_images);
+        } else if (t.classList.contains('oid')) {
+          const w = t.closest('.oiw'); w.hidden = true; w.querySelector('.oip').removeAttribute('src');
         } else if (t.id === 'addSt') {
           $('sts').insertAdjacentHTML('beforeend', srow('', 0));
         } else if (t.dataset.b !== undefined) {
@@ -3993,8 +4050,16 @@ Jawaban: B
         const t = e.target.dataset.t; if (!t) return;
         const prevType = $('seg').querySelector('[aria-pressed="true"]').dataset.t, prev = collect(prevType);
         seg(t);
-        const keep = (t === 'pg' || t === 'pgk_centang') && prev.options ? { options: prev.options } : {};
+        const keep = (t === 'pg' || t === 'pgk_centang') && prev.options ? { options: prev.options, option_images: prev.option_images } : {};
         body(t, {}, keep);
+      });
+      $('eBody').addEventListener('change', async (e) => {
+        const inp = e.target; if (!inp.closest || !inp.closest('.oib')) return;
+        const f = inp.files[0]; inp.value = ''; if (!f) return;
+        try {
+          const d = await shrinkImg(f);
+          const w = inp.closest('.orow').querySelector('.oiw'); w.querySelector('.oip').src = d; w.hidden = false;
+        } catch (x) { alert(x.message); }
       });
       function showImg(src) { const p = $('eImgPrev'); p.hidden = !src; $('eImgDel').hidden = !src; if (src) p.src = src; }
       $('eImg').addEventListener('change', (e) => {
@@ -4043,8 +4108,9 @@ Jawaban: B
         const b = { type, text: $('eText').value.trim(), points: +$('ePts').value || 1 };
         if (img !== undefined) b.image = img;
         if (type === 'pg' || type === 'pgk_centang') {
-          const keep = c.options.map((o, j) => [o, j]).filter(([o]) => o);
+          const keep = c.options.map((o, j) => [o, j]).filter(([o, j]) => o || c.option_images[j]);
           b.options = keep.map(([o]) => o);
+          b.option_images = keep.map(([, j]) => c.option_images[j] || '');
           const idx = c.marks.map((m) => keep.findIndex(([, j]) => j === m)).filter((m) => m >= 0);
           if (type === 'pg') b.correct = idx[0]; else b.correct_indexes = idx;
           if (!idx.length) { alert('Tandai jawaban yang benar (ketuk huruf di kiri pilihan).'); return; }

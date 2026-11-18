@@ -55,12 +55,26 @@ export const SITE_FOOTER = `
 
 // Toast (menggantikan alert bawaan) + tombol "Pasang aplikasi". Pesan yang
 // muncul tepat sebelum halaman dimuat ulang dibawa ke halaman berikutnya.
-// Format teks soal (dari Word atau ketikan): **tebal**, *miring*, __garis bawah__, ~~coret~~, ^pangkat^, ~indeks~.
+// Pecahan "3/4" dan pecahan campuran "3 3/4" ditampilkan bersusun (pembilang di atas garis, penyebut di bawah).
+// Bekerja pada teks yang SUDAH di-escape. Tanggal "19/11/2026" dan isi rumus $...$ tidak diubah.
+export function fracHtml(s: string): string {
+  return s.split(/(\$[^$]*\$)/).map((part, i) => i % 2 ? part : part.replace(
+    /(^|[^\d/.,:])(?:(\d{1,6}) +)?(\d{1,6})\/(\d{1,6})(?![\d/])/g,
+    (_m: string, pre: string, whole: string | undefined, n: string, d: string) => pre + (whole ? whole + " " : "") +
+      '<span class="frac" role="math" aria-label="' + (whole ? whole + " " : "") + n + " per " + d + '"><span>' + n + "</span><span>" + d + "</span></span>",
+  )).join("");
+}
+
+export const FRAC_CSS = ".frac{display:inline-flex;flex-direction:column;align-items:center;vertical-align:middle;line-height:1.1;font-size:.9em;margin:0 .1em}" +
+  ".frac>span{padding:0 .15em}.frac>span:last-child{border-top:1.5px solid currentColor}";
+
+// Format teks soal (dari Word atau ketikan): **tebal**, *miring*, __garis bawah__, ~~coret~~, ^pangkat^, ~indeks~, pecahan.
 // Dimuat di <head> supaya siap sebelum script halaman merender soal.
-export const FMT_JS = `<script>
-  window.fmtText = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
+export const FMT_JS = `<style>${FRAC_CSS}</style><script>
+  window.fracHtml = ${fracHtml.toString()};
+  window.fmtText = (s) => window.fracHtml(String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
     .replace(/\\*\\*([^*]+?)\\*\\*/g, '<b>$1</b>').replace(/__([^_]+?)__/g, '<u>$1</u>').replace(/~~([^~]+?)~~/g, '<s>$1</s>')
-    .replace(/\\*([^*\\s][^*]*?)\\*/g, '<i>$1</i>').replace(/\\^([^\\^\\s]{1,20})\\^/g, '<sup>$1</sup>').replace(/~([^~\\s]{1,20})~/g, '<sub>$1</sub>')
+    .replace(/\\*([^*\\s][^*]*?)\\*/g, '<i>$1</i>').replace(/\\^([^\\^\\s]{1,20})\\^/g, '<sup>$1</sup>').replace(/~([^~\\s]{1,20})~/g, '<sub>$1</sub>'))
     .replace(/\\n/g, '<br>');
 </script>`;
 
