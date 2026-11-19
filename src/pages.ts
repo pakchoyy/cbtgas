@@ -494,7 +494,7 @@ pages.get("/", async (c) => {
       @media (max-width: 860px) { .hero { grid-template-columns: 1fr; gap: 36px; padding-top: 16px; } .feats { grid-template-columns: 1fr 1fr; } .mock .chip.c1 { left: 8px; } .mock .chip.c2 { right: 8px; } }
       @media (max-width: 480px) { .feats { grid-template-columns: 1fr; } }
     </style>
-    <div class="top"><a class="brand" href="/">${LOGO}</a>
+    <div class="top"><a class="brand" href="/" id="secret">${LOGO}</a>
       <a class="btn primary topin" href="/masuk"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h4v16h-4M10 8l4 4-4 4M14 12H3"/></svg>Masuk</a></div>
     <section class="hero">
       <div>
@@ -510,13 +510,21 @@ pages.get("/", async (c) => {
         <div class="win">
           <div class="bar"><span>Tryout Matematika</span><span class="time">58:12</span></div>
           <div class="nums"><i class="a">1</i><i class="a">2</i><i class="a">3</i><i>4</i><i>5</i><i>6</i><i>7</i><i>8</i></div>
-          <p class="qt">4. Hasil dari 3/4 + 1/2 adalah …</p>
-          <div class="op on"><i>A</i>1 1/4</div><div class="op"><i>B</i>1 1/2</div><div class="op"><i>C</i>5/6</div><div class="op"><i>D</i>4/6</div>
+          <p class="qt">4. Hasil dari ${fracHtml("3/4 + 1/2")} adalah …</p>
+          <div class="op on"><i>A</i>${fracHtml("1 1/4")}</div><div class="op"><i>B</i>${fracHtml("1 1/2")}</div><div class="op"><i>C</i>${fracHtml("5/6")}</div><div class="op"><i>D</i>${fracHtml("4/6")}</div>
         </div>
         <div class="chip c1"><span class="dotg"></span>28 siswa sedang mengerjakan</div>
         <div class="chip c2">Nilai rata-rata 84,5</div>
       </div>
     </section>
+    <script>
+      // Pintu masuk guru/admin cepat: ketuk logo 3 kali dalam 3 detik (sekali ketuk tetap ke beranda).
+      (function () { let n = 0, t = 0, go; document.getElementById('secret').addEventListener('click', (e) => {
+        e.preventDefault(); clearTimeout(go);
+        const now = Date.now(); n = now - t < 3000 ? n + 1 : 1; if (n === 1) t = now;
+        if (n >= 3) { location.href = '/masuk'; return; }
+        go = setTimeout(() => { if (n === 1) location.href = '/'; n = 0; }, 700); }); })();
+    </script>
     <section class="feats">
       <div class="feat"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg><h3>Nilai otomatis</h3><p>Pilihan ganda, isian, menjodohkan langsung dinilai. Uraian tinggal dikoreksi.</p></div>
       <div class="feat"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg><h3>Anti-curang</h3><p>Deteksi pindah tab, kunci otomatis, soal dan pilihan diacak.</p></div>
