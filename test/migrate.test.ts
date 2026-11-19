@@ -144,3 +144,13 @@ test("pecahan tampil bersusun; tanggal & rumus $...$ tidak diubah", async () => 
   const fn = new Function("return " + fracHtml.toString())();
   assert.equal(fn("2 1/4"), fracHtml("2 1/4"));
 });
+
+test("spasi berturut-turut & alinea menjorok dipertahankan saat tampil", async () => {
+  const { keepSpaces } = await import("../src/ui.ts");
+  assert.equal(keepSpaces("a  b"), "a &nbsp;b");
+  assert.equal(keepSpaces("    Alinea"), "&nbsp;&nbsp;&nbsp;&nbsp;Alinea".replace(/^&nbsp;/, "&nbsp;"));
+  assert.equal(keepSpaces("x\n  y"), "x\n&nbsp;&nbsp;y");
+  assert.equal(keepSpaces("\tTab"), "&nbsp;&nbsp;&nbsp;&nbsp;Tab");
+  assert.equal(keepSpaces("satu spasi saja"), "satu spasi saja");
+  assert.equal(keepSpaces('<span class="frac">'), '<span class="frac">');
+});

@@ -7,7 +7,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connectDb, withTenant } from "./db";
 import { requireStaff, requireOwner, type AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, fracHtml, FRAC_CSS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, WA_DISPLAY, schoolYear } from "./ui";
+import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, fracHtml, keepSpaces, FRAC_CSS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, WA_DISPLAY, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -318,7 +318,7 @@ const DOC_PARSER_JS = `
           // Format huruf ikut terbawa: **tebal**, *miring*, __garis bawah__, ~~coret~~, ^pangkat^, ~indeks~.
           const on = (rp, tag) => { const e = rp && all(rp, tag)[0]; if (!e) return false; const v = at(e, 'val'); return v !== '0' && v !== 'false' && v !== 'none'; };
           const runText = (r) => {
-            const t = all(r, 't').map((x) => x.textContent).join(''); if (!t.trim()) return t;
+            const t = [...r.children].map((x) => x.localName === 't' ? x.textContent : x.localName === 'tab' ? '\\t' : '').join(''); if (!t.trim()) return t;
             const rp = all(r, 'rPr')[0], va = rp && all(rp, 'vertAlign')[0] ? at(all(rp, 'vertAlign')[0], 'val') : '';
             const lead = t.match(/^\\s*/)[0], tail = t.match(/\\s*$/)[0]; let x = t.trim();
             if (va === 'superscript') x = '^' + x + '^'; else if (va === 'subscript') x = '~' + x + '~';
@@ -2268,8 +2268,8 @@ pages.get("/app/exams/:id/admin", async (c) => {
 });
 
 // Versi server dari window.fmtText (dipakai di cetak soal).
-const fmt = (t: string) => fracHtml(esc(t).replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>").replace(/__([^_]+?)__/g, "<u>$1</u>").replace(/~~([^~]+?)~~/g, "<s>$1</s>")
-  .replace(/\*([^*\s][^*]*?)\*/g, "<i>$1</i>").replace(/\^([^^\s]{1,20})\^/g, "<sup>$1</sup>").replace(/~([^~\s]{1,20})~/g, "<sub>$1</sub>"));
+const fmt = (t: string) => keepSpaces(fracHtml(esc(t).replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>").replace(/__([^_]+?)__/g, "<u>$1</u>").replace(/~~([^~]+?)~~/g, "<s>$1</s>")
+  .replace(/\*([^*\s][^*]*?)\*/g, "<i>$1</i>").replace(/\^([^^\s]{1,20})\^/g, "<sup>$1</sup>").replace(/~([^~\s]{1,20})~/g, "<sub>$1</sub>"))).replace(/\n/g, "<br>");
 
 pages.get("/app/exams/:id/print", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env);
@@ -3563,7 +3563,7 @@ pages.get("/app/questions", async (c) => {
   const sql = connectDb(c.env);
   const [qs, cats] = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => Promise.all([
     tx`select q.id, q.type, q.content - 'image' - 'audio' - 'html' - 'option_images' as content,
-                    (q.content ? 'image' or q.content ? 'option_images') as has_image,
+                    q.content ? 'image' as has_image, q.content ? 'option_images' as has_opt_img,
                     q.points, q.category_id, k.answer_key
              from questions q left join question_keys k on k.question_id = q.id
              order by q.created_at desc limit 1000`,
@@ -3742,6 +3742,8 @@ Jawaban: B
       .seg button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
       .imgrow { display:flex; gap: 10px; align-items:center; margin-top: 8px; flex-wrap: wrap; }
       .imgrow img { max-height: 80px; border-radius: 10px; border: 1px solid var(--line); }
+      .qc .qthumb { display:block; max-width: 260px; max-height: 160px; margin: 4px 0 8px; border-radius: 8px; border: 1px solid var(--line); background:#fff; }
+      .qc .othumb { display:block; max-width: 140px; max-height: 90px; margin-top: 4px; border-radius: 6px; border: 1px solid var(--line); background:#fff; }
       .orow { display:grid; grid-template-columns: 40px 1fr 40px 40px; gap: 8px; align-items:center; margin: 8px 0; }
       .orow .oib { width: 40px; height: 40px; display:grid; place-items:center; border-radius: 10px; border: 1px solid var(--line); cursor:pointer; margin:0; background: var(--surface); color: var(--mut); }
       .orow .oiw { grid-column: 2 / -1; display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
@@ -3831,8 +3833,11 @@ Jawaban: B
 
       function keyView(q) {
         const k = q.answer_key || {}, o = q.content.options || [];
-        if (q.type === 'pg' || q.type === 'benar_salah') return '<ul>' + o.map((x, j) => '<li class="' + (k.index === j ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + fmtText(x) + '</span></li>').join('') + '</ul>';
-        if (q.type === 'pgk_centang') return '<ul>' + o.map((x, j) => '<li class="' + ((k.correct || []).includes(j) ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + fmtText(x) + '</span></li>').join('') + '</ul>';
+        // Gambar pilihan: dari isi soal (bank publik) atau dimuat terpisah (bank sendiri, daftar tidak membawa data gambar).
+        const oimg = (j) => { const d = q.content.option_images && q.content.option_images[j]; const src = d ? d : q.has_opt_img ? '/api/questions/' + q.id + '/img?o=' + j : '';
+          return src && /^(data:image[/]|[/]api[/])/.test(src) ? '<img class="othumb" loading="lazy" alt="" src="' + esc(src) + '" onerror="this.remove()">' : ''; };
+        if (q.type === 'pg' || q.type === 'benar_salah') return '<ul>' + o.map((x, j) => '<li class="' + (k.index === j ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + fmtText(x) + oimg(j) + '</span></li>').join('') + '</ul>';
+        if (q.type === 'pgk_centang') return '<ul>' + o.map((x, j) => '<li class="' + ((k.correct || []).includes(j) ? 'ok' : '') + '"><b>' + L[j] + '.</b><span>' + fmtText(x) + oimg(j) + '</span></li>').join('') + '</ul>';
         if (q.type === 'isian') return '<ul><li class="ok"><b>✓</b><span>' + esc((k.accepted || []).join(' / ')) + '</span></li></ul>';
         if (q.type === 'pgk_kategori') return '<ul>' + (q.content.statements || []).map((x, j) => '<li class="ok"><b>' + ((k.values || [])[j] === 0 ? 'B' : 'S') + '</b><span>' + fmtText(x) + '</span></li>').join('') + '</ul>';
         if (q.type === 'menjodohkan') return '<ul>' + (k.pairs || []).map(([a, b]) => '<li><b>' + (a + 1) + '.</b><span>' + fmtText(q.content.left[a]) + ' → ' + fmtText(q.content.right[b]) + '</span></li>').join('') + '</ul>';
@@ -3856,10 +3861,10 @@ Jawaban: B
         $('qsum').innerHTML = (v.length !== D.qs.length ? v.length + ' dari ' + D.qs.length + ' soal tampil' : D.qs.length + ' soal') +
           ' · <b class="ptot">Total ' + String(tot).replace('.', ',') + ' poin</b>';
         $('qlist').innerHTML = v.length ? v.map((q) =>
-          '<article class="qc' + (picked.has(q.id) ? ' on' : '') + '"><div class="qc-top">' + (D.canDelete ? '<input type="checkbox" class="qpk" data-pk="' + q.id + '" aria-label="Pilih soal"' + (picked.has(q.id) ? ' checked' : '') + '>' : '') + '<span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + String(+q.points).replace('.', ',') + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
+          '<article class="qc' + (picked.has(q.id) ? ' on' : '') + '"><div class="qc-top">' + (D.canDelete ? '<input type="checkbox" class="qpk" data-pk="' + q.id + '" aria-label="Pilih soal"' + (picked.has(q.id) ? ' checked' : '') + '>' : '') + '<span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + String(+q.points).replace('.', ',') + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image || q.has_opt_img ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
           (TYPES.some(([k]) => k === q.type) ? '<button type="button" data-ed="' + q.id + '">Edit</button>' : '') +
           (D.canDelete ? '<button type="button" class="danger" data-del="' + q.id + '">Hapus</button>' : '') + '</div>' +
-          '<p>' + fmtText(q.content.text || '(tanpa teks)') + '</p>' + (q.has_image && q.content.text_after ? '<p class="muted" style="margin:2px 0">[gambar]</p>' : '') + (q.content.text_after ? '<p>' + fmtText(q.content.text_after) + '</p>' : '') + keyView(q) + '</article>').join('')
+          '<p>' + fmtText(q.content.text || '(tanpa teks)') + '</p>' + (q.has_image ? '<img class="qthumb" loading="lazy" alt="Gambar soal" src="/api/questions/' + q.id + '/img">' : '') + (q.content.text_after ? '<p>' + fmtText(q.content.text_after) + '</p>' : '') + keyView(q) + '</article>').join('')
           : '<div class="empty-q">' + (D.qs.length ? 'Tidak ada soal yang cocok.' : '<b>Bank soal masih kosong.</b><br>Mulai dengan <b>+ Tulis soal</b> atau <b>Upload soal</b> (Word, PDF, Excel).') + '</div>';
         shown = v.map((q) => q.id); bar();
         math($('qlist'));
@@ -4118,9 +4123,10 @@ Jawaban: B
       $('ef').addEventListener('submit', async (e) => {
         e.preventDefault();
         const type = $('seg').querySelector('[aria-pressed="true"]').dataset.t, c = collect(type);
-        const b = { type, text: $('eText').value.trim(), points: +$('ePts').value || 1 };
+        const keepIndent = (v) => v.replace(/^(?:[ \\t]*\\n)+/, '').trimEnd();
+        const b = { type, text: keepIndent($('eText').value), points: +$('ePts').value || 1 };
         // Kalimat sesudah gambar hanya berarti bila ada gambar; tanpa gambar digabung ke pertanyaan.
-        const after = $('eTextAfter').value.trim();
+        const after = keepIndent($('eTextAfter').value);
         if (!$('eAfterBox').hidden) b.text_after = after; else { b.text_after = ''; if (after) b.text = (b.text ? b.text + '\\n' : '') + after; }
         if (img !== undefined) b.image = img;
         if (type === 'pg' || type === 'pgk_centang') {

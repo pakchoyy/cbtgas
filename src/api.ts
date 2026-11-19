@@ -556,7 +556,8 @@ function optionImages(body: Record<string, unknown>, n: number): (string | null)
 
 function buildQuestion(body: Record<string, unknown>): BuiltQuestion | { error: string; status: 400 | 413 } {
   const type = String(body.type || "pg");
-  const text = String(body.text || "").trim();
+  // Spasi/tab di awal baris (alinea menjorok) dipertahankan; hanya baris kosong di awal & spasi di akhir dibuang.
+  const text = String(body.text || "").replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd();
   const points = typeof body.points === "number" ? body.points : 1;
   const categoryId = body.category_id ? String(body.category_id) : null;
   const passageId = body.passage_id ? String(body.passage_id) : null;
@@ -564,7 +565,7 @@ function buildQuestion(body: Record<string, unknown>): BuiltQuestion | { error: 
   const image = body.image ? String(body.image) : null;
   // Audio opsional (MP3/OGG/WAV/WebM), data URI, cap 600KB.
   const audio = body.audio ? String(body.audio) : null;
-  if (!text && !image && !audio) return { error: "teks soal kosong", status: 400 };
+  if (!text.trim() && !image && !audio) return { error: "teks soal kosong", status: 400 };
   if (image) {
     if (!image.startsWith("data:image/")) return { error: "image harus data URI gambar", status: 400 };
     if (image.length > 400_000) return { error: "ukuran gambar > 400KB", status: 413 };
@@ -666,7 +667,7 @@ function buildQuestion(body: Record<string, unknown>): BuiltQuestion | { error: 
   if (image) content.image = image;
   if (audio) content.audio = audio;
   // Kalimat soal sesudah gambar (opsional): tampil di bawah gambar, di atas pilihan.
-  const textAfter = String(body.text_after ?? "").trim().slice(0, 5000);
+  const textAfter = String(body.text_after ?? "").replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd().slice(0, 5000);
   if (textAfter) content.text_after = textAfter;
   // Hint opsional (string). Siswa yang pakai hint kehilangan 50% poin soal
   // ini (dihandle di scoring submit).
@@ -1408,6 +1409,23 @@ api.post("/api/questions/bulk", async (c) => {
 });
 
 // Satu soal lengkap (dengan gambar/audio & kunci) untuk editor.
+// Gambar soal / gambar pilihan (?o=indeks) sebagai file, untuk pratinjau di bank soal (daftar tidak membawa data gambar).
+api.get("/api/questions/:id/img", async (c) => {
+  const s = getSess(c);
+  const o = c.req.query("o");
+  const sql = connectDb(c.env);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`select content from questions where id = ${c.req.param("id")}`);
+  if (r.length === 0) return c.notFound();
+  const ct = (r[0] as { content: { image?: string; option_images?: (string | null)[] } }).content;
+  const uri = o === undefined ? ct.image : ct.option_images?.[Number(o)];
+  const m = typeof uri === "string" ? /^data:(image\/(?:png|jpeg|gif|webp|svg\+xml));base64,(.+)$/.exec(uri) : null;
+  if (!m) return c.notFound();
+  const bin = Uint8Array.from(atob(m[2]), (ch) => ch.charCodeAt(0));
+  return new Response(bin, { headers: { "Content-Type": m[1], "Cache-Control": "private, max-age=300",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'", "X-Content-Type-Options": "nosniff" } });
+});
+
 api.get("/api/questions/:id", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "forbidden" }, 403);

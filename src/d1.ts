@@ -221,7 +221,7 @@ const JSON_COLS = ["content", "answer_key", "answer", "payload", "scoring_config
 // Kolom boolean (juga hasil turunan has_*): D1 mengembalikan 0/1, Postgres true/false. Penting karena nilainya ikut
 // tertulis ke HTML (mis. data-on="${u.active}" lalu dibandingkan dengan 'true' di skrip klien).
 const BOOL_COLS = ["active", "shuffle_questions", "shuffle_options", "use_token", "show_score", "strict_order",
-  "flagged", "has_logo", "has_essay", "has_image", "mine"];
+  "flagged", "has_logo", "has_essay", "has_image", "has_opt_img", "mine"];
 function parseJsonCols(rows: Row[], text: string): void {
   const chat = /\bexam_messages\b/i.test(text);
   for (const r of rows) {

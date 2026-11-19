@@ -14,7 +14,7 @@ import {
 } from "./session";
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
-import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA, UI_JS, FMT_JS, fracHtml } from "./ui";
+import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA, UI_JS, FMT_JS, fracHtml, keepSpaces } from "./ui";
 import { createSession, finalizeSession } from "./scoring";
 import { tokenValid } from "./token";
 import { catchUp } from "./catchup";
@@ -579,9 +579,9 @@ student.get("/s/history/:sid", async (c) => {
     answer: { index?: number; text?: string; manual_score?: number } | null;
   };
   const items = (data.items as unknown as Item[]).map((q, i) => {
-    let body = `<p><b>Soal ${i + 1}</b> <span class="muted">(${q.points} pts, ${q.type})</span></p><p>${fracHtml(esc(q.content.text))}</p>`;
+    let body = `<p><b>Soal ${i + 1}</b> <span class="muted">(${q.points} pts, ${q.type})</span></p><p>${keepSpaces(fracHtml(esc(q.content.text))).replace(/\n/g, "<br>")}</p>`;
     if (q.content.image) body += `<img src="${esc(q.content.image)}" style="max-width:100%; max-height:260px; border-radius:8px; border:1px solid var(--bd); margin:8px 0">`;
-    if (q.content.text_after) body += `<p>${fracHtml(esc(q.content.text_after))}</p>`;
+    if (q.content.text_after) body += `<p>${keepSpaces(fracHtml(esc(q.content.text_after))).replace(/\n/g, "<br>")}</p>`;
     if (q.type === "pg" || q.type === "benar_salah") {
       const correct = q.answer_key?.index;
       const picked = q.answer?.index;

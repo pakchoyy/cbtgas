@@ -72,13 +72,21 @@ export function fracHtml(s: string): string {
 export const FRAC_CSS = ".frac{display:inline-flex;flex-direction:column;align-items:center;vertical-align:middle;line-height:1.1;font-size:.9em;margin:0 .1em}" +
   ".frac>span{padding:0 .15em}.frac>span:last-child{border-top:1.5px solid currentColor}";
 
-// Format teks soal (dari Word atau ketikan): **tebal**, *miring*, __garis bawah__, ~~coret~~, ^pangkat^, ~indeks~, pecahan.
+// Spasi yang diketik guru dipertahankan (browser biasanya meringkas spasi berturut-turut jadi satu):
+// tab = 4 spasi, spasi ke-2 dst. dan spasi di awal baris jadi &nbsp;. Satu spasi biasa tetap, supaya baris bisa terlipat.
+export function keepSpaces(s: string): string {
+  return s.replace(/\t/g, "    ").replace(/ {2,}/g, (m: string) => " " + "&nbsp;".repeat(m.length - 1))
+    .replace(/(^|\n) /g, "$1&nbsp;");
+}
+
+// Format teks soal (dari Word atau ketikan): **tebal**, *miring*, __garis bawah__, ~~coret~~, ^pangkat^, ~indeks~, pecahan, spasi/alinea.
 // Dimuat di <head> supaya siap sebelum script halaman merender soal.
 export const FMT_JS = `<style>${FRAC_CSS}</style><script>
   window.fracHtml = ${fracHtml.toString()};
-  window.fmtText = (s) => window.fracHtml(String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
+  window.keepSpaces = ${keepSpaces.toString()};
+  window.fmtText = (s) => window.keepSpaces(window.fracHtml(String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
     .replace(/\\*\\*([^*]+?)\\*\\*/g, '<b>$1</b>').replace(/__([^_]+?)__/g, '<u>$1</u>').replace(/~~([^~]+?)~~/g, '<s>$1</s>')
-    .replace(/\\*([^*\\s][^*]*?)\\*/g, '<i>$1</i>').replace(/\\^([^\\^\\s]{1,20})\\^/g, '<sup>$1</sup>').replace(/~([^~\\s]{1,20})~/g, '<sub>$1</sub>'))
+    .replace(/\\*([^*\\s][^*]*?)\\*/g, '<i>$1</i>').replace(/\\^([^\\^\\s]{1,20})\\^/g, '<sup>$1</sup>').replace(/~([^~\\s]{1,20})~/g, '<sub>$1</sub>')))
     .replace(/\\n/g, '<br>');
 </script>`;
 

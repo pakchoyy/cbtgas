@@ -369,7 +369,7 @@ test("gambar per pilihan: simpan, edit tanpa hilang, ikut diacak, tidak membeban
   // daftar soal tidak membawa data gambar, tapi ditandai bergambar
   const list = await (await w.call("/api/questions", { cookie })).text();
   assert.ok(!list.includes("QUFB"));
-  assert.match(await (await w.call("/app/questions", { cookie })).text(), /has_image":true/);
+  assert.match(await (await w.call("/app/questions", { cookie })).text(), /has_opt_img":true/);
   await send(`/api/questions/${r.id}`, { type: "pg", text: "t", options: ["a", "Kotak", "c"], option_images: ["", "", ""], correct: 0 }, "PATCH");
   assert.equal((await w.open`select content from questions where id = ${r.id}`)[0].content.option_images, undefined);
 });
@@ -414,4 +414,23 @@ test("kalimat soal setelah gambar: tersimpan, dipertahankan saat edit, bisa diha
   assert.equal((await get()).text_after, "Grafik di atas adalah jenis…");
   await send(`/api/questions/${r.id}`, { type: "pg", text: "Perhatikan grafik!", options: ["Garis", "Batang"], correct: 1, text_after: "" }, "PATCH");
   assert.equal((await get()).text_after, undefined);
+});
+
+test("pratinjau gambar bank soal & alinea menjorok tersimpan", async () => {
+  const w = await boot();
+  const cookie = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const send = (p: string, body: unknown) => w.call(p, { ...json(body), method: "POST", cookie });
+  const png = "data:image/png;base64," + Buffer.from("PNGDATA").toString("base64");
+  const r = await jsonOf(await send("/api/questions", { type: "pg", text: "\n    Alinea menjorok.  Dua spasi.  ", image: png,
+    options: ["", "b"], option_images: [png, ""], correct: 0 }));
+  const [row] = await w.open`select content from questions where id = ${r.id}`;
+  assert.equal(row.content.text, "    Alinea menjorok.  Dua spasi.");
+  const img = await w.call(`/api/questions/${r.id}/img`, { cookie });
+  assert.equal(img.status, 200); assert.equal(img.headers.get("content-type"), "image/png");
+  assert.equal(Buffer.from(await img.arrayBuffer()).toString(), "PNGDATA");
+  assert.equal((await w.call(`/api/questions/${r.id}/img?o=0`, { cookie })).status, 200);
+  assert.equal((await w.call(`/api/questions/${r.id}/img?o=1`, { cookie })).status, 404);
+  assert.notEqual((await w.call(`/api/questions/${r.id}/img`)).status, 200); // tanpa login
+  const page = await (await w.call("/app/questions", { cookie })).text();
+  assert.match(page, /"has_image":true/); assert.match(page, /"has_opt_img":true/);
 });
