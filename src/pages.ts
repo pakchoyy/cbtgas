@@ -2294,13 +2294,14 @@ pages.get("/app/exams/:id/print", async (c) => {
   if (!data) return c.notFound();
   const ex = data.ex as { title: string; kind: string; duration_minutes: number };
   type Q = { position: number; type: string; points: string;
-    content: { text: string; options?: string[]; left?: string[]; right?: string[]; image?: string; option_images?: (string | null)[] };
+    content: { text: string; options?: string[]; left?: string[]; right?: string[]; image?: string; option_images?: (string | null)[]; text_after?: string };
     answer_key: Record<string, unknown> | null; rubric: string | null;
     passage_title: string | null; passage_body: string | null };
   const list = (data.qs as unknown as Q[]).map((q) => {
     let body = `<p class="qtext"><b>${q.position}. (${q.points} pts)</b> ${fmt(q.content.text)}</p>`;
     if (q.passage_body) body = `<div class="passage"><b>${esc(q.passage_title ?? "Bacaan")}</b><br>${esc(q.passage_body)}</div>` + body;
     if (q.content.image) body += `<img src="${esc(q.content.image)}" style="max-width:300px; max-height:200px; display:block; margin:4px 0">`;
+    if (q.content.text_after) body += `<p class="qtext">${fmt(q.content.text_after)}</p>`;
     if (q.type === "pg" || q.type === "benar_salah" || q.type === "pgk_centang") {
       body += `<ol type="A" style="margin:4px 0 0 20px">` +
         (q.content.options ?? []).map((o, i) => {
@@ -3632,6 +3633,10 @@ pages.get("/app/questions", async (c) => {
             <label class="btn" style="margin:0">Tambah gambar<input type="file" id="eImg" accept="image/*" hidden></label>
             <img id="eImgPrev" alt="" hidden><button type="button" class="danger" id="eImgDel" hidden>Hapus gambar</button>
           </div>
+          <div id="eAfterBox" hidden>
+            <label for="eTextAfter">Kalimat soal setelah gambar <span class="muted">(opsional)</span></label>
+            <textarea id="eTextAfter" rows="2" placeholder="mis. Diagram/grafik di atas adalah jenis …"></textarea>
+          </div>
           <div id="eBody"></div>
           <div class="grid" style="margin-top:4px">
             <div><label for="ePts">Poin</label><input id="ePts" type="number" min="0" step="0.5" value="1"></div>
@@ -3854,7 +3859,7 @@ Jawaban: B
           '<article class="qc' + (picked.has(q.id) ? ' on' : '') + '"><div class="qc-top">' + (D.canDelete ? '<input type="checkbox" class="qpk" data-pk="' + q.id + '" aria-label="Pilih soal"' + (picked.has(q.id) ? ' checked' : '') + '>' : '') + '<span class="tpill">' + esc(TL[q.type] || q.type) + '</span><span class="muted">' + String(+q.points).replace('.', ',') + ' poin' + (q.category_id && CAT[q.category_id] ? ' · ' + esc(CAT[q.category_id]) : '') + (q.has_image ? ' · bergambar' : '') + '</span><span class="sp"></span>' +
           (TYPES.some(([k]) => k === q.type) ? '<button type="button" data-ed="' + q.id + '">Edit</button>' : '') +
           (D.canDelete ? '<button type="button" class="danger" data-del="' + q.id + '">Hapus</button>' : '') + '</div>' +
-          '<p>' + fmtText(q.content.text || '(tanpa teks)') + '</p>' + keyView(q) + '</article>').join('')
+          '<p>' + fmtText(q.content.text || '(tanpa teks)') + '</p>' + (q.has_image && q.content.text_after ? '<p class="muted" style="margin:2px 0">[gambar]</p>' : '') + (q.content.text_after ? '<p>' + fmtText(q.content.text_after) + '</p>' : '') + keyView(q) + '</article>').join('')
           : '<div class="empty-q">' + (D.qs.length ? 'Tidak ada soal yang cocok.' : '<b>Bank soal masih kosong.</b><br>Mulai dengan <b>+ Tulis soal</b> atau <b>Upload soal</b> (Word, PDF, Excel).') + '</div>';
         shown = v.map((q) => q.id); bar();
         math($('qlist'));
@@ -4069,7 +4074,7 @@ Jawaban: B
           const w = inp.closest('.orow').querySelector('.oiw'); w.querySelector('.oip').src = d; w.hidden = false;
         } catch (x) { alert(x.message); }
       });
-      function showImg(src) { const p = $('eImgPrev'); p.hidden = !src; $('eImgDel').hidden = !src; if (src) p.src = src; }
+      function showImg(src) { const p = $('eImgPrev'); p.hidden = !src; $('eImgDel').hidden = !src; if (src) p.src = src; $('eAfterBox').hidden = !src; }
       $('eImg').addEventListener('change', (e) => {
         const f = e.target.files[0]; e.target.value = ''; if (!f) return;
         if (f.size > 290000) { alert('Gambar terlalu besar. Maksimal sekitar 290 KB.'); return; }
@@ -4087,7 +4092,7 @@ Jawaban: B
         }
         $('edTitle').textContent = id ? 'Edit soal' : 'Tulis soal';
         seg(q.type); body(q.type, q.answer_key, q.content);
-        $('eText').value = q.content.text || ''; $('ePts').value = +q.points || 1;
+        $('eText').value = q.content.text || ''; $('eTextAfter').value = q.content.text_after || ''; $('ePts').value = +q.points || 1;
         $('eCat').value = q.category_id && CAT[q.category_id] ? CAT[q.category_id] : (!id && catSel && CAT[catSel] ? CAT[catSel] : '');
         showImg(q.content.image || '');
         ed.showModal(); $('eText').focus();
@@ -4114,6 +4119,9 @@ Jawaban: B
         e.preventDefault();
         const type = $('seg').querySelector('[aria-pressed="true"]').dataset.t, c = collect(type);
         const b = { type, text: $('eText').value.trim(), points: +$('ePts').value || 1 };
+        // Kalimat sesudah gambar hanya berarti bila ada gambar; tanpa gambar digabung ke pertanyaan.
+        const after = $('eTextAfter').value.trim();
+        if (!$('eAfterBox').hidden) b.text_after = after; else { b.text_after = ''; if (after) b.text = (b.text ? b.text + '\\n' : '') + after; }
         if (img !== undefined) b.image = img;
         if (type === 'pg' || type === 'pgk_centang') {
           const keep = c.options.map((o, j) => [o, j]).filter(([o, j]) => o || c.option_images[j]);

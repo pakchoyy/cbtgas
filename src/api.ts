@@ -665,6 +665,9 @@ function buildQuestion(body: Record<string, unknown>): BuiltQuestion | { error: 
   }
   if (image) content.image = image;
   if (audio) content.audio = audio;
+  // Kalimat soal sesudah gambar (opsional): tampil di bawah gambar, di atas pilihan.
+  const textAfter = String(body.text_after ?? "").trim().slice(0, 5000);
+  if (textAfter) content.text_after = textAfter;
   // Hint opsional (string). Siswa yang pakai hint kehilangan 50% poin soal
   // ini (dihandle di scoring submit).
   if (body.hint && typeof body.hint === "string") content.hint = String(body.hint).slice(0, 500);
@@ -1126,6 +1129,7 @@ function bodyFromStored(q: { type: string; content: Record<string, unknown>; ans
   const b: Record<string, unknown> = { type: q.type, text: ct.text, points: Number(q.points) || 1 };
   if (typeof ct.image === "string") b.image = ct.image;
   if (Array.isArray(ct.option_images)) b.option_images = ct.option_images;
+  if (typeof ct.text_after === "string") b.text_after = ct.text_after;
   if (q.type === "pg") { b.options = ct.options; b.correct = k.index; }
   else if (q.type === "benar_salah") b.correct = k.index === 0;
   else if (q.type === "pgk_centang") { b.options = ct.options; b.correct_indexes = k.correct; }
@@ -1434,6 +1438,7 @@ api.patch("/api/questions/:id", async (c) => {
     if (merged.image === undefined && prev.content.image) merged.image = prev.content.image;
     if (merged.audio === undefined && prev.content.audio) merged.audio = prev.content.audio;
     if (merged.option_images === undefined && prev.content.option_images) merged.option_images = prev.content.option_images;
+    if (merged.text_after === undefined && prev.content.text_after) merged.text_after = prev.content.text_after;
     if (merged.image === "") delete merged.image;
     if (merged.audio === "") delete merged.audio;
     if (merged.passage_id === undefined) merged.passage_id = prev.passage_id;

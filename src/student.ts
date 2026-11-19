@@ -574,13 +574,14 @@ student.get("/s/history/:sid", async (c) => {
   }
   type Item = {
     id: string; type: string; points: string;
-    content: { text: string; options?: string[]; image?: string; option_images?: (string | null)[] };
+    content: { text: string; options?: string[]; image?: string; option_images?: (string | null)[]; text_after?: string };
     answer_key: { index?: number; accepted?: string[]; manual?: boolean } | null;
     answer: { index?: number; text?: string; manual_score?: number } | null;
   };
   const items = (data.items as unknown as Item[]).map((q, i) => {
     let body = `<p><b>Soal ${i + 1}</b> <span class="muted">(${q.points} pts, ${q.type})</span></p><p>${fracHtml(esc(q.content.text))}</p>`;
     if (q.content.image) body += `<img src="${esc(q.content.image)}" style="max-width:100%; max-height:260px; border-radius:8px; border:1px solid var(--bd); margin:8px 0">`;
+    if (q.content.text_after) body += `<p>${fracHtml(esc(q.content.text_after))}</p>`;
     if (q.type === "pg" || q.type === "benar_salah") {
       const correct = q.answer_key?.index;
       const picked = q.answer?.index;
@@ -1187,6 +1188,7 @@ student.get("/s/take/:sid", async (c) => {
           img.style.cssText = 'max-width:100%; max-height:300px; border-radius:8px; border:1px solid var(--bd); margin:8px 0';
           el.appendChild(img);
         }
+        if (q.content.text_after) { const ta = document.createElement('p'); ta.innerHTML = mdRender(q.content.text_after); el.appendChild(ta); }
         if (q.content.audio) {
           const au = document.createElement('audio');
           au.src = q.content.audio; au.controls = true;

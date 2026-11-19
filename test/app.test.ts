@@ -401,3 +401,17 @@ test("halaman masuk siswa: pintu guru tersembunyi cukup 3 ketukan logo; /masuk p
   const r = await w.call("/masuk", { cookie: staff });
   assert.equal(r.status, 302); assert.equal(r.headers.get("location"), "/app");
 });
+
+test("kalimat soal setelah gambar: tersimpan, dipertahankan saat edit, bisa dihapus", async () => {
+  const w = await boot();
+  const cookie = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const send = (p: string, body: unknown, method = "POST") => w.call(p, { ...json(body), method, cookie });
+  const base = { type: "pg", text: "Perhatikan grafik berikut!", image: "data:image/png;base64,QUFB", options: ["Garis", "Batang"], correct: 1 };
+  const r = await jsonOf(await send("/api/questions", { ...base, text_after: "Grafik di atas adalah jenis…" }));
+  const get = async () => (await w.open`select content from questions where id = ${r.id}`)[0].content;
+  assert.equal((await get()).text_after, "Grafik di atas adalah jenis…");
+  await send(`/api/questions/${r.id}`, { type: "pg", text: "Perhatikan grafik!", options: ["Garis", "Batang"], correct: 1 }, "PATCH");
+  assert.equal((await get()).text_after, "Grafik di atas adalah jenis…");
+  await send(`/api/questions/${r.id}`, { type: "pg", text: "Perhatikan grafik!", options: ["Garis", "Batang"], correct: 1, text_after: "" }, "PATCH");
+  assert.equal((await get()).text_after, undefined);
+});
