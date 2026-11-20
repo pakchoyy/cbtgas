@@ -3697,7 +3697,7 @@ pages.get("/app/questions", async (c) => {
             <div><label for="eCat">Kategori / mapel</label><input id="eCat" list="catList" placeholder="mis. Matematika"><datalist id="catList"></datalist></div>
           </div>
         </div>
-        <div class="sheet-foot"><button type="button" id="edCancel">Batal</button><span class="spacer"></span><button type="submit" class="primary" id="edSave">Simpan soal</button></div>
+        <div class="sheet-foot"><button type="button" id="edCancel">Batal</button><span class="spacer"></span><button type="submit" id="edNext" title="Simpan, lalu langsung tulis soal berikutnya">Simpan &amp; soal berikutnya</button><button type="submit" class="primary" id="edSave">Simpan soal</button></div>
       </form>
     </dialog>
 
@@ -4024,7 +4024,9 @@ Jawaban: B
       });
 
       // ===== Editor =====
-      const ed = $('ed'); let cur = null; let img = undefined;
+      const ed = $('ed'); let cur = null; let img = undefined; let addedN = 0;
+      // Setelah "Simpan & soal berikutnya", daftar soal diperbarui saat editor ditutup.
+      ed.addEventListener('close', () => { if (addedN) { addedN = 0; softReload(); } });
       function seg(type) {
         $('seg').innerHTML = TYPES.map(([k, v]) => '<button type="button" data-t="' + k + '" aria-pressed="' + (k === type) + '">' + v + '</button>').join('');
       }
@@ -4150,6 +4152,7 @@ Jawaban: B
           if (q.live_exams) { $('edWarn').textContent = 'Soal ini dipakai ' + q.live_exams + ' ujian yang sedang dibuka/terjadwal. Perubahan langsung berlaku di ujian tersebut.'; $('edWarn').hidden = false; }
         }
         $('edTitle').textContent = id ? 'Edit soal' : 'Tulis soal';
+        $('edNext').hidden = !!id; $('edSave').disabled = false; $('edNext').disabled = false;
         seg(q.type); body(q.type, q.answer_key, q.content);
         $('eText').value = q.content.text || ''; $('eTextAfter').value = q.content.text_after || ''; $('ePts').value = +q.points || 1;
         $('eCat').value = q.category_id && CAT[q.category_id] ? CAT[q.category_id] : (!id && catSel && CAT[catSel] ? CAT[catSel] : '');
@@ -4199,14 +4202,26 @@ Jawaban: B
           b.statements = rows.map((r) => r[0]); b.values = rows.map((r) => r[1]); b.cats = $('eCats').value.split(' / ');
         }
         if (type === 'menjodohkan') { const rows = c.left.map((l, j) => [l, c.right[j]]).filter(([l, r]) => l && r); b.left = rows.map((r) => r[0]); b.right = rows.map((r) => r[1]); }
-        const btn = $('edSave'); btn.disabled = true;
+        const next = e.submitter && e.submitter.id === 'edNext';
+        const btn = $('edSave'); btn.disabled = true; $('edNext').disabled = true;
         try {
           b.category_id = await catId($('eCat').value);
           const r = await fetch(cur ? '/api/questions/' + cur.id : '/api/questions', { method: cur ? 'PATCH' : 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
-          softReload();
-        } catch (x) { alert('Gagal menyimpan: ' + x.message); btn.disabled = false; }
+          if (next) {
+            // Kosongkan isi, pertahankan tipe, kategori, dan poin supaya guru langsung lanjut mengetik.
+            addedN++; img = undefined; showImg('');
+            $('eText').value = ''; $('eTextAfter').value = '';
+            body(type, {}, {});
+            $('edTitle').textContent = 'Tulis soal ke-' + (addedN + 1);
+            btn.disabled = false; $('edNext').disabled = false;
+            toast('Soal tersimpan (' + addedN + '). Lanjut soal berikutnya.', 'ok');
+            $('ed').querySelector('.sheet-body').scrollTop = 0; $('eText').focus();
+            return;
+          }
+          addedN = 0; softReload();
+        } catch (x) { alert('Gagal menyimpan: ' + x.message); btn.disabled = false; $('edNext').disabled = false; }
       });
 
       // ===== Upload Excel =====
