@@ -79,14 +79,22 @@ export function keepSpaces(s: string): string {
     .replace(/(^|\n) /g, "$1&nbsp;");
 }
 
+// Soal berbahasa Latin yang memuat daftar kata Arab ("1) رُسُلٌ"): tiap baris bernomor diberi tanda arah kiri-ke-kanan
+// (U+200E, tak terlihat) supaya nomornya tetap di kiri. Soal yang diawali tulisan Arab tidak diubah (tetap kanan-ke-kiri).
+export function ltrLabels(s: string): string {
+  if (!/^[^؀-ۿA-Za-z]*[A-Za-z]/.test(s)) return s;
+  return s.replace(/(^|\n|<br>)(?=[ \t]*(?:&nbsp;)*(?:\d{1,3}|[A-Za-z])[ \t]*[.)][^\n]*[؀-ۿ])/g, "$1‎");
+}
+
 // Format teks soal (dari Word atau ketikan): **tebal**, *miring*, __garis bawah__, ~~coret~~, ^pangkat^, ~indeks~, pecahan, spasi/alinea.
 // Dimuat di <head> supaya siap sebelum script halaman merender soal.
 export const FMT_JS = `<style>${FRAC_CSS}</style><script>
   window.fracHtml = ${fracHtml.toString()};
   window.keepSpaces = ${keepSpaces.toString()};
-  window.fmtText = (s) => window.keepSpaces(window.fracHtml(String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
+  window.ltrLabels = ${ltrLabels.toString()};
+  window.fmtText = (s) => window.ltrLabels(window.keepSpaces(window.fracHtml(String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
     .replace(/\\*\\*([^*]+?)\\*\\*/g, '<b>$1</b>').replace(/__([^_]+?)__/g, '<u>$1</u>').replace(/~~([^~]+?)~~/g, '<s>$1</s>')
-    .replace(/\\*([^*\\s][^*]*?)\\*/g, '<i>$1</i>').replace(/\\^([^\\^\\s]{1,20})\\^/g, '<sup>$1</sup>').replace(/~([^~\\s]{1,20})~/g, '<sub>$1</sub>')))
+    .replace(/\\*([^*\\s][^*]*?)\\*/g, '<i>$1</i>').replace(/\\^([^\\^\\s]{1,20})\\^/g, '<sup>$1</sup>').replace(/~([^~\\s]{1,20})~/g, '<sub>$1</sub>'))))
     .replace(/\\n/g, '<br>');
 </script>`;
 

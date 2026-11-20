@@ -154,3 +154,13 @@ test("spasi berturut-turut & alinea menjorok dipertahankan saat tampil", async (
   assert.equal(keepSpaces("satu spasi saja"), "satu spasi saja");
   assert.equal(keepSpaces('<span class="frac">'), '<span class="frac">');
 });
+
+test("daftar kata Arab bernomor di soal berbahasa Indonesia: nomor tetap di kiri; soal Arab penuh tidak diubah", async () => {
+  const { ltrLabels } = await import("../src/ui.ts");
+  const L = "‎";
+  assert.equal(ltrLabels("Perhatikan!\n1) رُسُلٌ\n2) رِزْقٌ\nJawab nomor ..."), `Perhatikan!\n${L}1) رُسُلٌ\n${L}2) رِزْقٌ\nJawab nomor ...`);
+  assert.equal(ltrLabels("اقْرَأْ\n1) رُسُلٌ"), "اقْرَأْ\n1) رُسُلٌ");
+  assert.equal(ltrLabels("Hitung!\n1) 2+3\n2) 4+5"), "Hitung!\n1) 2+3\n2) 4+5");
+  const fn = new Function("return " + ltrLabels.toString())();
+  assert.equal(fn("Soal\na. رَجُلٌ"), ltrLabels("Soal\na. رَجُلٌ"));
+});

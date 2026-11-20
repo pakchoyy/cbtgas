@@ -7,7 +7,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connectDb, withTenant } from "./db";
 import { requireStaff, requireOwner, type AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, fracHtml, keepSpaces, FRAC_CSS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, WA_DISPLAY, schoolYear } from "./ui";
+import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, fracHtml, keepSpaces, ltrLabels, FRAC_CSS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, WA_DISPLAY, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -2372,8 +2372,8 @@ pages.get("/app/exams/:id/admin", async (c) => {
 });
 
 // Versi server dari window.fmtText (dipakai di cetak soal).
-const fmt = (t: string) => keepSpaces(fracHtml(esc(t).replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>").replace(/__([^_]+?)__/g, "<u>$1</u>").replace(/~~([^~]+?)~~/g, "<s>$1</s>")
-  .replace(/\*([^*\s][^*]*?)\*/g, "<i>$1</i>").replace(/\^([^^\s]{1,20})\^/g, "<sup>$1</sup>").replace(/~([^~\s]{1,20})~/g, "<sub>$1</sub>"))).replace(/\n/g, "<br>");
+const fmt = (t: string) => ltrLabels(keepSpaces(fracHtml(esc(t).replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>").replace(/__([^_]+?)__/g, "<u>$1</u>").replace(/~~([^~]+?)~~/g, "<s>$1</s>")
+  .replace(/\*([^*\s][^*]*?)\*/g, "<i>$1</i>").replace(/\^([^^\s]{1,20})\^/g, "<sup>$1</sup>").replace(/~([^~\s]{1,20})~/g, "<sub>$1</sub>")))).replace(/\n/g, "<br>");
 
 pages.get("/app/exams/:id/print", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env);
@@ -3732,14 +3732,14 @@ pages.get("/app/questions", async (c) => {
           <label>Tipe soal</label>
           <div class="seg" id="seg"></div>
           <label for="eText">Pertanyaan</label>
-          <textarea id="eText" rows="4" placeholder="Tulis pertanyaan. Rumus matematika ditulis di antara tanda $, mis. $\\frac{1}{2}$"></textarea>
+          <textarea id="eText" dir="auto" rows="4" placeholder="Tulis pertanyaan. Rumus matematika ditulis di antara tanda $, mis. $\\frac{1}{2}$"></textarea>
           <div class="imgrow">
             <label class="btn" style="margin:0">Tambah gambar<input type="file" id="eImg" accept="image/*" hidden></label>
             <img id="eImgPrev" alt="" hidden><button type="button" class="danger" id="eImgDel" hidden>Hapus gambar</button>
           </div>
           <div id="eAfterBox" hidden>
             <label for="eTextAfter">Kalimat soal setelah gambar <span class="muted">(opsional)</span></label>
-            <textarea id="eTextAfter" rows="2" placeholder="mis. Diagram/grafik di atas adalah jenis …"></textarea>
+            <textarea id="eTextAfter" dir="auto" rows="2" placeholder="mis. Diagram/grafik di atas adalah jenis …"></textarea>
           </div>
           <div id="eBody"></div>
           <div class="grid" style="margin-top:4px">
@@ -3848,6 +3848,8 @@ Jawaban: B
       .imgrow img { max-height: 80px; border-radius: 10px; border: 1px solid var(--line); }
       .qc .qthumb { display:block; max-width: 260px; max-height: 160px; margin: 4px 0 8px; border-radius: 8px; border: 1px solid var(--line); background:#fff; }
       .qc .othumb { display:block; max-width: 140px; max-height: 90px; margin-top: 4px; border-radius: 6px; border: 1px solid var(--line); background:#fff; }
+      /* Arah teks editor ditentukan dari seluruh isi, bukan per baris: "1) رُسُلٌ" di soal berbahasa Indonesia tetap bernomor di kiri. */
+      #eText, #eTextAfter { unicode-bidi: isolate; }
       .orow { display:grid; grid-template-columns: 40px 1fr 40px 40px; gap: 8px; align-items:center; margin: 8px 0; }
       .orow .oib { width: 40px; height: 40px; display:grid; place-items:center; border-radius: 10px; border: 1px solid var(--line); cursor:pointer; margin:0; background: var(--surface); color: var(--mut); }
       .orow .oiw { grid-column: 2 / -1; display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
