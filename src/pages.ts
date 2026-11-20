@@ -1692,6 +1692,7 @@ Jawaban: B</pre>
       .upbig { border: 2px dashed var(--brand); border-radius: 14px; padding: 16px; background: var(--soft); display:grid; gap: 10px; }
       .upbig-t { display:grid; gap: 2px; } .upbig-t span { color: var(--mut); font-size: 14px; }
       .upbig .btn.primary { justify-self: start; }
+      .upbig .btn.busy { opacity: .6; pointer-events: none; }
       .upfmt summary { cursor: pointer; color: var(--brand); font-weight: 600; }
       .upfmt .sample { margin: 8px 0 0; padding: 10px 12px; background: var(--surface); border-radius: 10px; border: 1px solid var(--line); font-size: 13px; white-space: pre-wrap; }
       #wDocMsg:not([hidden]) { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
@@ -1767,17 +1768,22 @@ Jawaban: B</pre>
       });
       document.getElementById('wDoc').addEventListener('change', async (e) => {
         const file = e.target.files[0]; e.target.value = ''; if (!file) return;
-        toast('Membaca ' + file.name + '…');
+        const box = document.getElementById('wDocMsg'), btn = e.target.closest('label');
+        const status = (t) => { box.textContent = t; box.hidden = false; };
+        btn.classList.add('busy'); btn.setAttribute('aria-disabled', 'true'); e.target.disabled = true;
+        status('⏳ Membaca ' + file.name + '…');
+        const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 90000);
         try {
           const buf = await file.arrayBuffer();
           const lines = /\\.pdf$/i.test(file.name) ? await pdfLines(buf) : await docxLines(buf);
           const parsed = parseLines(lines); const good = parsed.filter(([, err]) => !err).map(([q]) => q);
-          if (!good.length) { const box = document.getElementById('wDocMsg'); box.hidden = false;
+          if (!good.length) {
             box.textContent = parsed.length ? 'Soal terbaca, tapi kuncinya belum ada. Tambahkan "Jawaban: B" di bawah tiap soal, atau warnai/tebalkan pilihan yang benar.' : 'Tidak ada soal yang dikenali. Pastikan soal bernomor (1. 2. 3.) dan pilihan diawali A. B. C. Lihat contoh format di atas.';
             toast(box.textContent, 'err'); return; }
           const cat = (f.title.value.trim() || file.name.replace(/\\.[^.]+$/, '')).slice(0, 60);
+          status('⏳ Menyimpan ' + good.length + ' soal… (jangan tutup halaman)');
           const r = await fetch('/api/questions/bulk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ questions: good.map((q) => ({ ...q, category_name: cat })) }) });
+            body: JSON.stringify({ questions: good.map((q) => ({ ...q, category_name: cat })) }), signal: ac.signal });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
           const [qs, cats] = await Promise.all([fetch('/api/questions', { credentials: 'same-origin' }).then((x) => x.json()), fetch('/api/categories', { credentials: 'same-origin' }).then((x) => x.json())]);
@@ -1785,9 +1791,12 @@ Jawaban: B</pre>
           D.cats = cats; (j.ids || []).forEach((id) => pickedQ.add(id)); drawQ();
           const skip = parsed.filter(([, err]) => err).map(([q]) => q.row);
           const msg = '✓ ' + j.ok + ' soal dari ' + file.name + ' sudah masuk ke ujian ini.' + (skip.length ? ' Soal nomor ' + skip.join(', ') + ' dilewati karena kuncinya belum ada: tambahkan "Jawaban: B" atau warnai pilihan yang benar, lalu upload lagi.' : '');
-          const box = document.getElementById('wDocMsg'); box.textContent = msg; box.hidden = false;
+          status(msg);
           toast(j.ok + ' soal masuk ke ujian ini.' + (skip.length ? ' ' + skip.length + ' dilewati.' : ''), 'ok');
-        } catch (x) { toast('Gagal membaca file: ' + x.message, 'err'); }
+        } catch (x) {
+          const m = x.name === 'AbortError' ? 'Penyimpanan terlalu lama. Periksa koneksi internet, lalu coba lagi.' : /fetch|network|Load failed/i.test(x.message) ? 'Koneksi terputus. Periksa internet, lalu coba lagi.' : 'Gagal membaca file: ' + x.message;
+          status('⚠ ' + m); toast(m, 'err');
+        } finally { clearTimeout(tm); btn.classList.remove('busy'); btn.removeAttribute('aria-disabled'); e.target.disabled = false; }
       });
       document.getElementById('acSw').addEventListener('change', (e) => { f.anticheat_level.value = e.target.checked ? 'warn' : 'log'; });
       qSearch.addEventListener('input', drawQ); qCat.addEventListener('change', drawQ);
@@ -4280,11 +4289,20 @@ ${DOC_PARSER_JS}
         } catch (x) { $('upPrev').innerHTML = ''; alert('Gagal membaca file: ' + x.message); }
       });
       $('upGo').onclick = async () => {
-        $('upGo').disabled = true;
+        const go = $('upGo'), label = go.textContent; go.disabled = true; go.textContent = 'Menyimpan ' + rows.length + ' soal…';
         const cn = $('upCat').value.trim();
-        const r = await fetch('/api/questions/bulk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: rows.map((q) => cn ? { ...q, category_name: cn } : q) }) });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) { alert('Gagal: ' + (j.error || r.status)); $('upGo').disabled = false; return; }
+        // Batas waktu 90 detik: koneksi putus tidak boleh membuat tombol macet selamanya.
+        const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 90000);
+        let r, j;
+        try {
+          r = await fetch('/api/questions/bulk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: rows.map((q) => cn ? { ...q, category_name: cn } : q) }), signal: ac.signal });
+          j = await r.json().catch(() => ({}));
+        } catch (x) {
+          go.disabled = false; go.textContent = label;
+          alert(x.name === 'AbortError' ? 'Penyimpanan terlalu lama. Periksa koneksi internet, lalu coba lagi.' : 'Koneksi terputus saat menyimpan. Periksa internet, lalu coba lagi.');
+          return;
+        } finally { clearTimeout(tm); }
+        if (!r.ok) { alert('Gagal: ' + (j.error || r.status)); go.disabled = false; go.textContent = label; return; }
         alert(j.ok + ' soal tersimpan' + (cn ? ' di kategori "' + cn + '"' : ' di "Tanpa kategori"') + '.' + (j.fail && j.fail.length ? '\\n' + j.fail.length + ' gagal: ' + j.fail.slice(0, 5).map((x) => 'baris ' + x.row + ' (' + x.error + ')').join(', ') : ''));
         softReload();
       };
