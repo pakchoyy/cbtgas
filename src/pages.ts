@@ -418,20 +418,52 @@ const DOC_PARSER_JS = `
           const upper = (l.match(/(^|\\s)\\(?[A-E]\\s*[.)]\\s/g) || []).length >= 2;
           return lower ? l.split(/\\s+(?=\\(?[b-e]\\s*[.)]\\s)/) : upper ? l.split(/\\s+(?=\\(?[A-E]\\s*[.)]\\s)/) : [l];
         });
-        // Kunci jawaban di akhir dokumen: "Kunci Jawaban" lalu "1. B 2. C ...".
-        const keyMap = {};
-        const ki = lines.findIndex((l) => /^kunci(\\s+jawaban)?\\s*:?\\s*$/i.test(l) || /^kunci(\\s+jawaban)?\\s*:?\\s*1\\s*[.)\\-:]/i.test(l));
+        // Bobot per tipe ("Bobot: PG=1pt | Isian=2pt | Uraian=4pt"), di mana pun letaknya.
+        const bobot = {};
+        for (const l of lines) if (/bobot|skor|poin/i.test(l) && /=|:/.test(l))
+          for (const m of l.matchAll(/(pilihan\\s*ganda\\s*kompleks|pgk|pilihan\\s*ganda|pg|isian(?:\\s*singkat)?|uraian|esai|essay)\\s*[=:]\\s*(\\d+(?:[.,]\\d+)?)/gi)) {
+            const k = /kompleks|pgk/i.test(m[1]) ? 'pgk' : /^p/i.test(m[1]) ? 'pg' : /^isian/i.test(m[1]) ? 'isian' : 'uraian';
+            bobot[k] = +m[2].replace(',', '.');
+          }
+        // Kunci jawaban di akhir dokumen: "Kunci Jawaban" lalu "1. B", "2. C", "11. Garuda Pancasila", atau sebaris "1. B 2. C ...".
+        // Bagian sesudahnya yang bukan kunci (kisi-kisi, rubrik umum) tidak ikut dibaca.
+        const keyMap = {}, rubMap = {};
+        // Format huruf (tebal, garis bawah, …) diabaikan saat mengenali judul dan isi kunci.
+        const plain = (l) => l.replace(/\\*\\*|__|~~|[*~^]/g, '').replace(/\\s+/g, ' ').trim();
+        const ki = lines.findIndex((l0) => { const l = plain(l0); return /^kunci(\\s+jawaban)?\\s*:?\\s*$/i.test(l) || /^kunci(\\s+jawaban)?\\s*:?\\s*1\\s*[.)\\-:]/i.test(l); });
         if (ki >= 0) {
-          const tail = lines.splice(ki).join(' ').replace(/^kunci(\\s+jawaban)?\\s*:?/i, ' ');
-          for (const m of tail.matchAll(/(\\d+)\\s*[.)\\-:=]?\\s*([A-Ea-e](?:\\s*,\\s*[A-Ea-e])*|benar|salah)\\b/gi)) keyMap[+m[1]] = m[2];
+          let tail = lines.splice(ki).map(plain);
+          const kk = tail.findIndex((l, i) => i > 0 && /^kisi(-|\\s)?kisi/i.test(l)); if (kk > 0) tail = tail.slice(0, kk);
+          tail[0] = tail[0].replace(/^kunci(\\s+jawaban)?\\s*:?/i, '');
+          let last = null, inRub = false;
+          for (const l of tail) {
+            const many = [...l.matchAll(/(\\d+)\\s*[.)\\-:=]?\\s*([A-Ea-e](?:\\s*,\\s*[A-Ea-e])*|benar|salah)(?=\\s|$|[.,;])/gi)];
+            if (many.length >= 2) { many.forEach((m) => { keyMap[+m[1]] = m[2]; }); inRub = false; continue; }
+            const m = l.match(/^(\\d{1,3})\\s*[.):\\-=]\\s*(.+)$/);
+            if (m) { last = +m[1]; keyMap[last] = m[2].trim(); inRub = false; continue; }
+            if (/^rubrik\\b/i.test(l)) { inRub = last !== null; continue; }
+            if (inRub) (rubMap[last] = rubMap[last] || []).push(l.replace(/^[-•*]\\s*/, ''));
+          }
         }
+        // Judul bagian ("I. Pilihan Ganda", "II. Isian Singkat", "III. Uraian") menentukan tipe soal tanpa pilihan,
+        // dan mengakhiri soal sebelumnya (petunjuk di bawah judul tidak ikut menempel ke pilihan terakhir).
+        const secOf = (l0) => {
+          const l = plain(l0);
+          const m = l.match(/^[IVX]{1,4}\\s*[.)]\\s*(.+)$/) || l.match(/^bagian\\s+[\\wIVX]+\\s*[.:\\-]?\\s*(.+)$/i); if (!m) return null; const t = m[1].toLowerCase();
+          return /kompleks/.test(t) ? 'pgk' : /pilihan\\s*ganda/.test(t) ? 'pg' : /isian|melengkapi|titik-titik/.test(t) ? 'isian'
+            : /uraian|esai|essay/.test(t) ? 'uraian' : /benar|salah/.test(t) ? 'bs' : /jodoh/.test(t) ? 'jodoh' : 'lain';
+        };
+        let sec = null;
         const qs = []; let cur = null;
         for (let l of lines) {
           let m;
           const mk3 = l.endsWith('\\u0003'); l = l.replace(/\\u0003/g, '');
+          const sc = secOf(l); if (sc) { sec = sc; cur = null; continue; }
+          // Tempat jawaban siswa ("Jawab : ______", "........") bukan kunci dan bukan bagian soal.
+          if (/^(?:jawab(?:an)?\\s*:?)?[\\s_.…\\-]*$/i.test(l)) continue;
           if ((m = l.match(/^(?:no\\.?|nomor|soal)?\\s*(\\d{1,3})\\s*[.):\\-](?:\\s+(.*)|$)/i))) {
             m[2] = m[2] || '';
-            cur = { no: +m[1], text: m[2], opts: [], ans: '' }; qs.push(cur); continue;
+            cur = { no: +m[1], text: m[2], opts: [], ans: '', sec }; qs.push(cur); continue;
           }
           if (!cur) continue;
           if ((m = l.match(/^\\(?([A-Ea-e])\\s*[.):]\\s+(.+)$/))) {
@@ -443,7 +475,7 @@ const DOC_PARSER_JS = `
           // Menjodohkan: "Kiri -> Kanan" (juga =>, →).
           if ((m = l.match(/^[-•*]?\\s*(.+?)\\s+(?:->|=>|→)\\s+(.+)$/))) { (cur.pairs = cur.pairs || []).push([m[1], m[2]]); continue; }
           if ((m = l.match(/^(?:poin|skor|bobot|nilai)\\s*[:=]\\s*(\\d+(?:[.,]\\d+)?)\\s*$/i))) { cur.pts = +m[1].replace(',', '.'); continue; }
-          if ((m = l.match(/^(jawaban|kunci|jawab|jwb|ans)\\s*[:=]\\s*(.+)$/i))) { cur.ans = m[2].trim(); continue; }
+          if ((m = l.match(/^(jawaban|kunci|jawab|jwb|ans)\\s*[:=]\\s*(.+)$/i))) { const a = m[2].replace(/[_.…]{3,}/g, '').trim(); if (a) cur.ans = a; continue; }
           if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text = (cur.text + ' ' + l).trim();
         }
         return qs.map((c, j) => {
@@ -453,7 +485,9 @@ const DOC_PARSER_JS = `
             for (const lv of [2, 1]) { const hit = c.mk.map((v, k) => v === lv ? L[k] : '').filter(Boolean);
               if (hit.length && hit.length < c.opts.length) { ans = hit.join(', '); break; } }
           }
-          const q = { row: j + 1, text: c.text.trim(), points: c.pts > 0 ? c.pts : 1 };
+          // Poin: "Poin: 5" di soal > bobot per tipe di dokumen > 1.
+          const pt = (k) => c.pts > 0 ? c.pts : bobot[k] > 0 ? bobot[k] : 1;
+          const q = { row: j + 1, text: c.text.trim(), points: pt('pg') };
           if (c.stmts && c.stmts.length >= 2) { q.type = 'pgk_kategori'; q.statements = c.stmts.map((x) => x[0]); q.values = c.stmts.map((x) => x[1]); return [q, '']; }
           if (c.pairs && c.pairs.length >= 2) { q.type = 'menjodohkan'; q.left = c.pairs.map((x) => x[0]); q.right = c.pairs.map((x) => x[1]); return [q, '']; }
           if (c.opts.length >= 2) {
@@ -461,12 +495,19 @@ const DOC_PARSER_JS = `
             q.options = c.opts;
             if (!letters.length) { q.type = 'pg'; return [q, 'Kunci jawaban belum ada']; }
             if (letters.some((x) => x >= c.opts.length)) { q.type = 'pg'; return [q, 'Kunci di luar pilihan']; }
-            if (letters.length > 1) { q.type = 'pgk_centang'; q.correct_indexes = letters; } else { q.type = 'pg'; q.correct = letters[0]; }
+            if (letters.length > 1) { q.type = 'pgk_centang'; q.correct_indexes = letters; q.points = pt('pgk'); } else { q.type = 'pg'; q.correct = letters[0]; }
             return [q, ''];
           }
           if (/^(benar|salah)$/i.test(ans)) { q.type = 'benar_salah'; q.correct = /^benar$/i.test(ans); return [q, '']; }
-          if (ans) { q.type = 'isian'; q.accepted = ans.split('|').map((x) => x.trim()).filter(Boolean); return [q, '']; }
-          q.type = 'uraian'; return [q, ''];
+          // Soal di bagian Uraian: kunci dari dokumen jadi pedoman penilaian (beserta rubriknya), bukan jawaban isian.
+          if (c.sec === 'uraian') {
+            q.type = 'uraian'; q.points = pt('uraian');
+            const rb = [ans, ...(rubMap[c.no] || [])].filter(Boolean).join('\\n'); if (rb) q.rubric = rb;
+            return [q, ''];
+          }
+          if (ans) { q.type = 'isian'; q.points = pt('isian'); q.accepted = ans.split(/\\s*\\|\\s*|\\s+\\/\\s+|\\s+atau\\s+/i).map((x) => x.trim()).filter(Boolean); return [q, '']; }
+          if (c.sec === 'isian') { q.type = 'isian'; q.points = pt('isian'); return [q, 'Kunci jawaban belum ada']; }
+          q.type = 'uraian'; q.points = pt('uraian'); return [q, ''];
         });
       }
 `;
@@ -4304,6 +4345,7 @@ ${DOC_PARSER_JS}
         } finally { clearTimeout(tm); }
         if (!r.ok) { alert('Gagal: ' + (j.error || r.status)); go.disabled = false; go.textContent = label; return; }
         alert(j.ok + ' soal tersimpan' + (cn ? ' di kategori "' + cn + '"' : ' di "Tanpa kategori"') + '.' + (j.fail && j.fail.length ? '\\n' + j.fail.length + ' gagal: ' + j.fail.slice(0, 5).map((x) => 'baris ' + x.row + ' (' + x.error + ')').join(', ') : ''));
+        up.close(); go.disabled = false; go.textContent = label;
         softReload();
       };
     </script>
