@@ -320,12 +320,17 @@ const DOC_PARSER_JS = `
           const runText = (r) => {
             const t = [...r.children].map((x) => x.localName === 't' ? x.textContent : x.localName === 'tab' ? '\\t' : '').join(''); if (!t.trim()) return t;
             const rp = all(r, 'rPr')[0], va = rp && all(rp, 'vertAlign')[0] ? at(all(rp, 'vertAlign')[0], 'val') : '';
+            // Teks berwarna / distabilo (cara umum guru menandai kunci di pilihan) diberi penanda khusus.
+            const col = rp && all(rp, 'color')[0], hl = rp && all(rp, 'highlight')[0], sh = rp && all(rp, 'shd')[0];
+            const cv = col ? (at(col, 'val') || '').toLowerCase() : '', hv = hl ? (at(hl, 'val') || '').toLowerCase() : '', sv = sh ? (at(sh, 'fill') || '').toLowerCase() : '';
+            const marked = (cv && !/^(auto|0{3}|0{6})$/.test(cv) && !(col && /^text1$|^tx1$/i.test(at(col, 'themeColor') || ''))) || (hv && hv !== 'none') || (sv && !/^(auto|f{6}|0{6})$/.test(sv));
             const lead = t.match(/^\\s*/)[0], tail = t.match(/\\s*$/)[0]; let x = t.trim();
             if (va === 'superscript') x = '^' + x + '^'; else if (va === 'subscript') x = '~' + x + '~';
             if (on(rp, 'strike')) x = '~~' + x + '~~';
             if (on(rp, 'u')) x = '__' + x + '__';
             if (on(rp, 'i')) x = '*' + x + '*';
             if (on(rp, 'b')) x = '**' + x + '**';
+            if (marked) x = '\\u0002' + x + '\\u0002';
             return lead + x + tail;
           };
           // Teks biasa (w:r) dan rumus Word (m:oMath) dibaca berurutan.
@@ -371,8 +376,24 @@ const DOC_PARSER_JS = `
         return out;
       }
       function parseLines(raw) {
-        let lines = raw.join('\\n').replace(/[\\r\\u200b\\ufeff]/g, '').split('\\n').map((l) => l.replace(/\\s+/g, ' ').trim()).filter(Boolean);
-        lastText = lines;
+        let lines = raw.join('\\n').replace(/[\\r\\u200b\\ufeff]/g, '').split('\\n').map((l) => l.replace(/\\s+/g, ' ').trim()).filter((l) => l.replace(/\\u0002/g, ''));
+        lastText = lines.map((l) => l.replace(/\\u0002/g, ''));
+        // Pilihan yang isinya seluruhnya berwarna/distabilo diberi tanda khusus di akhir baris; penanda lain dibuang.
+        lines = lines.map((l) => {
+          const m = l.match(/^((?:\\*\\*|__|\\*|~~|\\u0002)*\\s*\\(?[A-Ea-e]\\s*[.):]\\s*)/);
+          let full = false;
+          if (m && l.includes('\\u0002')) {
+            let inside = false, inC = 0, outC = 0;
+            for (let k = 0; k < l.length; k++) {
+              const ch = l[k];
+              if (ch === '\\u0002') { inside = !inside; continue; }
+              if (k < m[0].length || /[\\s*_~]/.test(ch)) continue;
+              if (inside) inC++; else outC++;
+            }
+            full = inC > 0 && outC === 0;
+          }
+          return l.replace(/\\u0002/g, '') + (full ? '\\u0003' : '');
+        });
         // Penanda format yang membungkus nomor/huruf/kunci ("**1.** …", "**A. Jakarta**", "**Jawaban: B**") digeser ke belakangnya.
         lines = lines.map((l) => {
           const m = l.match(/^((?:\\*\\*|__|\\*|~~)+)(\\s*(?:(?:no\\.?|nomor|soal)?\\s*\\d{1,3}|\\(?[A-Ea-e]|jawaban|kunci(?:\\s+jawaban)?)\\s*[.):\\-=]\\s*)/i);
@@ -405,14 +426,18 @@ const DOC_PARSER_JS = `
           for (const m of tail.matchAll(/(\\d+)\\s*[.)\\-:=]?\\s*([A-Ea-e](?:\\s*,\\s*[A-Ea-e])*|benar|salah)\\b/gi)) keyMap[+m[1]] = m[2];
         }
         const qs = []; let cur = null;
-        for (const l of lines) {
+        for (let l of lines) {
           let m;
+          const mk3 = l.endsWith('\\u0003'); l = l.replace(/\\u0003/g, '');
           if ((m = l.match(/^(?:no\\.?|nomor|soal)?\\s*(\\d{1,3})\\s*[.):\\-](?:\\s+(.*)|$)/i))) {
             m[2] = m[2] || '';
             cur = { no: +m[1], text: m[2], opts: [], ans: '' }; qs.push(cur); continue;
           }
           if (!cur) continue;
-          if ((m = l.match(/^\\(?([A-Ea-e])\\s*[.):]\\s+(.+)$/))) { cur.opts.push(m[2]); continue; }
+          if ((m = l.match(/^\\(?([A-Ea-e])\\s*[.):]\\s+(.+)$/))) {
+            // Pilihan berwarna/distabilo (2) atau seluruhnya tebal ("**Jakarta**", 1) dicatat sebagai calon kunci.
+            const t = m[2].trim(), bold = /^\\*\\*[^*]+\\*\\*$/.test(t);
+            cur.opts.push(bold ? t.slice(2, -2) : t); (cur.mk = cur.mk || []).push(mk3 ? 2 : bold ? 1 : 0); continue; }
           // Benar/Salah tabel: "Pernyataan ... (B)" atau "(Salah)".
           if ((m = l.match(/^[-•*]?\\s*(.+?)\\s*\\((B|S|Benar|Salah)\\)\\s*$/i))) { (cur.stmts = cur.stmts || []).push([m[1], /^b/i.test(m[2])]); continue; }
           // Menjodohkan: "Kiri -> Kanan" (juga =>, →).
@@ -422,7 +447,12 @@ const DOC_PARSER_JS = `
           if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text = (cur.text + ' ' + l).trim();
         }
         return qs.map((c, j) => {
-          const ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').replace(/[*_~^]/g, '').trim();
+          let ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').replace(/[*_~^]/g, '').trim();
+          // Tanpa baris "Jawaban:": pakai pilihan yang diberi warna/stabilo, atau yang dicetak tebal sendiri.
+          if (!ans && c.mk && c.opts.length >= 2) {
+            for (const lv of [2, 1]) { const hit = c.mk.map((v, k) => v === lv ? L[k] : '').filter(Boolean);
+              if (hit.length && hit.length < c.opts.length) { ans = hit.join(', '); break; } }
+          }
           const q = { row: j + 1, text: c.text.trim(), points: c.pts > 0 ? c.pts : 1 };
           if (c.stmts && c.stmts.length >= 2) { q.type = 'pgk_kategori'; q.statements = c.stmts.map((x) => x[0]); q.values = c.stmts.map((x) => x[1]); return [q, '']; }
           if (c.pairs && c.pairs.length >= 2) { q.type = 'menjodohkan'; q.left = c.pairs.map((x) => x[0]); q.right = c.pairs.map((x) => x[1]); return [q, '']; }
@@ -1566,11 +1596,24 @@ pages.get("/app/exams/new", async (c) => {
       </section>
 
       <section class="card wstep" data-s="3" hidden>
-        <h2>Pilih soal</h2>
-        <p class="muted" style="margin-top:-6px">Ketuk kartu untuk memakai semua soal di kategori itu. Bisa lebih dari satu.</p>
+        <h2>Masukkan soal</h2>
+        <div class="upbig">
+          <div class="upbig-t"><b>Punya soal di Word? Upload saja.</b><span>Semua soal di file langsung masuk ke ujian ini. Tidak perlu pilih satu per satu.</span></div>
+          <label class="btn primary">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}Upload file Word / PDF<input type="file" id="wDoc" accept=".docx,.pdf" hidden></label>
+          <details class="upfmt"><summary>Lihat contoh format</summary>
+            <pre class="sample">1. Ibu kota Indonesia adalah …
+A. Bandung
+B. Jakarta
+C. Surabaya
+Jawaban: B</pre>
+            <p class="muted" style="margin:6px 0 0">Kunci boleh ditulis "Jawaban: B", ditaruh di akhir file ("Kunci Jawaban 1. B 2. C …"), atau cukup <b>warnai / stabilo / tebalkan</b> pilihan yang benar. Soal tanpa pilihan jadi uraian.
+            <a href="/app/questions?upload=1" target="_blank" rel="noopener">Unduh contoh file Word</a></p>
+          </details>
+          <p id="wDocMsg" class="muted" style="margin:8px 0 0" hidden></p>
+        </div>
+        <p class="muted" style="margin:14px 0 6px">Atau pakai soal yang sudah ada di bank soal. Ketuk kartu untuk memakai semua soal di kategori itu.</p>
         <div class="folders" id="catCards"></div>
         <div class="wupl">
-          <label class="btn">${icon("M12 16V4M7 9l5-5 5 5M5 20h14")}Upload Word/PDF<input type="file" id="wDoc" accept=".docx,.pdf" hidden></label>
           <a class="btn ai" href="${AI_SOAL}" target="_blank" rel="noopener">${icon("m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16")}Buat soal dengan AI</a>
         </div>
         <p class="pickcount" id="qCount2"></p>
@@ -1645,7 +1688,13 @@ pages.get("/app/exams/new", async (c) => {
       .cls:has(input:checked) { border-color:var(--ink); background:color-mix(in srgb, var(--pencil) 14%, transparent); }
       .cls small { margin-left:auto; color:var(--mut); font-weight:400; }
       .wnav { justify-content:space-between; }
-      .wupl { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0 10px; }
+      .wupl { display:grid; grid-template-columns: 1fr; gap: 8px; margin: 4px 0 10px; }
+      .upbig { border: 2px dashed var(--brand); border-radius: 14px; padding: 16px; background: var(--soft); display:grid; gap: 10px; }
+      .upbig-t { display:grid; gap: 2px; } .upbig-t span { color: var(--mut); font-size: 14px; }
+      .upbig .btn.primary { justify-self: start; }
+      .upfmt summary { cursor: pointer; color: var(--brand); font-weight: 600; }
+      .upfmt .sample { margin: 8px 0 0; padding: 10px 12px; background: var(--surface); border-radius: 10px; border: 1px solid var(--line); font-size: 13px; white-space: pre-wrap; }
+      #wDocMsg:not([hidden]) { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
       .wupl .btn { min-height: 48px; gap: 8px; white-space: normal; line-height: 1.2; text-align: center; margin: 0; font-weight: 600; }
       .wupl svg { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
       .wupl .ai { background: linear-gradient(135deg, #A855F7, #EC4899); color: #fff; border-color: transparent; }
@@ -1723,7 +1772,9 @@ pages.get("/app/exams/new", async (c) => {
           const buf = await file.arrayBuffer();
           const lines = /\\.pdf$/i.test(file.name) ? await pdfLines(buf) : await docxLines(buf);
           const parsed = parseLines(lines); const good = parsed.filter(([, err]) => !err).map(([q]) => q);
-          if (!good.length) { toast('Tidak ada soal yang dikenali. Pastikan soal bernomor (1. 2. 3.) dan pilihan diawali A. B. C.', 'err'); return; }
+          if (!good.length) { const box = document.getElementById('wDocMsg'); box.hidden = false;
+            box.textContent = parsed.length ? 'Soal terbaca, tapi kuncinya belum ada. Tambahkan "Jawaban: B" di bawah tiap soal, atau warnai/tebalkan pilihan yang benar.' : 'Tidak ada soal yang dikenali. Pastikan soal bernomor (1. 2. 3.) dan pilihan diawali A. B. C. Lihat contoh format di atas.';
+            toast(box.textContent, 'err'); return; }
           const cat = (f.title.value.trim() || file.name.replace(/\\.[^.]+$/, '')).slice(0, 60);
           const r = await fetch('/api/questions/bulk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ questions: good.map((q) => ({ ...q, category_name: cat })) }) });
@@ -1732,7 +1783,10 @@ pages.get("/app/exams/new", async (c) => {
           const [qs, cats] = await Promise.all([fetch('/api/questions', { credentials: 'same-origin' }).then((x) => x.json()), fetch('/api/categories', { credentials: 'same-origin' }).then((x) => x.json())]);
           D.questions = qs.map((q) => ({ id: q.id, type: q.type, text: (q.content && q.content.text || '').slice(0, 140), points: q.points, category_id: q.category_id }));
           D.cats = cats; (j.ids || []).forEach((id) => pickedQ.add(id)); drawQ();
-          toast(j.ok + ' soal dari ' + file.name + ' masuk ke bank soal dan sudah dipilih.' + (parsed.length > good.length ? ' ' + (parsed.length - good.length) + ' soal dilewati (kunci belum ada).' : ''), 'ok');
+          const skip = parsed.filter(([, err]) => err).map(([q]) => q.row);
+          const msg = '✓ ' + j.ok + ' soal dari ' + file.name + ' sudah masuk ke ujian ini.' + (skip.length ? ' Soal nomor ' + skip.join(', ') + ' dilewati karena kuncinya belum ada: tambahkan "Jawaban: B" atau warnai pilihan yang benar, lalu upload lagi.' : '');
+          const box = document.getElementById('wDocMsg'); box.textContent = msg; box.hidden = false;
+          toast(j.ok + ' soal masuk ke ujian ini.' + (skip.length ? ' ' + skip.length + ' dilewati.' : ''), 'ok');
         } catch (x) { toast('Gagal membaca file: ' + x.message, 'err'); }
       });
       document.getElementById('acSw').addEventListener('change', (e) => { f.anticheat_level.value = e.target.checked ? 'warn' : 'log'; });
