@@ -308,7 +308,7 @@ const DOC_PARSER_JS = `
         const fmt = {};
         if (numX) {
           const abs = {};
-          all(numX, 'abstractNum').forEach((a) => { const m = {}; all(a, 'lvl').forEach((l) => { m[at(l, 'ilvl')] = at(all(l, 'numFmt')[0], 'val'); }); abs[at(a, 'abstractNumId')] = m; });
+          all(numX, 'abstractNum').forEach((a) => { const m = {}; all(a, 'lvl').forEach((l) => { m[at(l, 'ilvl')] = at(all(l, 'numFmt')[0], 'val'); m['t' + at(l, 'ilvl')] = at(all(l, 'lvlText')[0], 'val') || ''; }); abs[at(a, 'abstractNumId')] = m; });
           all(numX, 'num').forEach((n) => { fmt[at(n, 'numId')] = abs[at(all(n, 'abstractNumId')[0], 'val')] || {}; });
         }
         const styleNum = {};
@@ -351,7 +351,10 @@ const DOC_PARSER_JS = `
             const c = cnt[numId] = cnt[numId] || {}; c[ilvl] = (c[ilvl] || 0) + 1;
             Object.keys(c).forEach((k) => { if (+k > +ilvl) c[k] = 0; });
             const f = (fmt[numId] || {})[ilvl] || (ilvl === '0' ? 'decimal' : 'lowerLetter');
-            pre = /letter/i.test(f) || (ilvl !== '0' && /alpha|abjad/i.test(f)) ? L[(c[ilvl] - 1) % 6] + '. ' : f === 'bullet' || f === 'none' ? '' : c[ilvl] + '. ';
+            // Angka mengikuti bentuk di Word ("1.", "1)", "(1)"), supaya sub-daftar "1)" di dalam soal bisa dibedakan dari nomor soal "1.".
+            const lt = (fmt[numId] || {})['t' + ilvl] || '';
+            const own = lt.match(/^\\(?%\\d[.)]?$/) ? lt.replace(/%\\d/, String(c[ilvl])) : c[ilvl] + '.';
+            pre = /letter/i.test(f) || (ilvl !== '0' && /alpha|abjad/i.test(f)) ? L[(c[ilvl] - 1) % 6] + '. ' : f === 'bullet' || f === 'none' ? '' : own + ' ';
           }
           out.push(pre + text);
         }
@@ -461,9 +464,14 @@ const DOC_PARSER_JS = `
           const sc = secOf(l); if (sc) { sec = sc; cur = null; continue; }
           // Tempat jawaban siswa ("Jawab : ______", "........") bukan kunci dan bukan bagian soal.
           if (/^(?:jawab(?:an)?\\s*:?)?[\\s_.…\\-]*$/i.test(l)) continue;
-          if ((m = l.match(/^(?:no\\.?|nomor|soal)?\\s*(\\d{1,3})\\s*[.):\\-](?:\\s+(.*)|$)/i))) {
-            m[2] = m[2] || '';
-            cur = { no: +m[1], text: m[2], opts: [], ans: '', sec }; qs.push(cur); continue;
+          if ((m = l.match(/^(?:no\\.?|nomor|soal)?\\s*(\\(?)(\\d{1,3})\\s*([.):\\-])(?:\\s+(.*)|$)/i))) {
+            const no = +m[2], d = m[1] + m[3];
+            // Soal baru bila belum ada soal, atau pemisahnya sama dengan nomor soal sebelumnya dan nomornya melanjutkan.
+            // "1) Saima …" di dalam soal 40 ("40.") adalah daftar di dalam soal, bukan soal baru.
+            if (!cur || (d === cur.d && no > cur.no && no - cur.no <= 5)) {
+              cur = { no, d, text: m[4] || '', opts: [], ans: '', sec }; qs.push(cur); continue;
+            }
+            if (!cur.opts.length) { cur.text = (cur.text ? cur.text + '\\n' : '') + l; cur.list = true; continue; }
           }
           if (!cur) continue;
           if ((m = l.match(/^\\(?([A-Ea-e])\\s*[.):]\\s+(.+)$/))) {
@@ -476,7 +484,9 @@ const DOC_PARSER_JS = `
           if ((m = l.match(/^[-•*]?\\s*(.+?)\\s+(?:->|=>|→)\\s+(.+)$/))) { (cur.pairs = cur.pairs || []).push([m[1], m[2]]); continue; }
           if ((m = l.match(/^(?:poin|skor|bobot|nilai)\\s*[:=]\\s*(\\d+(?:[.,]\\d+)?)\\s*$/i))) { cur.pts = +m[1].replace(',', '.'); continue; }
           if ((m = l.match(/^(jawaban|kunci|jawab|jwb|ans)\\s*[:=]\\s*(.+)$/i))) { const a = m[2].replace(/[_.…]{3,}/g, '').trim(); if (a) cur.ans = a; continue; }
-          if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l; else cur.text = (cur.text + ' ' + l).trim();
+          // Sesudah daftar atau kalimat yang selesai, paragraf baru dimulai di baris baru.
+          if (cur.opts.length) cur.opts[cur.opts.length - 1] += ' ' + l;
+          else { const nl = cur.list || /[.!?:…]$/.test(cur.text); cur.text = cur.text ? cur.text + (nl ? '\\n' : ' ') + l : l; cur.list = false; }
         }
         return qs.map((c, j) => {
           let ans = (c.ans || keyMap[c.no] || keyMap[j + 1] || '').replace(/[*_~^]/g, '').trim();
@@ -3731,8 +3741,10 @@ pages.get("/app/questions", async (c) => {
           <p class="err" id="edWarn" hidden></p>
           <label>Tipe soal</label>
           <div class="seg" id="seg"></div>
-          <label for="eText">Pertanyaan</label>
+          <div class="qlab"><label for="eText">Pertanyaan</label>
+            <div class="fmtbar" role="toolbar" aria-label="Format teks"><button type="button" data-w="**" title="Tebal (Ctrl+B)"><b>B</b></button><button type="button" data-w="*" title="Miring (Ctrl+I)"><i>I</i></button><button type="button" data-w="__" title="Garis bawah (Ctrl+U)"><u>U</u></button></div></div>
           <textarea id="eText" dir="auto" rows="4" placeholder="Tulis pertanyaan. Rumus matematika ditulis di antara tanda $, mis. $\\frac{1}{2}$"></textarea>
+          <div class="qprev" id="eTextPrev" hidden><span>Tampilan untuk siswa:</span><div></div></div>
           <div class="imgrow">
             <label class="btn" style="margin:0">Tambah gambar<input type="file" id="eImg" accept="image/*" hidden></label>
             <img id="eImgPrev" alt="" hidden><button type="button" class="danger" id="eImgDel" hidden>Hapus gambar</button>
@@ -3850,6 +3862,11 @@ Jawaban: B
       .qc .othumb { display:block; max-width: 140px; max-height: 90px; margin-top: 4px; border-radius: 6px; border: 1px solid var(--line); background:#fff; }
       /* Arah teks editor ditentukan dari seluruh isi, bukan per baris: "1) رُسُلٌ" di soal berbahasa Indonesia tetap bernomor di kiri. */
       #eText, #eTextAfter { unicode-bidi: isolate; }
+      .qlab { display:flex; align-items:flex-end; justify-content:space-between; gap: 8px; }
+      .fmtbar { display:flex; gap: 4px; margin-bottom: 4px; }
+      .qprev { margin-top: 6px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: 10px; background: var(--surface); }
+      .qprev > span { display:block; font-size: 12px; color: var(--mut); margin-bottom: 2px; } .qprev > div { unicode-bidi: plaintext; }
+      .fmtbar button { min-height: 34px; min-width: 38px; padding: 0 10px; font-size: 15px; }
       .orow { display:grid; grid-template-columns: 40px 1fr 40px 40px; gap: 8px; align-items:center; margin: 8px 0; }
       .orow .oib { width: 40px; height: 40px; display:grid; place-items:center; border-radius: 10px; border: 1px solid var(--line); cursor:pointer; margin:0; background: var(--surface); color: var(--mut); }
       .orow .oiw { grid-column: 2 / -1; display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
@@ -4187,6 +4204,34 @@ Jawaban: B
           const w = inp.closest('.orow').querySelector('.oiw'); w.querySelector('.oip').src = d; w.hidden = false;
         } catch (x) { alert(x.message); }
       });
+      // Tombol B / I / U (dan Ctrl+B/I/U): bungkus teks terpilih dengan **tebal**, *miring*, __garis bawah__.
+      let lastTa = $('eText');
+      ['eText', 'eTextAfter'].forEach((id) => $(id).addEventListener('focus', (e) => { lastTa = e.target; }));
+      // Pratinjau muncul bila teks memakai format (tebal/miring/garis bawah, pangkat, pecahan, rumus).
+      function drawPrev() {
+        const v = $('eText').value, box = $('eTextPrev');
+        box.hidden = !/\\*|__|~|\\^|\\d\\/\\d|\\$/.test(v);
+        if (!box.hidden) { const d = box.querySelector('div'); d.innerHTML = fmtText(v); if (window.renderMathInElement) renderMathInElement(d, { delimiters: [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }], throwOnError: false }); }
+      }
+      $('eText').addEventListener('input', drawPrev);
+      function wrapSel(ta, w) {
+        const a = ta.selectionStart, z = ta.selectionEnd, v = ta.value, sel = v.slice(a, z);
+        // Sudah terbungkus -> lepas (tombol bisa dipakai bolak-balik).
+        if (sel && v.slice(a - w.length, a) === w && v.slice(z, z + w.length) === w && !(w === '*' && v.slice(a - 2, a) === '**')) {
+          ta.value = v.slice(0, a - w.length) + sel + v.slice(z + w.length); ta.setSelectionRange(a - w.length, z - w.length);
+        } else {
+          const lead = sel.match(/^\\s*/)[0], tail = sel.match(/\\s*$/)[0], core = sel.trim();
+          ta.value = v.slice(0, a) + lead + w + core + w + tail + v.slice(z);
+          const s0 = a + lead.length + w.length; ta.setSelectionRange(s0, s0 + core.length);
+        }
+        ta.focus(); ta.dispatchEvent(new Event('input'));
+      }
+      document.querySelector('.fmtbar').addEventListener('mousedown', (e) => e.preventDefault());
+      document.querySelector('.fmtbar').addEventListener('click', (e) => { const b = e.target.closest('[data-w]'); if (b) wrapSel(lastTa, b.dataset.w); });
+      ['eText', 'eTextAfter'].forEach((id) => $(id).addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey)) return; const k = e.key.toLowerCase(), w = { b: '**', i: '*', u: '__' }[k];
+        if (w) { e.preventDefault(); wrapSel(e.target, w); }
+      }));
       function showImg(src) { const p = $('eImgPrev'); p.hidden = !src; $('eImgDel').hidden = !src; if (src) p.src = src; $('eAfterBox').hidden = !src; }
       $('eImg').addEventListener('change', (e) => {
         const f = e.target.files[0]; e.target.value = ''; if (!f) return;
@@ -4206,7 +4251,7 @@ Jawaban: B
         $('edTitle').textContent = id ? 'Edit soal' : 'Tulis soal';
         $('edNext').hidden = !!id; $('edSave').disabled = false; $('edNext').disabled = false;
         seg(q.type); body(q.type, q.answer_key, q.content);
-        $('eText').value = q.content.text || ''; $('eTextAfter').value = q.content.text_after || ''; $('ePts').value = +q.points || 1;
+        $('eText').value = q.content.text || ''; drawPrev(); $('eTextAfter').value = q.content.text_after || ''; $('ePts').value = +q.points || 1;
         $('eCat').value = q.category_id && CAT[q.category_id] ? CAT[q.category_id] : (!id && catSel && CAT[catSel] ? CAT[catSel] : '');
         showImg(q.content.image || '');
         ed.showModal(); $('eText').focus();
@@ -4264,7 +4309,7 @@ Jawaban: B
           if (next) {
             // Kosongkan isi, pertahankan tipe, kategori, dan poin supaya guru langsung lanjut mengetik.
             addedN++; img = undefined; showImg('');
-            $('eText').value = ''; $('eTextAfter').value = '';
+            $('eText').value = ''; $('eTextAfter').value = ''; drawPrev();
             body(type, {}, {});
             $('edTitle').textContent = 'Tulis soal ke-' + (addedN + 1);
             btn.disabled = false; $('edNext').disabled = false;
