@@ -1019,9 +1019,9 @@ pages.get("/app/students", async (c) => {
     tx`select id, name, grade, year from classes order by year desc, grade nulls last, name`,
     tx`select s.id, s.name, s.username, s.gender, s.nisn, s.class_id, s.guardian_email
        from students s order by s.name limit 2000`,
-    tx`select name, logo_key is not null as has_logo from schools where id = ${sess.sid}`,
+    tx`select name, color, logo_key is not null as has_logo from schools where id = ${sess.sid}`,
   ]));
-  const SCH = (schoolRow as unknown as Array<{ name: string; has_logo: boolean }>)[0] ?? { name: "", has_logo: false };
+  const SCH = (schoolRow as unknown as Array<{ name: string; color: string | null; has_logo: boolean }>)[0] ?? { name: "", color: null, has_logo: false };
   type Cls = { id: string; name: string; grade: number | null; year: string };
   type Stu = { id: string; name: string; username: string; gender: "L" | "P" | null; nisn: string | null; class_id: string | null; guardian_email: string | null };
   const cl = classes as unknown as Cls[], st = students as unknown as Stu[];
@@ -1124,6 +1124,11 @@ pages.get("/app/students", async (c) => {
       <div class="sheet-body">
         <p class="err" id="credWarn" style="margin-top:4px">Simpan sekarang. PIN hanya tampil sekali ini.</p>
         <div id="credList"></div>
+        <fieldset class="kopt"><legend>Tampilan kartu cetak</legend>
+          <div class="kcol" role="radiogroup" aria-label="Warna kartu">${Object.entries(BRAND_COLORS).map(([k, v]) => `<label title="${v.label}"><input type="radio" name="kcol" value="${k}"><span style="background:${v.hex}"></span><small>${v.label}</small></label>`).join("")}</div>
+          <label class="kchk"><input type="checkbox" id="kQr" checked> QR untuk masuk <small>(pindai, username langsung terisi)</small></label>
+          <label class="kchk"><input type="checkbox" id="kFoto"> Kotak foto 3×4</label>
+        </fieldset>
       </div>
       <div class="sheet-foot"><button type="button" data-close>Tutup</button><span class="spacer"></span><button type="button" id="credDl"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Excel</button><button type="button" class="primary" id="credPrint"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M6 14h12v7H6z"/></svg>Cetak kartu</button></div>
     </dialog>
@@ -1131,6 +1136,16 @@ pages.get("/app/students", async (c) => {
 
     <style>
       .tip { background: var(--soft); border-color: transparent; box-shadow: none; font-size: 14.5px; }
+      .kopt { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 14px 0 0; display:grid; gap: 8px; }
+      .kopt legend { font-weight: 700; padding: 0 4px; }
+      .kcol { display:flex; flex-wrap:wrap; gap: 8px; }
+      .kcol label { display:flex; flex-direction:column; align-items:center; gap: 2px; cursor:pointer; margin:0; }
+      .kcol input { position:absolute; opacity:0; width:1px; height:1px; }
+      .kcol span { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--surface); box-shadow: 0 0 0 1px var(--line); }
+      .kcol input:checked + span { box-shadow: 0 0 0 2px var(--text); }
+      .kcol input:focus-visible + span { outline: 2px solid var(--brand); outline-offset: 2px; }
+      .kcol small { font-size: 11px; color: var(--mut); }
+      .kchk { display:flex; align-items:center; gap: 8px; margin:0; font-weight: 500; } .kchk small { color: var(--mut); }
       .cred { width: 100%; font-size: 14px; } .cred td, .cred th { padding: 8px 6px; } .cred td.pin { font: 700 15px ui-monospace, Menlo, monospace; letter-spacing: .08em; } .cred .btn.wa { min-height: 34px; padding: 4px 10px; font-size: 13px; background: #16A34A; border-color: #16A34A; color: #fff; }
       main a.folder { text-decoration: none; }
     </style>
@@ -1178,18 +1193,44 @@ pages.get("/app/students", async (c) => {
         $('#dCred').showModal();
       }
       $('#dCred').addEventListener('close', () => softReload());
-      // Kartu login siap cetak: 2 kolom di kertas A4, potong lalu bagikan.
+      // Kartu login siap cetak: 2 kolom × 5 baris di A4. Warna, QR, dan kotak foto bisa diatur (diingat di browser ini).
+      const HEXK = ${JSON.stringify(Object.fromEntries(Object.entries(BRAND_COLORS).map(([k, v]) => [k, v.hex])))};
+      const SCHK = ${JSON.stringify(SCH).replace(/</g, "\\u003c")};
+      const kopt = (() => { try { return JSON.parse(localStorage.getItem('kartu') || '{}'); } catch (_) { return {}; } })();
+      { const col = HEXK[kopt.col] ? kopt.col : (HEXK[SCHK.color] ? SCHK.color : 'biru');
+        const r = document.querySelector('input[name=kcol][value="' + col + '"]'); if (r) r.checked = true;
+        if (kopt.qr === false) $('#kQr').checked = false; if (kopt.foto) $('#kFoto').checked = true; }
       $('#credPrint').addEventListener('click', () => {
+        const col = (document.querySelector('input[name=kcol]:checked') || {}).value || 'biru', qr = $('#kQr').checked, foto = $('#kFoto').checked;
+        try { localStorage.setItem('kartu', JSON.stringify({ col, qr, foto })); } catch (_) {}
         const w = window.open('', '_blank'); if (!w) return toast('Izinkan pop-up untuk mencetak.', 'err');
-        const SCH = ${JSON.stringify(SCH).replace(/</g, "\\u003c")};
-        const mark = SCH.has_logo ? '<img src="' + location.origin + '/logo" alt="">' : ${JSON.stringify(LOGO_MARK)};
-        const card = (c) => '<div class="k"><div class="h">' + mark + '<span class="sc"><b>' + esc(SCH.name || 'CBT Yuk') + '</b><small>Kartu login ujian' + (c.class ? ' · ' + esc(c.class) : '') + '</small></span></div><p class="n">' + esc(c.name) + '</p>' +
-          '<table><tr><td>Username</td><td><b>' + esc(c.username) + '</b></td></tr><tr><td>PIN</td><td><b>' + esc(c.pin) + '</b></td></tr></table><p class="u">Masuk di ' + esc(location.host) + '/s/login</p></div>';
+        const C = HEXK[col] || '#2563EB';
+        const mark = SCHK.has_logo ? '<img src="' + location.origin + '/logo" alt="">' : ${JSON.stringify(LOGO_MARK)};
+        const url = (c) => location.origin + '/s/login?u=' + encodeURIComponent(c.username);
+        const card = (c, i) => '<div class="k">' +
+          '<div class="h"><span class="lg">' + mark + '</span><span class="sc"><b>' + esc(SCHK.name || 'CBT Yuk') + '</b><small>KARTU LOGIN UJIAN</small></span>' + (c.class ? '<span class="cl">' + esc(c.class) + '</span>' : '') + '</div>' +
+          '<div class="b">' + (foto ? '<div class="ft">Foto<br>3×4</div>' : '') +
+          '<div class="id"><p class="n">' + esc(c.name) + '</p>' +
+          '<div class="f"><span>Username</span><b' + (c.username.length > 11 ? ' class="sm"' : '') + '>' + esc(c.username) + '</b></div><div class="f"><span>PIN</span><b>' + esc(c.pin) + '</b></div></div>' +
+          (qr ? '<div class="qr" data-u="' + esc(url(c)) + '"></div>' : '') + '</div>' +
+          '<p class="u">' + (qr ? 'Pindai QR atau buka ' : 'Masuk di ') + '<b>' + esc(location.host) + '/s/login</b> · Jangan berikan PIN ke orang lain.</p></div>';
         w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Kartu login siswa</title><style>' +
-          'body{font-family:system-ui,sans-serif;margin:12mm}.g{display:grid;grid-template-columns:1fr 1fr;gap:6mm}' +
-          '.k{border:1.5px dashed #94A3B8;border-radius:10px;padding:10px 14px;break-inside:avoid}.h{display:flex;align-items:center;gap:10px;border-bottom:1px solid #E2E8F0;padding-bottom:6px}.h img,.h svg{width:36px;height:36px;object-fit:contain;flex:0 0 auto}.h svg{--brand:#2563EB}.sc{display:flex;flex-direction:column;font-size:13px;line-height:1.3}.sc b{color:#0F172A}.sc small{color:#64748B}' +
-          '.n{font-size:16px;font-weight:700;margin:6px 0}table{font-size:14px;border-collapse:collapse}td{padding:2px 12px 2px 0}td b{font-family:ui-monospace,monospace;font-size:16px;letter-spacing:.05em}.u{font-size:11px;color:#64748B;margin:6px 0 0}' +
-          '</style></head><body><div class="g">' + creds.map(card).join('') + '</div><script>onload=()=>print()<\\/script></body></html>');
+          '@page{size:A4;margin:10mm}*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+          'body{font-family:system-ui,"Segoe UI",Roboto,sans-serif;margin:0;color:#0F172A}.g{display:grid;grid-template-columns:1fr 1fr;gap:5mm}' +
+          '.k{--c:' + C + ';height:52mm;border:1px solid color-mix(in srgb,var(--c) 35%,#CBD5E1);border-radius:3mm;overflow:hidden;break-inside:avoid;display:flex;flex-direction:column;background:#fff}' +
+          '.h{background:var(--c);color:#fff;display:flex;align-items:center;gap:2.5mm;padding:2mm 3mm;min-height:12mm}' +
+          '.lg{width:8.5mm;height:8.5mm;border-radius:50%;background:#fff;display:grid;place-items:center;flex:0 0 auto;overflow:hidden}.lg img,.lg svg{width:7mm;height:7mm;object-fit:contain}.lg svg{--brand:var(--c)}' +
+          '.sc{display:flex;flex-direction:column;line-height:1.15;min-width:0;flex:1}.sc b{font-size:11pt;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sc small{font-size:6.5pt;letter-spacing:.12em;opacity:.9}' +
+          '.cl{background:#fff;color:var(--c);font-weight:700;font-size:8pt;padding:.8mm 2.2mm;border-radius:99px;white-space:nowrap}' +
+          '.b{flex:1;display:flex;gap:3mm;padding:2.5mm 3mm 1mm;align-items:center;min-height:0}' +
+          '.ft{width:17mm;height:22mm;border:1px dashed #94A3B8;border-radius:1.5mm;display:grid;place-items:center;text-align:center;font-size:7pt;color:#94A3B8;flex:0 0 auto}' +
+          '.id{flex:1;min-width:0;display:flex;flex-direction:column;gap:1.2mm}.n{font-size:10.5pt;font-weight:800;margin:0 0 .5mm;line-height:1.2;text-transform:uppercase;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}' +
+          '.f{display:flex;align-items:baseline;gap:2mm;background:color-mix(in srgb,var(--c) 8%,#fff);border-left:1mm solid var(--c);border-radius:1mm;padding:.8mm 2mm}.f span{font-size:7pt;color:#64748B;width:13mm;flex:0 0 auto}.f b{font-family:ui-monospace,Consolas,monospace;font-size:11.5pt;letter-spacing:.06em}.f b{white-space:nowrap}.f b.sm{font-size:8.5pt;letter-spacing:0}' +
+          '.qr{width:21mm;height:21mm;flex:0 0 auto}.qr img{width:100%;height:100%;image-rendering:pixelated;display:block}' +
+          '.u{font-size:6.5pt;color:#64748B;margin:0;padding:1mm 3mm 1.8mm;border-top:1px solid #EEF2F7}.u b{color:var(--c)}' +
+          '</style></head><body><div class="g">' + creds.map(card).join('') + '</div>' +
+          (qr ? '<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"><\\/script>' : '') +
+          '<script>onload=()=>{try{if(window.qrcode)document.querySelectorAll(".qr").forEach(function(d){var q=qrcode(0,"M");q.addData(d.dataset.u);q.make();d.innerHTML=q.createImgTag(4,0);});else document.querySelectorAll(".qr").forEach(function(d){d.remove();});}catch(e){}setTimeout(function(){print();},300);}<\\/script></body></html>');
         w.document.close();
       });
       document.getElementById('btnCards')?.addEventListener('click', async (e) => {

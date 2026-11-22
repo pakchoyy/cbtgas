@@ -642,6 +642,9 @@ student.get("/s/login", (c) => c.html(page("Masuk siswa", `
     </div>
   </div>
   <script>
+    // QR di kartu login membuka /s/login?u=<username>: username terisi, siswa tinggal mengetik PIN.
+    { const u = new URLSearchParams(location.search).get('u');
+      if (u && /^[\\w.\\-@]{1,64}$/.test(u)) { document.getElementById('u').value = u; document.getElementById('p').focus(); } }
     document.getElementById('f').addEventListener('submit', async (e) => {
       e.preventDefault();
       const err = document.getElementById('err'); err.hidden = true;
