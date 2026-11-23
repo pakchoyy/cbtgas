@@ -434,3 +434,19 @@ test("pratinjau gambar bank soal & alinea menjorok tersimpan", async () => {
   const page = await (await w.call("/app/questions", { cookie })).text();
   assert.match(page, /"has_image":true/); assert.match(page, /"has_opt_img":true/);
 });
+
+test("reset PIN per siswa: hanya siswa terpilih yang berubah; siswa sekolah lain tidak tersentuh", async () => {
+  const w = await boot();
+  await w.open`insert into students (id,school_id,class_id,name,username,pin_hash) values ('st2',${SID},'cl','Siswa Dua','siswa2',${await hashPin("222222")})`;
+  await w.open`insert into schools (id,code,name,level,operator_name,operator_phone) values ('bbbbbbbb-0000-4000-8000-000000000002','sek-b','Sekolah B','SD','Op','081')`;
+  await w.open`insert into students (id,school_id,name,username,pin_hash) values ('stB','bbbbbbbb-0000-4000-8000-000000000002','Siswa B','siswab',${await hashPin("333333")})`;
+  const cookie = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const before = Object.fromEntries((await w.open`select id, pin_hash from students`).map((r: any) => [r.id, r.pin_hash]));
+  const j = await jsonOf(await w.call("/api/students/reset-pins", { ...json({ ids: ["st", "stB"] }), cookie }));
+  assert.equal(j.count, 1); assert.equal(j.students[0].id, "st"); assert.match(j.students[0].pin, /^\d{6}$/);
+  const after = Object.fromEntries((await w.open`select id, pin_hash from students`).map((r: any) => [r.id, r.pin_hash]));
+  assert.notEqual(after.st, before.st); assert.equal(after.st2, before.st2); assert.equal(after.stB, before.stB);
+  const lg = await w.call("/s/login", json({ username: "siswa1", pin: j.students[0].pin })); assert.equal(lg.status, 200);
+  assert.equal((await w.call("/s/login", json({ username: "siswa2", pin: "222222" }))).status, 200);
+  assert.equal((await w.call("/api/students/reset-pins", { ...json({ ids: [] }), cookie })).status, 400);
+});

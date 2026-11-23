@@ -975,6 +975,30 @@ api.post("/api/students/:id/send-report", async (c) => {
 
 // Reset PIN semua siswa aktif di satu kelas. Admin menerima daftar
 // {username, pin} satu kali untuk dibagikan.
+// PIN baru hanya untuk siswa yang dipilih (mis. 1 siswa yang lupa PIN / kartunya hilang); siswa lain tidak terganggu.
+api.post("/api/students/reset-pins", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "Pengawas tidak boleh mengganti PIN." }, 403);
+  const body = await c.req.json().catch(() => null) as null | { ids?: unknown[] };
+  const ids = [...new Set((body?.ids ?? []).filter((x): x is string => typeof x === "string" && /^[\w-]{1,64}$/.test(x)))].slice(0, 45);
+  if (!ids.length) return c.json({ error: "Pilih minimal 1 siswa." }, 400);
+  const sql = connectDb(c.env);
+  const result = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const out: Array<{ id: string; username: string; name: string; pin: string }> = [];
+    for (const id of ids) {
+      const row = (await tx`select id, username, name from students where id = ${id}`)[0] as undefined | { id: string; username: string; name: string };
+      if (!row) continue; // bukan siswa sekolah ini / sudah dihapus
+      const buf = new Uint8Array(4); crypto.getRandomValues(buf);
+      const pin = String((((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]) >>> 0) % 1_000_000).padStart(6, "0");
+      await tx`update students set pin_hash = ${await hashPin(pin)}, pin_failed_count = 0, locked_until = null where id = ${row.id}`;
+      out.push({ id: row.id, username: row.username, name: row.name, pin });
+    }
+    await audit(tx, actorFromSession(s), "student.reset_pins", "student", ids.length === 1 ? ids[0] : null, { count: out.length });
+    return out;
+  });
+  return c.json({ ok: true, count: result.length, students: result });
+});
+
 api.post("/api/classes/:id/reset-pins", async (c) => {
   const s = getSess(c);
   if (s.role === "proctor") return c.json({ error: "Pengawas tidak boleh mengganti PIN." }, 403);

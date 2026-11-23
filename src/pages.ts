@@ -1116,8 +1116,18 @@ pages.get("/app/students", async (c) => {
         <label>PIN baru <span class="muted">(kosongkan jika tidak diganti)</span></label><input name="pin" inputmode="numeric" pattern="\\d{4,8}">
         <p class="err" id="erredit" hidden></p>
       </div>
-      <div class="sheet-foot"><button type="button" id="sendReport">Kirim rapor</button><span class="spacer"></span><button class="primary" type="submit">Simpan</button></div>
+      <div class="sheet-foot"><button type="button" id="sendReport">Kirim rapor</button><button type="button" id="onePin" title="Buat PIN baru untuk siswa ini saja, lalu cetak kartunya">Reset PIN &amp; kartu</button><span class="spacer"></span><button class="primary" type="submit">Simpan</button></div>
     </form></dialog>
+
+    <dialog id="dPick" class="sheet" aria-labelledby="dPickT">
+      <div class="sheet-head"><h2 id="dPickT">Cetak kartu login</h2><button type="button" class="x" data-close aria-label="Tutup">✕</button></div>
+      <div class="sheet-body">
+        <p class="muted" style="margin-top:0">Pilih siswa yang dicetak kartunya. <b>PIN siswa terpilih diganti baru</b>; siswa lain tetap memakai PIN lamanya.</p>
+        <div class="row" style="margin:6px 0"><button type="button" id="pkAll">Pilih semua</button><button type="button" id="pkNone">Kosongkan</button><span class="muted" id="pkN" style="margin-left:auto"></span></div>
+        <div id="pkList" class="pklist"></div>
+      </div>
+      <div class="sheet-foot"><button type="button" data-close>Batal</button><span class="spacer"></span><button type="button" class="primary" id="pkGo" disabled>Ganti PIN &amp; cetak</button></div>
+    </dialog>
 
     <dialog id="dCred" class="sheet" aria-labelledby="dCredT">
       <div class="sheet-head"><h2 id="dCredT">Akun login siswa</h2><button type="button" class="x" data-close aria-label="Tutup">✕</button></div>
@@ -1136,6 +1146,10 @@ pages.get("/app/students", async (c) => {
 
     <style>
       .tip { background: var(--soft); border-color: transparent; box-shadow: none; font-size: 14.5px; }
+      .pklist { display:grid; gap: 2px; max-height: 55vh; overflow:auto; border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
+      .pk { display:flex; align-items:center; gap: 10px; margin:0; padding: 10px 10px; border-radius: 8px; cursor:pointer; font-weight: 500; min-height: 44px; }
+      .pk:hover { background: var(--soft); } .pk span { flex:1; } .pk small { color: var(--mut); font-family: ui-monospace, monospace; }
+      .pk input { width: 20px; height: 20px; }
       .kopt { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 14px 0 0; display:grid; gap: 8px; }
       .kopt legend { font-weight: 700; padding: 0 4px; }
       .kcol { display:flex; flex-wrap:wrap; gap: 8px; }
@@ -1233,14 +1247,34 @@ pages.get("/app/students", async (c) => {
           '<script>onload=()=>{try{if(window.qrcode)document.querySelectorAll(".qr").forEach(function(d){var q=qrcode(0,"M");q.addData(d.dataset.u);q.make();d.innerHTML=q.createImgTag(4,0);});else document.querySelectorAll(".qr").forEach(function(d){d.remove();});}catch(e){}setTimeout(function(){print();},300);}<\\/script></body></html>');
         w.document.close();
       });
-      document.getElementById('btnCards')?.addEventListener('click', async (e) => {
-        const id = e.currentTarget.dataset.cls;
-        if (!(await ask('Cetak kartu login untuk kelas ini? PIN semua siswa di kelas ini akan diganti dengan PIN baru.', 'Ganti PIN & cetak'))) return;
-        const r = await fetch('/api/classes/' + id + '/reset-pins', { method: 'POST', credentials: 'same-origin' });
+      // PIN disimpan teracak (tak bisa dibaca ulang), jadi kartu selalu memakai PIN baru: hanya untuk siswa yang dipilih.
+      async function resetAndShow(ids, cn) {
+        const r = await fetch('/api/students/reset-pins', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) return toast(j.error || 'Gagal membuat PIN baru.', 'err');
-        const cn = document.querySelector('.clhead h1').textContent;
-        showCreds(j.students.map((x) => ({ ...x, class: cn })));
+        if (!r.ok) { toast(j.error || 'Gagal membuat PIN baru.', 'err'); return false; }
+        showCreds(j.students.map((x) => ({ ...x, class: cn }))); return true;
+      }
+      const pkCount = () => { const n = $('#pkList').querySelectorAll('input:checked').length; $('#pkN').textContent = n + ' dipilih'; $('#pkGo').disabled = !n; $('#pkGo').textContent = n ? 'Ganti PIN & cetak (' + n + ')' : 'Ganti PIN & cetak'; };
+      document.getElementById('btnCards')?.addEventListener('click', () => {
+        const seen = new Set(), list = [...document.querySelectorAll('[data-edit-student]')].map((b) => JSON.parse(b.getAttribute('data-edit-student'))).filter((s) => !seen.has(s.id) && seen.add(s.id));
+        $('#pkList').innerHTML = list.map((s) => '<label class="pk"><input type="checkbox" value="' + esc(s.id) + '"><span>' + esc(s.name) + '</span><small>' + esc(s.username || '') + '</small></label>').join('') || '<p class="muted">Belum ada siswa di kelas ini.</p>';
+        pkCount(); $('#dPick').showModal();
+      });
+      $('#pkList').addEventListener('change', pkCount);
+      $('#pkAll').onclick = () => { $('#pkList').querySelectorAll('input').forEach((i) => i.checked = true); pkCount(); };
+      $('#pkNone').onclick = () => { $('#pkList').querySelectorAll('input').forEach((i) => i.checked = false); pkCount(); };
+      $('#pkGo').onclick = async () => {
+        const ids = [...$('#pkList').querySelectorAll('input:checked')].map((i) => i.value);
+        if (ids.length > 45) return toast('Maksimal 45 siswa sekali cetak. Cetak dalam beberapa kali.', 'err');
+        $('#pkGo').disabled = true;
+        const cn = (document.querySelector('.clhead h1') || {}).textContent || '';
+        if (await resetAndShow(ids, cn)) $('#dPick').close(); else pkCount();
+      };
+      $('#onePin').addEventListener('click', async () => {
+        const name = fedit.name.value;
+        if (!(await ask('Buat PIN baru untuk ' + name + ' saja? PIN lamanya tidak berlaku lagi. Siswa lain tidak berubah.', 'Ganti PIN'))) return;
+        const cn = fedit.class_id.selectedOptions[0] && fedit.class_id.value ? fedit.class_id.selectedOptions[0].textContent : '';
+        if (await resetAndShow([fedit.sid.value], cn)) $('#dlg').close();
       });
       $('#credDl').addEventListener('click', async () => {
         const X = await loadXlsx();
