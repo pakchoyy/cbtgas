@@ -1686,7 +1686,7 @@ pages.get("/app/exams/new", async (c) => {
       tx`select c.id, c.name, c.year, (select count(*) from students s where s.class_id = c.id and s.active)::int as n
                         from classes c order by c.year desc, c.name`,
       tx`select q.id, q.type, substring(q.content->>'text', 1, 140) as text, q.points, q.category_id
-                       from questions q order by q.created_at desc limit 500`,
+                       from questions q order by q.created_at desc limit 5000`,
       tx`select id, name from categories order by name`,
       tx`select id, title from exam_groups order by title`,
     ]);
@@ -2017,7 +2017,7 @@ pages.get("/app/exams/:id", async (c) => {
     const ex = await tx`select id, title, kind, duration_minutes, status, starts_at, ends_at, shuffle_questions, shuffle_options, anticheat_level, lock_after_violations, use_token, show_score from exams where id = ${examId}`;
     if (ex.length === 0) return null;
     const [bank, picked, classes, pickedClasses, scores, summary, needsManual] = await Promise.all([
-      tx`select id, content from questions order by created_at desc limit 500`,
+      tx`select id, content - 'image' - 'audio' - 'option_images' - 'html' as content from questions order by created_at desc limit 5000`,
       tx`select question_id from exam_questions where exam_id = ${examId}`,
       tx`select id, name from classes order by year desc, name`,
       tx`select class_id from exam_classes where exam_id = ${examId}`,
@@ -3755,7 +3755,7 @@ pages.get("/app/questions", async (c) => {
                     q.content ? 'image' as has_image, q.content ? 'option_images' as has_opt_img,
                     q.points, q.category_id, k.answer_key
              from questions q left join question_keys k on k.question_id = q.id
-             order by q.created_at desc limit 1000`,
+             order by q.created_at desc limit 5000`,
     tx`select id, name from categories order by name`,
   ]));
   const data = JSON.stringify({ qs, cats, canDelete: sess.role !== "proctor" }).replace(/</g, "\\u003c");

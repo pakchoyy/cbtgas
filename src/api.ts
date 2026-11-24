@@ -522,10 +522,10 @@ api.get("/api/questions", async (c) => {
       ? tx`select q.id, q.type, q.content - 'image' - 'audio' - 'option_images' as content, q.points, q.category_id, k.answer_key, k.rubric
            from questions q left join question_keys k on k.question_id = q.id
            where q.category_id = ${cat}
-           order by q.created_at desc limit 500`
+           order by q.created_at desc limit 5000`
       : tx`select q.id, q.type, q.content - 'image' - 'audio' - 'option_images' as content, q.points, q.category_id, k.answer_key, k.rubric
            from questions q left join question_keys k on k.question_id = q.id
-           order by q.created_at desc limit 500`,
+           order by q.created_at desc limit 5000`,
   );
   return c.json(rows);
 });
