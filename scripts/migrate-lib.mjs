@@ -69,11 +69,12 @@ const KEYS = { question_keys: ["question_id"], answers: ["session_id", "question
 const keyOf = (table) => (table.cols.some((c) => c.name === "id") ? ["id"] : KEYS[table.name] ?? null);
 
 export function insertSql(table, rows) {
-  const cols = table.cols;
-  const names = cols.map((c) => c.name).join(", ");
   const key = keyOf(table);
   const stmts = [];
   for (const r of rows) {
+    // Kolom yang tidak ada di sumber (kolom baru D1, mis. answered_count) dilewati -> nilai bawaan skema dipakai.
+    const cols = table.cols.filter((c) => r[c.name] !== undefined);
+    const names = cols.map((c) => c.name).join(", ");
     const rest = [];
     const where = () => key.map((k) => `${k} = ${q(r[k])}`).join(" AND ");
     const vals = cols.map((c) => {

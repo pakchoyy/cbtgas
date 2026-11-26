@@ -477,3 +477,17 @@ test("beban sekolah: 30 siswa login dari 1 IP lolos; tebak PIN per username diba
   await w.call(`/s/take/${sid}/ping`, { method: "POST", cookie });
   assert.equal((await w.open`select last_seen_at from exam_sessions where id = ${sid}`)[0].last_seen_at, t1, "ping kedua dalam 55 dtk tidak menulis");
 });
+
+test("pantau langsung: jumlah terjawab dari answered_count, hanya siswa kelas peserta", async () => {
+  const w = await boot();
+  await w.open`insert into classes (id,school_id,name,grade,year) values ('cl2',${SID},'XI-2',11,'2026')`;
+  await w.open`insert into students (id,school_id,class_id,name,username,pin_hash) values ('luar',${SID},'cl2','Bukan Peserta','luar1','x')`;
+  const lg = await w.call("/s/login", json({ username: "siswa1", pin: "123456" })); const cookie = w.cookieOf(lg);
+  const sid = (await w.call("/s/exams/E/start", { method: "POST", cookie, headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" })).headers.get("location")!.split("/").pop()!;
+  await w.call(`/s/take/${sid}/answers`, { ...json({ answers: [{ question_id: "q1", index: 1 }, { question_id: "q2", text: "x" }] }), cookie });
+  await w.call(`/s/take/${sid}/answers`, { ...json({ answers: [{ question_id: "q1", index: 0 }] }), cookie }); // ubah jawaban: tetap 2
+  await w.call(`/s/take/${sid}/flag`, { ...json({ question_id: "q3", flagged: true }), cookie }); // ragu-ragu tanpa jawaban: tidak dihitung
+  const staff = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const live = await jsonOf(await w.call("/api/exams/E/live", { cookie: staff }));
+  assert.deepEqual(live.rows.map((r: any) => [r.username, r.answered, r.total]), [["siswa1", 2, 3]]);
+});

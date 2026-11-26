@@ -220,6 +220,7 @@ CREATE TABLE exam_sessions (
   unlock_tries integer NOT NULL DEFAULT 0,
   lock_count integer NOT NULL DEFAULT 0,
   question_order text CHECK (question_order IS NULL OR json_valid(question_order)),
+  answered_count integer NOT NULL DEFAULT 0,  -- jumlah soal berjawaban; dibaca layar pantau tanpa menghitung ulang answers
   UNIQUE (exam_id, student_id)
 );
 
@@ -309,6 +310,7 @@ CREATE INDEX exams_school_status     ON exams (school_id, status, starts_at);
 CREATE INDEX exams_group             ON exams (group_id, group_position);
 CREATE INDEX exam_sessions_exam      ON exam_sessions (exam_id, status);
 CREATE INDEX exam_sessions_student   ON exam_sessions (student_id);
+CREATE INDEX exam_sessions_due       ON exam_sessions (school_id, status, deadline_at);  -- catchUp: sesi aktif yang lewat waktu
 CREATE INDEX answers_school_session  ON answers (school_id, session_id);
 CREATE INDEX violations_session      ON violations (session_id);
 CREATE INDEX scores_exam             ON scores (exam_id);

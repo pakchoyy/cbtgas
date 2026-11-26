@@ -1846,15 +1846,14 @@ api.get("/api/exams/:id/live", async (c) => {
     tx`select st.id as student_id, st.name as student_name, st.username, c.name as class_name,
               es.id as session_id, coalesce(es.status, 'none') as status, es.started_at, es.finished_at, es.last_seen_at,
               es.deadline_at, es.violation_count, case when es.status = 'locked' then es.unlock_code end as unlock_code,
-              sc.final_score,
-              cast((select count(*) from answers a where a.session_id = es.id) as integer) as answered,
+              sc.final_score, coalesce(es.answered_count, 0) as answered,
               es.question_order
-       from students st
-       join exam_classes ec on ec.class_id = st.class_id and ec.exam_id = ${id}
+       from exam_classes ec
+       cross join students st
        left join classes c on c.id = st.class_id
        left join exam_sessions es on es.exam_id = ${id} and es.student_id = st.id
        left join scores sc on sc.session_id = es.id
-       where st.active
+       where ec.exam_id = ${id} and st.class_id = ec.class_id and st.active
        order by c.name, st.name`,
   ]));
   const e = ex[0] as { title: string; use_token: boolean; lock_after_violations: number | null } | undefined;

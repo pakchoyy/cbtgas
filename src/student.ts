@@ -1746,7 +1746,10 @@ async function saveAnswers(c: Context<{ Bindings: Bindings }>, list: AnswerIn[])
       const rows = items.map(([qid, ans]) => ({ session_id: sessionId, question_id: qid, school_id: stu.sid, answer: ans, updated_at: at }));
       await atomic(tx, [(q) => q`insert into answers ${q(rows, "session_id", "question_id", "school_id", "answer", "updated_at")}
         on conflict (session_id, question_id)
-        do update set answer = json_patch(coalesce(answers.answer, '{}'), excluded.answer), updated_at = excluded.updated_at`]);
+        do update set answer = json_patch(coalesce(answers.answer, '{}'), excluded.answer), updated_at = excluded.updated_at`,
+        // Jumlah soal berjawaban untuk layar pantau (dihitung sekali di sini, bukan tiap 8 detik per guru yang memantau).
+        (q) => q`update exam_sessions set answered_count = (select count(*) from answers a where a.session_id = ${sessionId} and a.answer is not null)
+                 where id = ${sessionId}`]);
       return items.length;
     }
     for (const [qid, ans] of items) {
@@ -1755,6 +1758,8 @@ async function saveAnswers(c: Context<{ Bindings: Bindings }>, list: AnswerIn[])
          on conflict (session_id, question_id)
          do update set answer = coalesce(answers.answer, '{}'::jsonb) || ${ans as unknown as string}, updated_at = now()`;
     }
+    await tx`update exam_sessions set answered_count = (select count(*) from answers a where a.session_id = ${sessionId} and a.answer is not null)
+             where id = ${sessionId}`;
     return items.length;
   });
   return c.json({ ok: true, saved });
