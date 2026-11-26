@@ -660,10 +660,14 @@ student.get("/s/login", (c) => c.html(page("Masuk siswa", `
 `)));
 
 student.post("/s/login", async (c) => {
-  const rl = await checkOrLimit(c.env, c.req.raw.headers, "s_login", 10);
+  // Satu sekolah/lab biasanya keluar lewat SATU IP publik: 30–300 siswa login bersamaan harus lolos.
+  // Batas ketat ada per username (tebak PIN), ditambah kunci akun 15 menit setelah 5 PIN salah.
+  const rl = await checkOrLimit(c.env, c.req.raw.headers, "s_login", 300);
   if (rl) return rl;
   const body = await c.req.json().catch(() => null) as null | { username: string; pin: string };
   if (!body?.username || !body?.pin) return c.json({ error: "Isi username dan PIN." }, 400);
+  const rlu = await checkOrLimit(c.env, c.req.raw.headers, "s_login_u", 10, "u:" + String(body.username).trim().toLowerCase().slice(0, 64));
+  if (rlu) return rlu;
 
   // Tanpa kode sekolah: cari username di semua sekolah aktif, cocokkan PIN.
   const sql = connectDb(c.env);
@@ -690,7 +694,8 @@ student.post("/s/login", async (c) => {
     return c.json({ error: "Username atau PIN salah." }, 401);
   }
   const sid = u.school_id, uid = u.id;
-  await withTenant(sql, { schoolId: sid, role: "student", userId: uid }, (tx) =>
+  // Tulis hanya bila ada hitungan gagal / kunci yang perlu dibersihkan (hemat kuota tulis D1).
+  if (u.pin_failed_count || u.locked_until) await withTenant(sql, { schoolId: sid, role: "student", userId: uid }, (tx) =>
     tx`update students set pin_failed_count = 0, locked_until = null where id = ${uid}`);
 
   const session: StudentSession = {
@@ -1620,7 +1625,7 @@ student.get("/s/take/:sid", async (c) => {
       setInterval(() => { if (!document.getElementById('chat').hidden) pollChat(); }, 8000); pollChat();
       let staffMsgs = -1;
 
-      // Heartbeat 20 dtk: status online, cek jeda, dan apakah ada pesan baru dari pengawas.
+      // Heartbeat 30 dtk: status online, cek jeda, dan apakah ada pesan baru dari pengawas.
       function applyPause() {
         document.getElementById('pauseOverlay').hidden = !isPaused;
       }
@@ -1633,7 +1638,7 @@ student.get("/s/take/:sid", async (c) => {
             if (typeof j.paused === 'boolean' && j.paused !== isPaused) { isPaused = j.paused; applyPause(); if (!isPaused && j.deadline) { D.deadline = j.deadline; dl = new Date(D.deadline).getTime(); } }
           }
         } catch(_) {}
-        setTimeout(heartbeat, 20000);
+        setTimeout(heartbeat, 30000);
       }
       heartbeat();
 
@@ -1803,14 +1808,19 @@ student.post("/s/take/:sid/ping", async (c) => {
   if (!stu) return c.json({ error: "unauthorized" }, 401);
   const sessionId = c.req.param("sid");
   const sql = connectDb(c.env);
-  const r = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) =>
-    tx`update exam_sessions set last_seen_at = now()
-       where id = ${sessionId} and student_id = ${stu.uid}
-       returning paused_at, deadline_at,
-         cast((select count(*) from exam_messages m where m.session_id = exam_sessions.id and m.from_role = 'staff') as integer) as staff_msgs`,
-  );
-  if (r.length === 0) return c.json({ ok: true });
-  const row = r[0] as { paused_at: string | null; deadline_at: string; staff_msgs: number };
+  // Baca status dulu; last_seen_at ditulis paling sering sekali per ~55 detik (cukup untuk "online" = sinyal 2 menit terakhir).
+  // Dulu setiap ping (tiap 20 dtk) menulis ke database: penyumbang terbesar kuota tulis D1 saat ujian.
+  const row = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, async (tx) => {
+    const r = await tx`select es.last_seen_at, es.paused_at, es.deadline_at,
+         cast((select count(*) from exam_messages m where m.session_id = es.id and m.from_role = 'staff') as integer) as staff_msgs
+       from exam_sessions es where es.id = ${sessionId} and es.student_id = ${stu.uid}`;
+    if (r.length === 0) return null;
+    const x = r[0] as { last_seen_at: string | Date | null; paused_at: string | null; deadline_at: string; staff_msgs: number };
+    const seen = x.last_seen_at ? new Date(x.last_seen_at).getTime() : 0;
+    if (!(Date.now() - seen < 55_000)) await tx`update exam_sessions set last_seen_at = now() where id = ${sessionId} and student_id = ${stu.uid}`;
+    return x;
+  });
+  if (!row) return c.json({ ok: true });
   return c.json({ ok: true, paused: !!row.paused_at, deadline: row.deadline_at, staff_msgs: row.staff_msgs });
 });
 

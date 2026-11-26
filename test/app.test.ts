@@ -450,3 +450,30 @@ test("reset PIN per siswa: hanya siswa terpilih yang berubah; siswa sekolah lain
   assert.equal((await w.call("/s/login", json({ username: "siswa2", pin: "222222" }))).status, 200);
   assert.equal((await w.call("/api/students/reset-pins", { ...json({ ids: [] }), cookie })).status, 400);
 });
+
+test("beban sekolah: 30 siswa login dari 1 IP lolos; tebak PIN per username dibatasi; ping beruntun hanya menulis sekali", async () => {
+  const w = await boot();
+  const pinHash = await hashPin("123456");
+  for (let i = 0; i < 30; i++) await w.open`insert into students (id,school_id,class_id,name,username,pin_hash) values (${"m" + i},${SID},'cl',${"Murid " + i},${"murid" + i},${pinHash})`;
+  const ip = { "CF-Connecting-IP": "203.0.113.7", "Content-Type": "application/json" };
+  let ok = 0, cookie = "";
+  for (let i = 0; i < 30; i++) {
+    const r = await w.call("/s/login", { method: "POST", headers: ip, body: JSON.stringify({ username: "murid" + i, pin: "123456" }) });
+    if (r.status === 200) { ok++; cookie = w.cookieOf(r); }
+  }
+  assert.equal(ok, 30, "semua siswa satu sekolah harus bisa login bersamaan");
+  const codes: number[] = [];
+  for (let i = 0; i < 12; i++) codes.push((await w.call("/s/login", { method: "POST", headers: { ...ip, "CF-Connecting-IP": "198.51.100." + i }, body: JSON.stringify({ username: "siswa1", pin: "000000" }) })).status);
+  assert.ok(codes.slice(10).every((c) => c === 429), "percobaan ke-11 dst untuk 1 username ditolak: " + codes.join(","));
+  // ping: tulisan last_seen_at paling sering ~1x/55 dtk
+  const st = await w.call("/s/exams/E/start", { method: "POST", cookie, headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" });
+  const sid = st.headers.get("location")!.split("/").pop()!;
+  await w.open`update exam_sessions set last_seen_at = null where id = ${sid}`;
+  const p1 = await jsonOf(await w.call(`/s/take/${sid}/ping`, { method: "POST", cookie }));
+  assert.equal(p1.ok, true); assert.equal(typeof p1.deadline, "string");
+  const t1 = (await w.open`select last_seen_at from exam_sessions where id = ${sid}`)[0].last_seen_at;
+  assert.ok(t1, "ping pertama menulis last_seen_at");
+  await new Promise((r) => setTimeout(r, 20));
+  await w.call(`/s/take/${sid}/ping`, { method: "POST", cookie });
+  assert.equal((await w.open`select last_seen_at from exam_sessions where id = ${sid}`)[0].last_seen_at, t1, "ping kedua dalam 55 dtk tidak menulis");
+});

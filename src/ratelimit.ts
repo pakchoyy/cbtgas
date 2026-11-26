@@ -32,9 +32,10 @@ export function clientIp(headers: Headers): string {
 }
 
 export async function checkOrLimit(
-  env: DbEnv, headers: Headers, bucket: string, limit: number,
+  env: DbEnv, headers: Headers, bucket: string, limit: number, key?: string,
 ): Promise<Response | null> {
-  const ip = clientIp(headers);
+  // key: kunci selain IP (mis. username). Bawaan: IP klien.
+  const ip = key ?? clientIp(headers);
   const sql = connectDb(env);
   const r = await allow(sql, bucket, ip, limit);
   if (r.ok) return null;
