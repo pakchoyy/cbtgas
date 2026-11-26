@@ -236,10 +236,27 @@ function parseJsonCols(rows: Row[], text: string): void {
   }
 }
 
+// D1 menolak sementara saat beban puncak ("D1 DB is overloaded", koneksi terputus, dsb.). Permintaan yang ditolak tidak
+// mengubah apa pun (batch = satu transaksi), jadi aman diulang. Uji beban 1.000 siswa mulai dalam 20 detik: tanpa ini ~6% gagal.
+// Tulisan hanya diulang untuk "overloaded" (ditolak SEBELUM dijalankan); galat koneksi bisa terjadi sesudah tulisan tersimpan,
+// jadi hanya kueri baca yang diulang untuk galat jenis itu (supaya mis. hitungan pelanggaran tidak tercatat dua kali).
+const OVERLOAD = /overloaded|Too many resources consumed/i;
+const TRANSIENT = /Network connection lost|storage caused object to be reset|reset because its code was updated|temporarily unavailable/i;
+export async function withRetry<T>(fn: () => Promise<T>, readOnly = false, tries = 4): Promise<T> {
+  for (let i = 0; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      const m = String((e as Error)?.message ?? e);
+      if (i >= tries - 1 || !(OVERLOAD.test(m) || (readOnly && TRANSIENT.test(m)))) throw e;
+      await new Promise((r) => setTimeout(r, (150 << i) + Math.random() * (200 << i))); // ~0,15–0,35 s, 0,3–0,7 s, 0,6–1,4 s
+    }
+  }
+}
+
 async function run(db: D1Database, f0: Fragment, mode: Mode): Promise<Rows> {
   const f = guard(f0, mode);
   if (f.params.length > MAX_PARAMS) throw new Error(`d1: ${f.params.length} parameter melebihi batas ${MAX_PARAMS} per query`);
-  const r = await db.prepare(f.text).bind(...f.params).all<Row>();
+  const r = await withRetry(() => db.prepare(f.text).bind(...f.params).all<Row>(), /^\s*(select|with)\b/i.test(f.text) && !/\b(insert|update|delete)\b/i.test(f.text));
   const rows = (r.results ?? []) as Rows;
   parseJsonCols(rows, f.text);
   rows.count = rows.length ? rows.length : (r.meta?.changes ?? 0);
@@ -328,7 +345,7 @@ async function runBatch(db: D1Database, items: unknown[], mode: Mode): Promise<R
   });
   const out = items.map(() => { const r = [] as unknown as Rows; r.count = 0; return r; });
   if (!frags.length) return out;
-  const res = await db.batch(frags.map((f) => db.prepare(f.text).bind(...f.params))); // satu transaksi implisit
+  const res = await withRetry(() => db.batch(frags.map((f) => db.prepare(f.text).bind(...f.params)))); // satu transaksi implisit
   res.forEach((r, k) => {
     const rows = (r.results ?? []) as Row[];
     parseJsonCols(rows, frags[k].text);

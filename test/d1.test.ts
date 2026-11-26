@@ -98,3 +98,18 @@ test("daftar id panjang (>100) disisipkan sebagai literal; angka/teks aneh tetap
   // string berbahaya tidak pernah disisipkan: jatuh ke parameter lalu ditolak karena melewati batas
   await assert.rejects(sql`select 1 where 'a' in ${sql([...ids, "x' or '1'='1"])}`, /melebihi batas/);
 });
+
+test("D1 sibuk: kueri diulang otomatis; galat koneksi hanya diulang untuk kueri baca", async () => {
+  const { withRetry } = await import("../src/d1.ts");
+  let n = 0;
+  assert.equal(await withRetry(async () => { if (++n < 3) throw new Error("D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window."); return "ok"; }), "ok");
+  assert.equal(n, 3);
+  n = 0;
+  await assert.rejects(withRetry(async () => { n++; throw new Error("D1_ERROR: Network connection lost."); }, false));
+  assert.equal(n, 1, "tulisan tidak diulang untuk galat koneksi");
+  n = 0;
+  assert.equal(await withRetry(async () => { if (++n < 2) throw new Error("Network connection lost."); return 1; }, true), 1);
+  n = 0;
+  await assert.rejects(withRetry(async () => { n++; throw new Error("UNIQUE constraint failed"); }, true));
+  assert.equal(n, 1, "galat biasa tidak diulang");
+});
