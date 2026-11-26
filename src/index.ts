@@ -13,6 +13,23 @@ import { brandHex, APP_NAME } from "./ui";
 type Bindings = AuthBindings & { APP_ENV: string };
 const app = new Hono<{ Bindings: Bindings }>();
 
+// Galat dari Cloudflare D1 yang bukan bug aplikasi: kuota harian paket gratis habis, atau database sedang sangat sibuk.
+// Tampilkan pesan yang bisa dipahami guru/siswa (bukan "HTTP 500").
+app.onError((err, c) => {
+  const m = String(err?.message ?? err);
+  const quota = /free tier daily row (write|read) limit|exceeded D1/i.test(m);
+  const busy = /overloaded|Too many resources consumed/i.test(m);
+  if (!quota && !busy) { console.error(err); return c.text("Internal Server Error", 500); }
+  console.error(m);
+  const msg = quota
+    ? "Server sedang mencapai batas harian penyimpanan data. Data yang sudah ada aman; perubahan bisa disimpan lagi setelah pukul 07.00 WIB. Mohon hubungi admin CBT Yuk."
+    : "Server sedang sangat sibuk. Tunggu beberapa detik lalu coba lagi.";
+  const wantsJson = c.req.path.startsWith("/api/") || /json/i.test(c.req.header("Accept") ?? "") || /json/i.test(c.req.header("Content-Type") ?? "") || c.req.method !== "GET";
+  if (wantsJson) return c.json({ error: msg }, 503);
+  return c.html(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sementara tidak tersedia</title>
+<body style="font-family:system-ui,sans-serif;max-width:520px;margin:15vh auto;padding:0 20px;color:#0F172A"><h1 style="font-size:22px">Sementara tidak tersedia</h1><p>${msg}</p><p><a href="javascript:location.reload()">Coba lagi</a></p></body>`, 503);
+});
+
 // Warna merek sekolah yang sedang login (staf atau siswa). Halaman memuat
 // file ini setelah CSS dasar, jadi cukup menimpa --brand.
 // Logo sekolah (disimpan sebagai data URI di schools.logo_key), untuk staf dan siswa yang login.

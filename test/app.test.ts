@@ -491,3 +491,13 @@ test("pantau langsung: jumlah terjawab dari answered_count, hanya siswa kelas pe
   const live = await jsonOf(await w.call("/api/exams/E/live", { cookie: staff }));
   assert.deepEqual(live.rows.map((r: any) => [r.username, r.answered, r.total]), [["siswa1", 2, 3]]);
 });
+
+test("kuota D1 habis: pesan jelas 503, bukan HTTP 500", async () => {
+  const w = await boot();
+  const cookie = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const orig = w.env.DB.prepare.bind(w.env.DB);
+  w.env.DB.prepare = (q: string) => { if (/insert into categories/i.test(q)) throw new Error("D1_ERROR: Your account has exceeded D1's free tier daily row write limit."); return orig(q); };
+  const r = await w.call("/api/categories", { ...json({ name: "X" }), cookie });
+  assert.equal(r.status, 503);
+  assert.match((await r.json()).error, /batas harian/);
+});
