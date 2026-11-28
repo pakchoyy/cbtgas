@@ -7,7 +7,8 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connectDb, withTenant } from "./db";
 import { requireStaff, requireOwner, type AuthBindings } from "./auth";
-import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, fracHtml, keepSpaces, ltrLabels, FRAC_CSS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, kindLabel, FEEDBACK_WA, WA_DISPLAY, schoolYear } from "./ui";
+import { certPage } from "./cert";
+import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, fracHtml, keepSpaces, ltrLabels, FRAC_CSS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, brandHex, kindLabel, FEEDBACK_WA, WA_DISPLAY, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
 
@@ -2176,6 +2177,7 @@ pages.get("/app/exams/:id", async (c) => {
         <button type="button" id="xlsBtn"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Unduh nilai (Excel)</button>
         ${needsManual && sess.role !== "proctor" ? `<a class="btn primary" href="/app/exams/${esc(examId)}/uraian"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Nilai uraian</a>` : ""}
         <button type="button" id="waRekap"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21l1.7-5A9 9 0 1 1 8 19.3zM9 9.5c0 3 2.5 5.5 5.5 5.5l1-1.5-2-1-1 1a4 4 0 0 1-2-2l1-1-1-2z"/></svg>Bagikan rekap ke WA</button>
+        <a class="btn" href="/app/exams/${esc(examId)}/certs"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM8.5 13.5 7 21l5-3 5 3-1.5-7.5"/></svg>Sertifikat</a>
         <a class="btn" href="/app/exams/${esc(examId)}/items"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18M7 15l4-4 3 3 5-6"/></svg>Analisis soal</a>
         <a class="btn" href="/app/exams/${esc(examId)}/admin?doc=hadir"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6v3H9zM6 6h12v15H6zM9 12h6M9 16h4"/></svg>Daftar hadir &amp; berita acara</a>
         <a class="btn" href="/app/exams/${esc(examId)}/print"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M6 14h12v7H6z"/></svg>Cetak soal</a>
@@ -2460,6 +2462,32 @@ pages.get("/app/exams/:id/admin", async (c) => {
 // Versi server dari window.fmtText (dipakai di cetak soal).
 const fmt = (t: string) => ltrLabels(keepSpaces(fracHtml(esc(t).replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>").replace(/__([^_]+?)__/g, "<u>$1</u>").replace(/~~([^~]+?)~~/g, "<s>$1</s>")
   .replace(/\*([^*\s][^*]*?)\*/g, "<i>$1</i>").replace(/\^([^^\s]{1,20})\^/g, "<sup>$1</sup>").replace(/~([^~\s]{1,20})~/g, "<sub>$1</sub>")))).replace(/\n/g, "<br>");
+
+// Sertifikat semua peserta yang sudah selesai (satu per halaman), atau satu siswa (?sid=...).
+pages.get("/app/exams/:id/certs", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env);
+  if (!sess) return c.redirect("/");
+  const examId = c.req.param("id"), one = c.req.query("sid") ?? "";
+  const sql = connectDb(c.env);
+  const data = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, async (tx) => {
+    const e = await tx`select title, kind from exams where id = ${examId}`;
+    if (!e.length) return null;
+    const rows = await tx`select st.name, c.name as class_name, es.finished_at, sc.final_score
+      from exam_sessions es join students st on st.id = es.student_id left join classes c on c.id = st.class_id
+      left join scores sc on sc.session_id = es.id
+      where es.exam_id = ${examId} and es.status in ('submitted','expired') and (${one} = '' or es.id = ${one})
+      order by c.name, st.name`;
+    const sch = await tx`select name, color, logo_key is not null as has_logo from schools where id = ${sess.sid}`;
+    return { ex: e[0] as { title: string; kind: string }, rows: rows as unknown as Array<{ name: string; class_name: string | null; finished_at: string | null; final_score: string | null }>,
+      sch: sch[0] as { name: string; color: string | null; has_logo: boolean | number } };
+  });
+  if (!data) return c.notFound();
+  if (!data.rows.length) return c.html(base("Sertifikat", `<div class="card"><p>Belum ada siswa yang selesai mengerjakan ujian ini.</p><a class="btn" href="/app/exams/${esc(examId)}">‹ Kembali</a></div>`, { role: sess.role }));
+  return c.html(certPage(data.rows.map((r) => ({ name: r.name, className: r.class_name, title: data.ex.title, kind: kindLabel(data.ex.kind),
+      score: r.final_score == null ? null : +r.final_score, finishedAt: r.finished_at })),
+    { name: data.sch.name, color: brandHex(data.sch.color), hasLogo: !!data.sch.has_logo },
+    { back: `/app/exams/${examId}`, title: "Sertifikat " + data.ex.title }));
+});
 
 pages.get("/app/exams/:id/print", async (c) => {
   const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env);

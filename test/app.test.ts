@@ -531,3 +531,33 @@ test("login guru dengan email + password: dibuat admin, masuk, terkunci setelah 
   const pw2 = await jsonOf(await w.call("/api/users/gr/password", { method: "POST", cookie: admin }));
   assert.equal((await login("bu.rina@sekolah.test", pw2.password, "192.0.2.10")).status, 200);
 });
+
+test("sertifikat: siswa hanya miliknya & bila nilai boleh dilihat; guru cetak semua peserta", async () => {
+  const w = await boot();
+  await w.open`insert into students (id,school_id,class_id,name,username,pin_hash) values ('st2',${SID},'cl','Siswa Dua','siswa2',${await hashPin("222222")})`;
+  const run = async (u: string, pin: string, ans: number) => {
+    const cookie = w.cookieOf(await w.call("/s/login", json({ username: u, pin })));
+    const sid = (await w.call("/s/exams/E/start", { method: "POST", cookie, headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" })).headers.get("location")!.split("/").pop()!;
+    await w.call(`/s/take/${sid}/answers`, { ...json({ answers: [{ question_id: "q1", index: ans }] }), cookie });
+    await w.call(`/s/take/${sid}/submit`, { method: "POST", cookie });
+    return { cookie, sid };
+  };
+  const a = await run("siswa1", "123456", 1), b = await run("siswa2", "222222", 0);
+  const done = await (await w.call(`/s/done/${a.sid}`, { cookie: a.cookie })).text();
+  assert.match(done, new RegExp(`/s/cert/${a.sid}`));
+  const cert = await w.call(`/s/cert/${a.sid}`, { cookie: a.cookie });
+  assert.equal(cert.status, 200);
+  const html = await cert.text();
+  assert.match(html, /SERTIFIKAT/); assert.match(html, /Siswa Satu/); assert.match(html, /Ulangan 1/); assert.match(html, /SMA Demo/);
+  // sertifikat siswa lain: tidak boleh
+  const other = await w.call(`/s/cert/${b.sid}`, { cookie: a.cookie });
+  assert.notEqual(other.status, 200); assert.ok(!(await other.text()).includes("Siswa Dua"));
+  // nilai disembunyikan guru -> tidak ada sertifikat
+  await w.open`update exams set show_score = 0 where id = 'E'`;
+  assert.equal((await w.call(`/s/cert/${a.sid}`, { cookie: a.cookie })).status, 302);
+  // guru: semua peserta, satu per halaman
+  const staff = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const all = await (await w.call("/app/exams/E/certs", { cookie: staff })).text();
+  assert.equal((all.match(/<section class="cert">/g) || []).length, 2);
+  assert.match(all, /Siswa Satu/); assert.match(all, /Siswa Dua/);
+});
