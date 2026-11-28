@@ -15,7 +15,7 @@ import {
 import { sendEmail, pinNotifyEmail } from "./email";
 import { checkOrLimit } from "./ratelimit";
 import { SHARED_CSS, LOGO, kindLabel, FEEDBACK_WA, UI_JS, FMT_JS, fracHtml, keepSpaces, ltrLabels, brandHex } from "./ui";
-import { certPage } from "./cert";
+import { certPage, cleanCertStyle } from "./cert";
 import { createSession, finalizeSession } from "./scoring";
 import { tokenValid } from "./token";
 import { catchUp } from "./catchup";
@@ -419,15 +419,15 @@ student.get("/s/cert/:sid", async (c) => {
   const r = await withTenant(sql, { schoolId: stu.sid, role: "student", userId: stu.uid }, (tx) => tx`
     select e.title, e.kind, e.show_score, es.status, es.finished_at, sc.final_score, st.name, c.name as class_name,
            (select name from schools where id = es.school_id) as school, (select color from schools where id = es.school_id) as color,
-           (select logo_key is not null from schools where id = es.school_id) as has_logo
+           (select logo_key is not null from schools where id = es.school_id) as has_logo, (select cert_style from schools where id = es.school_id) as cert_style
     from exam_sessions es join exams e on e.id = es.exam_id join students st on st.id = es.student_id
     left join classes c on c.id = st.class_id left join scores sc on sc.session_id = es.id
     where es.id = ${sid} and es.student_id = ${stu.uid}`);
   const d = r[0] as undefined | { title: string; kind: string; show_score: boolean; status: string; finished_at: string | null; final_score: string | null; name: string; class_name: string | null;
-    school: string; color: string | null; has_logo: boolean | number };
+    school: string; color: string | null; has_logo: boolean | number; cert_style: unknown };
   if (!d || !d.show_score || d.final_score == null || !["submitted", "expired"].includes(d.status)) return c.redirect(d ? `/s/done/${sid}` : "/s");
   return c.html(certPage([{ name: d.name, className: d.class_name, title: d.title, kind: kindLabel(d.kind), score: +d.final_score, finishedAt: d.finished_at }],
-    { name: d.school, color: brandHex(d.color), hasLogo: !!d.has_logo }, { back: `/s/done/${sid}`, title: "Sertifikat " + d.name }));
+    { name: d.school, color: brandHex(d.color), hasLogo: !!d.has_logo }, cleanCertStyle(d.cert_style), { back: `/s/done/${sid}`, title: "Sertifikat " + d.name }));
 });
 
 // Riwayat ujian siswa: semua sesi yang pernah dibuka (submitted / expired / locked).

@@ -7,7 +7,7 @@ import { distractorRows, itemRows } from "./analytics";
 import { Hono } from "hono";
 import { connectDb, withTenant } from "./db";
 import { requireStaff, requireOwner, type AuthBindings } from "./auth";
-import { certPage } from "./cert";
+import { certPage, cleanCertStyle } from "./cert";
 import { SHARED_CSS, LOGO, LOGO_MARK, SITE_FOOTER, INSTALL_SHEET, UI_JS, FMT_JS, fracHtml, keepSpaces, ltrLabels, FRAC_CSS, ICON_EDIT, ICON_DEL, APP_NAME, BRAND_COLORS, brandHex, kindLabel, FEEDBACK_WA, WA_DISPLAY, schoolYear } from "./ui";
 
 export const pages = new Hono<{ Bindings: AuthBindings & { APP_ENV: string } }>();
@@ -2477,16 +2477,16 @@ pages.get("/app/exams/:id/certs", async (c) => {
       left join scores sc on sc.session_id = es.id
       where es.exam_id = ${examId} and es.status in ('submitted','expired') and (${one} = '' or es.id = ${one})
       order by c.name, st.name`;
-    const sch = await tx`select name, color, logo_key is not null as has_logo from schools where id = ${sess.sid}`;
+    const sch = await tx`select name, color, logo_key is not null as has_logo, cert_style from schools where id = ${sess.sid}`;
     return { ex: e[0] as { title: string; kind: string }, rows: rows as unknown as Array<{ name: string; class_name: string | null; finished_at: string | null; final_score: string | null }>,
-      sch: sch[0] as { name: string; color: string | null; has_logo: boolean | number } };
+      sch: sch[0] as { name: string; color: string | null; has_logo: boolean | number; cert_style: unknown } };
   });
   if (!data) return c.notFound();
   if (!data.rows.length) return c.html(base("Sertifikat", `<div class="card"><p>Belum ada siswa yang selesai mengerjakan ujian ini.</p><a class="btn" href="/app/exams/${esc(examId)}">‹ Kembali</a></div>`, { role: sess.role }));
   return c.html(certPage(data.rows.map((r) => ({ name: r.name, className: r.class_name, title: data.ex.title, kind: kindLabel(data.ex.kind),
       score: r.final_score == null ? null : +r.final_score, finishedAt: r.finished_at })),
-    { name: data.sch.name, color: brandHex(data.sch.color), hasLogo: !!data.sch.has_logo },
-    { back: `/app/exams/${examId}`, title: "Sertifikat " + data.ex.title }));
+    { name: data.sch.name, color: brandHex(data.sch.color), hasLogo: !!data.sch.has_logo }, cleanCertStyle(data.sch.cert_style),
+    { back: `/app/exams/${examId}`, title: "Sertifikat " + data.ex.title, editable: sess.role !== "proctor" }));
 });
 
 pages.get("/app/exams/:id/print", async (c) => {

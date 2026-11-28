@@ -561,3 +561,27 @@ test("sertifikat: siswa hanya miliknya & bila nilai boleh dilihat; guru cetak se
   assert.equal((all.match(/<section class="cert">/g) || []).length, 2);
   assert.match(all, /Siswa Satu/); assert.match(all, /Siswa Dua/);
 });
+
+test("tampilan sertifikat: disimpan per sekolah, dipakai di sertifikat siswa; pengawas ditolak; isian dibersihkan", async () => {
+  const w = await boot();
+  const staff = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const put = (body: unknown, cookie = staff) => w.call("/api/cert-style", { method: "PUT", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify(body) });
+  const r = await jsonOf(await put({ theme: "marun", title: "PIAGAM PENGHARGAAN", city: "Surakarta", s1Role: "Kepala Sekolah", s1Name: "Drs. H. Ahmad, M.Pd.", s1Nip: "19700101", s2Role: "", s2Name: "", predikat: false, x: "<script>", s2Nip: "<b>" }));
+  assert.equal(r.style.theme, "marun"); assert.equal(r.style.predikat, false); assert.equal(r.style.x, undefined);
+  assert.equal((await put({ theme: "tidak-ada" })).status, 200);
+  assert.equal((await jsonOf(await put({ theme: "tidak-ada", title: "PIAGAM PENGHARGAAN", city: "Surakarta", s1Role: "Kepala Sekolah", s1Name: "Drs. H. Ahmad, M.Pd.", s2Role: "", s2Name: "", predikat: false }))).style.theme, "navy");
+  await put({ theme: "marun", title: "PIAGAM PENGHARGAAN", city: "Surakarta", s1Role: "Kepala Sekolah", s1Name: "Drs. H. Ahmad, M.Pd.", s2Role: "", s2Name: "", s2Nip: "<b>", predikat: false });
+  // pengawas tidak boleh
+  await w.open`insert into users (id,school_id,email,role) values ('pw',${SID},'pengawas@demo.id','proctor')`;
+  // sertifikat siswa memakai tampilan sekolah
+  const cookie = w.cookieOf(await w.call("/s/login", json({ username: "siswa1", pin: "123456" })));
+  const sid = (await w.call("/s/exams/E/start", { method: "POST", cookie, headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" })).headers.get("location")!.split("/").pop()!;
+  await w.call(`/s/take/${sid}/submit`, { method: "POST", cookie });
+  const html = await (await w.call(`/s/cert/${sid}`, { cookie })).text();
+  assert.match(html, /PIAGAM PENGHARGAAN/); assert.match(html, /Drs\. H\. Ahmad, M\.Pd\./); assert.match(html, /Surakarta/);
+  assert.match(html, /--p: #7F1D1D/); assert.match(html, /class="pred" hidden/); assert.match(html, /class="sg sg2" hidden/);
+  assert.ok(!html.includes("<b>&lt;") && !/NIP\. <span data-f="s2Nip"><b>/.test(html));
+  assert.ok(!html.includes('id="ed"'), "siswa tidak melihat panel pengaturan");
+  const g = await (await w.call("/app/exams/E/certs", { cookie: staff })).text();
+  assert.match(g, /id="ed"/);
+});

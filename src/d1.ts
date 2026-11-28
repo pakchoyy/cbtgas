@@ -217,7 +217,7 @@ function guard(f: Fragment, mode: Mode): Fragment {
 
 // D1 mengembalikan kolom jsonb sebagai teks; Postgres sebagai objek. Kolom ini diurai agar kode bersama tak berubah.
 // "content" juga nama kolom teks biasa di exam_messages, jadi dilewati bila query menyebut tabel itu.
-const JSON_COLS = ["content", "answer_key", "answer", "payload", "scoring_config", "question_order", "details"];
+const JSON_COLS = ["content", "answer_key", "answer", "payload", "scoring_config", "question_order", "details", "cert_style"];
 // Kolom boolean (juga hasil turunan has_*): D1 mengembalikan 0/1, Postgres true/false. Penting karena nilainya ikut
 // tertulis ke HTML (mis. data-on="${u.active}" lalu dibandingkan dengan 'true' di skrip klien).
 const BOOL_COLS = ["active", "shuffle_questions", "shuffle_options", "use_token", "show_score", "strict_order",

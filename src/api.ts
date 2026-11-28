@@ -18,6 +18,7 @@ import { BRAND_COLORS, schoolYear, kindLabel } from "./ui";
 import { type RawScore, detailRows, rekapSheets, toCsv, toXlsx, fileName } from "./rekap";
 import { createSession, finalizeSession, writeScore } from "./scoring";
 import { currentToken } from "./token";
+import { cleanCertStyle } from "./cert";
 
 export const api = new Hono<{ Bindings: AuthBindings & { APP_ENV: string; RESEND_API_KEY?: string; EMAIL_FROM?: string } }>();
 
@@ -363,6 +364,17 @@ api.post("/api/me/password", async (c) => {
   });
   if ("error" in r) return c.json({ error: r.error }, r.status);
   return c.json(r);
+});
+
+// Tampilan sertifikat sekolah (tema, judul, kota, penanda tangan). Admin & guru boleh mengubah.
+api.put("/api/cert-style", async (c) => {
+  const s = getSess(c);
+  if (s.role === "proctor") return c.json({ error: "Pengawas tidak boleh mengubah tampilan sertifikat." }, 403);
+  const st = cleanCertStyle(await c.req.json().catch(() => null));
+  const sql = connectDb(c.env);
+  await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, (tx) =>
+    tx`update schools set cert_style = ${st as unknown as string} where id = ${s.sid}`);
+  return c.json({ ok: true, style: st });
 });
 
 api.post("/api/users", async (c) => {

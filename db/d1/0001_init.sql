@@ -33,7 +33,8 @@ CREATE TABLE schools (
   concurrent_quota  integer NOT NULL DEFAULT 300,
   active      integer NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
   privacy_consent_at text,
-  created_at  text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at  text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  cert_style  text CHECK (cert_style IS NULL OR json_valid(cert_style))  -- tampilan sertifikat (tema, judul, penanda tangan)
 );
 
 -- ===== Pengguna staf =====
