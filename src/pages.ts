@@ -1576,6 +1576,7 @@ pages.get("/app/settings", async (c) => {
       ${admin ? tile("#profil", "Profil sekolah", "Nama, jenjang, NPSN, dan kontak operator", "M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6") : ""}
       ${admin ? tile("#tampilan", "Tampilan", "Logo dan warna sekolah", "M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.6 0-1-.8-1.4-.8-2.3 0-.9.7-1.6 1.6-1.6H17a4 4 0 0 0 4-4c0-4.7-4-8.5-9-8.5zM7.5 11.5h.01M10 7.5h.01M15 7.5h.01") : ""}
       ${admin ? tile("/app/users", "Guru & admin", "Undang guru, pengawas, atau admin lain", "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0M19 8v6M16 11h6") : ""}
+      ${tile("/app/password", "Password saya", "Buat atau ganti password untuk masuk tanpa Google", "M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5zM12 15v2")}
       ${tile("/app/pin-resets", "Reset PIN siswa", "Setujui permintaan siswa yang lupa PIN", "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4", pending ? ` <span class="pill closed">${pending}</span>` : "")}
       ${admin ? tile("/app/restore", "Backup & pulihkan", "Simpan cadangan data sekolah ke file", "M4 12a8 8 0 1 0 3-6.2M4 4v4h4") : ""}
     </div>
@@ -3053,24 +3054,25 @@ pages.get("/app/users", async (c) => {
   if (sess.role !== "admin") return c.html(base("Staf", `<div class="card"><p class="err">Hanya admin yang boleh melihat halaman ini.</p><a class="btn" href="/app">Dashboard</a></div>`, { role: sess.role }));
   const sql = connectDb(c.env);
   const users = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
-    tx`select id, email, name, role, active, google_sub is not null as linked
+    tx`select id, email, name, role, active, google_sub is not null as linked, password_hash is not null as has_pw
        from users order by email`,
   );
-  type U = { id: string; email: string; name: string | null; role: string; active: boolean; linked: boolean };
+  type U = { id: string; email: string; name: string | null; role: string; active: boolean; linked: boolean; has_pw: boolean };
   const ROLE: Record<string, string> = { admin: "Admin", teacher: "Guru", proctor: "Pengawas" };
   const list = (users as unknown as U[]).map((u) => {
     const isSelf = u.id === sess.uid;
-    const st = !u.active ? `<span class="pill closed">nonaktif</span>` : u.linked ? "" : `<span class="pill">belum pernah masuk</span>`;
+    const st = !u.active ? `<span class="pill closed">nonaktif</span>` : (u.linked ? "" : u.has_pw ? "" : `<span class="pill">belum pernah masuk</span>`) + (u.has_pw ? ` <span class="pill">punya password</span>` : "");
     return `<div class="lrow" data-uid="${esc(u.id)}">
       <span class="av">${esc((u.name || u.email).charAt(0).toUpperCase())}</span>
       <span class="lt"><b>${esc(u.name || u.email.split("@")[0])}${isSelf ? ` <span class="muted">(Anda)</span>` : ""}</b><span>${esc(u.email)} ${st}</span></span>
+      <button type="button" class="pwbtn" data-action="password" data-name="${esc(u.name || u.email)}" title="Buat password untuk masuk tanpa Google">${u.has_pw ? "Reset password" : "Buat password"}</button>
       <select data-field="role" aria-label="Peran" ${isSelf ? "disabled" : ""}>${Object.entries(ROLE).map(([r, t]) => `<option value="${r}" ${r === u.role ? "selected" : ""}>${t}</option>`).join("")}</select>
       ${isSelf ? "" : `<span class="acts"><button type="button" class="ibtn" data-action="toggle" data-on="${u.active}" aria-label="${u.active ? "Nonaktifkan" : "Aktifkan"}" title="${u.active ? "Nonaktifkan" : "Aktifkan"}">${icon(u.active ? "M18.4 5.6A9 9 0 1 1 5.6 5.6M12 3v9" : "M5 12l5 5L20 7")}</button><button type="button" class="ibtn del" data-action="delete" aria-label="Hapus" title="Hapus">${ICON_DEL}</button></span>`}
     </div>`;
   }).join("");
   return c.html(base("Guru & admin", `
     <a class="crumb" href="/app/settings">‹ Pengaturan</a>
-    <div class="page-head"><div><h1>Guru &amp; admin</h1><p>Orang yang boleh masuk ke sekolah ini. Mereka masuk dengan akun Google memakai email yang Anda undang.</p></div>
+    <div class="page-head"><div><h1>Guru &amp; admin</h1><p>Orang yang boleh masuk ke sekolah ini. Mereka masuk dengan akun Google memakai email yang Anda undang, atau dengan email + password yang Anda buatkan.</p></div>
       <button class="primary" type="button" id="invBtn">+ Undang</button></div>
     <div class="roles">
       <div><b>Admin</b><span>Semua fitur, termasuk pengaturan sekolah dan staf.</span></div>
@@ -3081,14 +3083,27 @@ pages.get("/app/users", async (c) => {
     <dialog id="inv" class="sheet" aria-labelledby="invT"><form id="finv" style="display:flex;flex-direction:column;min-height:0;flex:1">
       <div class="sheet-head"><h2 id="invT">Undang guru atau admin</h2><button type="button" class="x" id="invX" aria-label="Tutup">✕</button></div>
       <div class="sheet-body">
-        <label>Email Google</label><input name="email" type="email" required placeholder="guru@gmail.com" autocomplete="off">
+        <label>Email</label><input name="email" type="email" required placeholder="guru@gmail.com" autocomplete="off">
         <label>Nama <span class="muted">(opsional)</span></label><input name="name" placeholder="Bu Rina">
         <label>Peran</label><select name="role"><option value="teacher">Guru</option><option value="proctor">Pengawas</option><option value="admin">Admin</option></select>
-        <p class="muted">Setelah diundang, minta mereka buka <b>cbt-yuk.web.id</b> lalu ketuk <b>Masuk dengan Google</b>.</p>
+        <label class="sw-row" style="margin-top:10px"><input type="checkbox" name="mkpw" checked style="width:20px;height:20px"><span><b>Buatkan password</b><small>Supaya bisa masuk dengan email + password, tanpa akun Google.</small></span></label>
+        <p class="muted">Mereka masuk di <b>cbt-yuk.web.id/masuk</b> → <b>Saya guru / admin</b>: dengan Google (email Gmail) atau dengan email + password.</p>
       </div>
       <div class="sheet-foot"><span class="spacer"></span><button class="primary" type="submit">Undang</button></div>
     </form></dialog>
+    <dialog id="dPw" class="sheet" aria-labelledby="dPwT">
+      <div class="sheet-head"><h2 id="dPwT">Password masuk</h2><button type="button" class="x" data-close-pw aria-label="Tutup">✕</button></div>
+      <div class="sheet-body">
+        <p class="err" style="margin-top:0">Catat atau kirim sekarang. Password hanya tampil sekali ini.</p>
+        <div class="pwbox"><span>Nama</span><b id="pwN"></b><span>Email</span><b id="pwE"></b><span>Password</span><b id="pwP" class="mono"></b></div>
+        <p class="muted" style="font-size:13px">Masuk di <b>cbt-yuk.web.id/masuk</b> → Saya guru / admin → isi email &amp; password. Setelah masuk, password bisa diganti di Pengaturan → Password saya.</p>
+      </div>
+      <div class="sheet-foot"><button type="button" data-close-pw>Tutup</button><span class="spacer"></span><button type="button" id="pwCopy">Salin</button><a class="btn primary" id="pwWa" target="_blank" rel="noopener">Kirim lewat WA</a></div>
+    </dialog>
     <style>
+      .pwbox { display:grid; grid-template-columns: auto 1fr; gap: 6px 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); }
+      .pwbox span { color: var(--mut); font-size: 13px; } .pwbox b { overflow-wrap:anywhere; } .pwbox .mono { font-family: ui-monospace, monospace; font-size: 20px; letter-spacing: .06em; }
+      .lrow .pwbtn { min-height: 40px; padding: 0 12px; font-size: 13px; white-space: nowrap; }
       .roles { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 16px; }
       .roles div { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display:flex; flex-direction:column; gap:2px; }
       .roles span { color: var(--mut); font-size: 13px; }
@@ -3098,16 +3113,34 @@ pages.get("/app/users", async (c) => {
       @media (max-width: 560px) { .lrow { flex-wrap: wrap; } .lrow select { flex: 1; } }
     </style>
     <script>
-      const inv = document.getElementById('inv');
+      const inv = document.getElementById('inv'), dPw = document.getElementById('dPw');
+      let pwTxt = '';
+      function showPw(j) {
+        document.getElementById('pwN').textContent = j.name || '-'; document.getElementById('pwE').textContent = j.email; document.getElementById('pwP').textContent = j.password;
+        pwTxt = 'Akun CBT Yuk untuk ' + (j.name || j.email) + ':\\n\\nBuka: ' + location.origin + '/masuk\\nKetuk "Saya guru / admin", lalu isi:\\nEmail: ' + j.email + '\\nPassword: ' + j.password + '\\n\\nSetelah masuk, password bisa diganti di Pengaturan → Password saya.';
+        document.getElementById('pwWa').href = 'https://wa.me/?text=' + encodeURIComponent(pwTxt);
+        dPw.showModal();
+      }
+      document.querySelectorAll('[data-close-pw]').forEach((b) => b.addEventListener('click', () => dPw.close()));
+      dPw.addEventListener('close', () => softReload());
+      document.getElementById('pwCopy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(pwTxt); toast('Tersalin.', 'ok'); } catch (_) { toast('Gagal menyalin; catat manual.', 'err'); } });
+      async function makePw(uid) {
+        const r = await fetch('/api/users/' + uid + '/password', { method: 'POST', credentials: 'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { toast(j.error || 'Gagal membuat password.', 'err'); return false; }
+        showPw(j); return true;
+      }
       document.getElementById('invBtn').addEventListener('click', () => inv.showModal());
       document.getElementById('invX').addEventListener('click', () => inv.close());
       document.getElementById('finv').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const d = Object.fromEntries(new FormData(e.target));
+        const d = Object.fromEntries(new FormData(e.target)); const mkpw = !!d.mkpw; delete d.mkpw;
         const r = await fetch('/api/users', { method:'POST', credentials:'same-origin',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
         if (r.ok) {
           inv.close(); toast('Undangan dibuat untuk ' + d.email + '.', 'ok');
+          const nu = await r.json().catch(() => ({}));
+          if (mkpw && nu.id) { await makePw(nu.id); return; }
           if (await ask('Kirim info cara masuk ke ' + (d.name || d.email) + ' lewat WhatsApp?', 'Kirim ke WA'))
             window.open('https://wa.me/?text=' + encodeURIComponent('Halo ' + (d.name || '') + ', Anda diundang ke CBT Yuk sekolah kami.\\n\\n1. Buka ' + location.origin + '/masuk\\n2. Ketuk "Saya guru / admin" lalu masuk dengan Google memakai email ' + d.email + '\\n\\nSampai jumpa di sana!'), '_blank');
           softReload();
@@ -3118,6 +3151,10 @@ pages.get("/app/users", async (c) => {
         const b = e.target.closest('[data-action]'); if (!b) return;
         const uid = b.closest('[data-uid]').dataset.uid;
         const action = b.dataset.action;
+        if (action === 'password') {
+          if (!(await ask('Buat password baru untuk ' + b.dataset.name + '? Password lama (kalau ada) tidak berlaku lagi. Login Google tetap bisa dipakai.', 'Buat password'))) return;
+          await makePw(uid); return;
+        }
         if (action === 'delete') {
           if (!(await ask('Hapus staf ini?'))) return;
           const r = await fetch('/api/users/' + uid, { method:'DELETE', credentials:'same-origin' });
@@ -4476,6 +4513,37 @@ ${DOC_PARSER_JS}
 
 
 // Satu pintu untuk masuk atau mendaftar: dua kartu, tiga pilihan jelas.
+pages.get("/app/password", async (c) => {
+  const sess = await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env);
+  if (!sess) return c.redirect("/masuk");
+  const sql = connectDb(c.env);
+  const r = await withTenant(sql, { schoolId: sess.sid, role: sess.role, userId: sess.uid }, (tx) =>
+    tx`select password_hash is not null as has_pw from users where id = ${sess.uid}`);
+  const has = !!(r[0] as { has_pw?: boolean } | undefined)?.has_pw;
+  return c.html(base("Password saya", `
+    <a class="crumb" href="/app/settings">‹ Pengaturan</a>
+    <div class="page-head"><div><h1>Password saya</h1><p>${has ? "Ganti password untuk masuk dengan email + password." : "Buat password supaya bisa masuk dengan email + password, tanpa akun Google."} Email: <b>${esc(sess.email)}</b></p></div></div>
+    <form class="card" id="fme" style="max-width:480px">
+      ${has ? `<label for="cur">Password lama</label><input id="cur" name="current" type="password" required autocomplete="current-password">` : ""}
+      <label for="nw">Password baru <span class="muted">(minimal 8 karakter)</span></label><input id="nw" name="next" type="password" required minlength="8" autocomplete="new-password">
+      <label for="nw2">Ulangi password baru</label><input id="nw2" type="password" required minlength="8" autocomplete="new-password">
+      <p class="err" id="meErr" role="alert" hidden></p>
+      <button class="primary" type="submit" style="margin-top:12px">${has ? "Ganti password" : "Buat password"}</button>
+    </form>
+    <script>
+      document.getElementById('fme').addEventListener('submit', async (e) => {
+        e.preventDefault(); const err = document.getElementById('meErr'); err.hidden = true;
+        const d = Object.fromEntries(new FormData(e.target));
+        if (d.next !== document.getElementById('nw2').value) { err.textContent = 'Ulangi password baru belum sama.'; err.hidden = false; return; }
+        const r = await fetch('/api/me/password', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { err.textContent = j.error || 'Gagal (' + r.status + ').'; err.hidden = false; return; }
+        e.target.reset(); toast('Password tersimpan. Sekarang bisa masuk dengan email + password.', 'ok'); setTimeout(() => softReload(), 600);
+      });
+    </script>
+  `, { role: sess.role }));
+});
+
 pages.get("/masuk", async (c) => {
   if (await requireStaff(c.req.header("Cookie"), c.env.SESSION_SECRET, c.env)) return c.redirect("/app");
   return c.html(base("Masuk atau daftar", `
@@ -4500,6 +4568,8 @@ pages.get("/masuk", async (c) => {
       .mk .daftar h2, .mk .daftar p { color: #fff; } .mk .daftar .sub { color: rgba(255,255,255,.85); }
       .mk .daftar ul { margin: 0 0 8px; padding-left: 18px; color: rgba(255,255,255,.9); font-size: 14.5px; } .mk .daftar li { margin: 4px 0; }
       .mk .daftar .btn { background: #fff; color: #0F172A; border-color: #fff; min-height: 52px; margin-top: auto; }
+      .pwlogin { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+      .pwlogin summary { cursor: pointer; color: var(--brand); font-weight: 600; font-size: 14px; min-height: 44px; display:flex; align-items:center; }
     </style>
     <div class="mk-top"><a class="brand" href="/">${LOGO}</a><a class="btn" href="/demo">Cobain gratis</a></div>
     <div class="mk-head"><h1>Masuk atau daftar</h1><p>Pilih sesuai keperluan Anda.</p></div>
@@ -4512,6 +4582,15 @@ pages.get("/masuk", async (c) => {
         <a class="opt-btn" href="/auth/google/start?mode=login"><span class="oi">${googleIcon}</span>
           <span class="ot"><b>Saya guru / admin</b><span>Masuk dengan akun Google</span></span><span class="go">›</span></a>
         <p class="muted" style="margin:8px 0 0;font-size:13px;text-align:center"><a href="/auth/google/start?mode=login&amp;ganti=1">Pakai akun Google lain</a></p>
+        <details class="pwlogin" id="pwl"><summary>Guru tanpa akun Google? Masuk dengan email &amp; password</summary>
+          <form id="fpw">
+            <label for="pwEmail">Email</label><input id="pwEmail" name="email" type="email" required autocomplete="username" autocapitalize="none">
+            <label for="pwPass">Password</label><input id="pwPass" name="password" type="password" required autocomplete="current-password">
+            <button class="primary" type="submit" style="width:100%;margin-top:12px;min-height:48px">Masuk</button>
+            <p class="err" id="pwErr" role="alert" hidden></p>
+            <p class="muted" style="font-size:12.5px;margin:8px 0 0">Password dibuatkan oleh admin sekolah di menu <b>Guru &amp; admin</b>. Lupa password? Minta admin membuat yang baru.</p>
+          </form>
+        </details>
       </section>
       <section class="card daftar">
         <h2>Sekolah baru</h2>
@@ -4520,6 +4599,21 @@ pages.get("/masuk", async (c) => {
         <a class="btn" href="/auth/google/start?mode=register">${googleIcon} Daftar dengan Google</a>
       </section>
     </div>
+    <script>
+      if (location.hash === '#password') document.getElementById('pwl').open = true;
+      document.getElementById('fpw').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = document.getElementById('pwErr'), btn = e.target.querySelector('button'); err.hidden = true; btn.disabled = true;
+        try {
+          const r = await fetch('/auth/login-password', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(Object.fromEntries(new FormData(e.target))) });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok) { location.href = j.redirect || '/app'; return; }
+          err.textContent = j.error || 'Gagal masuk (' + r.status + ').'; err.hidden = false;
+        } catch (_) { err.textContent = 'Koneksi terputus. Coba lagi.'; err.hidden = false; }
+        btn.disabled = false;
+      });
+    </script>
   `, { nav: false }));
 });
 

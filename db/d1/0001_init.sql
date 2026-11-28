@@ -48,6 +48,9 @@ CREATE TABLE users (
   google_sub text,
   active     integer NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
   created_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  password_hash text,                         -- login email + password (opsional, di samping Google)
+  pw_failed  integer NOT NULL DEFAULT 0,
+  pw_locked_until text,
   UNIQUE (school_id, email)
 );
 

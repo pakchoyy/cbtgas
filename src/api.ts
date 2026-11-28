@@ -9,7 +9,7 @@ import { Hono } from "hono";
 import type postgres from "postgres";
 import { connectDb, withTenant, edgeCache } from "./db";
 import { requireStaff, type AuthBindings } from "./auth";
-import { hashPin } from "./hash";
+import { hashPin, verifyPin } from "./hash";
 import { sendEmail, inviteEmail, pinNotifyEmail } from "./email";
 function esc2(s: string): string { return s.replace(/[&<>"']/g, (ch) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[ch]!)); }
 import { audit, actorFromSession } from "./audit";
@@ -321,6 +321,50 @@ api.get("/api/users", async (c) => {
 // Undang staf baru: tulis baris di users (role boleh admin/teacher/proctor).
 // Google OAuth login kemudian memakai find_staff_by_email(email) untuk
 // menemukan undangan ini dan membuat sesi.
+// Password login guru/admin: dibuat admin (tampil sekali), bisa diganti sendiri oleh pemiliknya.
+// Bentuk "kmtp-4827": mudah dibacakan/diketik, tanpa huruf/angka yang mirip (l/1, o/0).
+function newStaffPassword(): string {
+  const L = "abcdefghjkmnpqrstuvwxyz", D = "23456789", b = crypto.getRandomValues(new Uint8Array(8));
+  return [...b.slice(0, 4)].map((x) => L[x % L.length]).join("") + "-" + [...b.slice(4)].map((x) => D[x % D.length]).join("");
+}
+
+api.post("/api/users/:id/password", async (c) => {
+  const s = getSess(c);
+  if (s.role !== "admin") return c.json({ error: "Hanya admin yang boleh membuat password staf." }, 403);
+  const id = c.req.param("id");
+  const pw = newStaffPassword(), hash = await hashPin(pw);
+  const sql = connectDb(c.env);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const u = await tx`select id, email, name from users where id = ${id}`;
+    if (!u.length) return null;
+    await tx`update users set password_hash = ${hash}, pw_failed = 0, pw_locked_until = null where id = ${id}`;
+    await audit(tx, actorFromSession(s), "user.password_reset", "user", id);
+    return u[0] as { id: string; email: string; name: string | null };
+  });
+  if (!r) return c.json({ error: "Staf tidak ditemukan." }, 404);
+  return c.json({ ok: true, email: r.email, name: r.name, password: pw });
+});
+
+api.post("/api/me/password", async (c) => {
+  const s = getSess(c);
+  const body = await c.req.json().catch(() => null) as null | { current?: string; next?: string };
+  const next = String(body?.next ?? "");
+  if (next.length < 8) return c.json({ error: "Password baru minimal 8 karakter." }, 400);
+  const sql = connectDb(c.env);
+  const r = await withTenant(sql, { schoolId: s.sid, role: s.role, userId: s.uid }, async (tx) => {
+    const u = await tx`select password_hash from users where id = ${s.uid}`;
+    if (!u.length) return { error: "Akun tidak ditemukan.", status: 404 as const };
+    const old = (u[0] as { password_hash: string | null }).password_hash;
+    // Sudah punya password: wajib isi password lama. Belum (selama ini masuk dengan Google): boleh langsung membuat.
+    if (old && !(await verifyPin(String(body?.current ?? ""), old))) return { error: "Password lama salah.", status: 400 as const };
+    await tx`update users set password_hash = ${await hashPin(next)}, pw_failed = 0, pw_locked_until = null where id = ${s.uid}`;
+    await audit(tx, actorFromSession(s), "user.password_change", "user", s.uid);
+    return { ok: true };
+  });
+  if ("error" in r) return c.json({ error: r.error }, r.status);
+  return c.json(r);
+});
+
 api.post("/api/users", async (c) => {
   const s = getSess(c);
   if (s.role !== "admin") return c.json({ error: "hanya admin yang boleh mengundang staf" }, 403);

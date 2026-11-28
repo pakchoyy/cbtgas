@@ -15,6 +15,15 @@ export async function resolveSchool(sql: Sql, code: string): Promise<Row[]> {
   return sql.unscoped()`select id, name, level, logo_key, color from schools where code = lower(${code}) and active = 1`;
 }
 
+// Login email + password: semua akun staf aktif dengan email ini (bisa lebih dari satu sekolah).
+// Hanya jalur D1 (produksi); jalur Neon tidak mendukung login password.
+export async function findStaffForPassword(sql: Sql, email: string): Promise<Row[]> {
+  if (!sql.isD1) return [];
+  return sql.unscoped()`select u.id as user_id, u.school_id, u.role, u.password_hash, u.pw_failed, u.pw_locked_until from users u
+    join schools s on s.id = u.school_id and s.active = 1
+    where u.email = lower(${email}) and u.active = 1 and u.password_hash is not null`;
+}
+
 export async function findStaffByEmail(sql: Sql, email: string): Promise<Row[]> {
   if (!sql.isD1) return sql`select user_id, school_id, role from find_staff_by_email(${email})`;
   return sql.unscoped()`select u.id as user_id, u.school_id, u.role from users u

@@ -14,7 +14,9 @@
 // Env/secret yang dibutuhkan di Worker:
 //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (secret), SESSION_SECRET (secret), APP_ORIGIN.
 
-import { findStaffByEmail, registerSchool, resolveSchool } from "./dbfn";
+import { findStaffByEmail, findStaffForPassword, registerSchool, resolveSchool } from "./dbfn";
+import { verifyPin } from "./hash";
+import { checkOrLimit } from "./ratelimit";
 import { Hono } from "hono";
 import { SHARED_CSS } from "./ui";
 import { connectDb, type DbEnv, withTenant } from "./db";
@@ -226,6 +228,40 @@ auth.post("/auth/register-school", async (c) => {
   headers.append("Set-Cookie", clearCookie(PENDING_COOKIE));
   headers.append("Set-Cookie", cookieHeader(SESSION_COOKIE, cookie, { maxAge: SESSION_TTL }));
   return new Response(JSON.stringify({ ok: true, school_id: schoolId }), { status: 201, headers });
+});
+
+// Masuk dengan email + password (untuk guru yang tidak memakai akun Google). Password dibuat admin di "Guru & admin".
+// Perlindungan: 60/menit per IP, 10/menit per email, akun terkunci 15 menit setelah 5 password salah.
+auth.post("/auth/login-password", async (c) => {
+  const rl = await checkOrLimit(c.env, c.req.raw.headers, "staff_pw", 60);
+  if (rl) return rl;
+  const body = await c.req.json().catch(() => null) as null | { email?: string; password?: string };
+  const email = String(body?.email ?? "").trim().toLowerCase(), password = String(body?.password ?? "");
+  if (!email || !password) return c.json({ error: "Isi email dan password." }, 400);
+  const rle = await checkOrLimit(c.env, c.req.raw.headers, "staff_pw_e", 10, "e:" + email.slice(0, 120));
+  if (rle) return rle;
+  const sql = connectDb(c.env);
+  type Cand = { user_id: string; school_id: string; role: Session["role"]; password_hash: string; pw_failed: number; pw_locked_until: string | null };
+  const cands = await findStaffForPassword(sql, email) as unknown as Cand[];
+  const locked = (x: Cand) => !!x.pw_locked_until && new Date(x.pw_locked_until).getTime() > Date.now();
+  let hit: Cand | null = null;
+  for (const x of cands) if (!locked(x) && await verifyPin(password, x.password_hash)) { hit = x; break; }
+  if (!hit) {
+    if (cands.length === 1) {
+      const x = cands[0];
+      if (locked(x)) return c.json({ error: "Akun terkunci 15 menit karena password salah berkali-kali. Coba lagi nanti atau minta admin membuat password baru." }, 423);
+      const next = x.pw_failed + 1, lock = next >= 5 ? new Date(Date.now() + 15 * 60_000).toISOString() : null;
+      await withTenant(sql, { schoolId: x.school_id, role: x.role, userId: x.user_id }, (tx) =>
+        tx`update users set pw_failed = ${next}, pw_locked_until = ${lock} where id = ${x.user_id}`);
+    }
+    return c.json({ error: "Email atau password salah." }, 401);
+  }
+  if (hit.pw_failed || hit.pw_locked_until) await withTenant(sql, { schoolId: hit.school_id, role: hit.role, userId: hit.user_id }, (tx) =>
+    tx`update users set pw_failed = 0, pw_locked_until = null where id = ${hit!.user_id}`);
+  const session: Session = { uid: hit.user_id, sid: hit.school_id, role: hit.role, email, exp: Math.floor(Date.now() / 1000) + SESSION_TTL };
+  const headers = new Headers({ "Content-Type": "application/json" });
+  headers.append("Set-Cookie", cookieHeader(SESSION_COOKIE, await sign(session, c.env.SESSION_SECRET), { maxAge: SESSION_TTL }));
+  return new Response(JSON.stringify({ ok: true, redirect: "/app" }), { headers });
 });
 
 auth.post("/auth/logout", (c) => {

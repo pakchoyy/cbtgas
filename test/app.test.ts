@@ -501,3 +501,33 @@ test("kuota D1 habis: pesan jelas 503, bukan HTTP 500", async () => {
   assert.equal(r.status, 503);
   assert.match((await r.json()).error, /batas harian/);
 });
+
+test("login guru dengan email + password: dibuat admin, masuk, terkunci setelah 5 salah, ganti sendiri", async () => {
+  const w = await boot();
+  await w.open`insert into users (id,school_id,email,name,role) values ('gr',${SID},'bu.rina@sekolah.test','Bu Rina','teacher')`;
+  const admin = w.cookieOf(await w.call("/auth/dev-login", { method: "POST" }));
+  const login = (email: string, password: string, ip = "203.0.113.1") => w.call("/auth/login-password", { method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip }, body: JSON.stringify({ email, password }) });
+  // belum punya password -> tidak bisa masuk
+  assert.equal((await login("bu.rina@sekolah.test", "apa saja")).status, 401);
+  const pw = await jsonOf(await w.call("/api/users/gr/password", { method: "POST", cookie: admin }));
+  assert.match(pw.password, /^[a-z]{4}-\d{4}$/);
+  const ok = await login("Bu.Rina@Sekolah.test ", pw.password);
+  assert.equal(ok.status, 200);
+  const guru = w.cookieOf(ok);
+  assert.equal((await jsonOf(await w.call("/auth/me", { cookie: guru }))).role, "teacher");
+  // guru bukan admin: tidak boleh membuatkan password orang lain
+  assert.equal((await w.call("/api/users/adm/password", { method: "POST", cookie: guru })).status, 403);
+  // ganti sendiri: password lama wajib
+  assert.equal((await w.call("/api/me/password", { ...json({ current: "salah", next: "rahasia-baru-1" }), cookie: guru })).status, 400);
+  assert.equal((await w.call("/api/me/password", { ...json({ current: pw.password, next: "rahasia-baru-1" }), cookie: guru })).status, 200);
+  assert.equal((await login("bu.rina@sekolah.test", pw.password)).status, 401);
+  assert.equal((await login("bu.rina@sekolah.test", "rahasia-baru-1")).status, 200);
+  await w.open`delete from rate_counters`; // tahap berikut menguji kunci akun, bukan batas laju per email
+  // 5x salah -> terkunci (dari IP berbeda supaya bukan batas laju yang menolak)
+  for (let i = 0; i < 5; i++) await login("bu.rina@sekolah.test", "salah" + i, "198.51.100." + i);
+  assert.equal((await login("bu.rina@sekolah.test", "rahasia-baru-1", "192.0.2.9")).status, 423);
+  await w.open`delete from rate_counters`;
+  // admin reset -> kunci terbuka
+  const pw2 = await jsonOf(await w.call("/api/users/gr/password", { method: "POST", cookie: admin }));
+  assert.equal((await login("bu.rina@sekolah.test", pw2.password, "192.0.2.10")).status, 200);
+});
